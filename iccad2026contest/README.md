@@ -2,6 +2,22 @@
 
 **Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v7.pdf](./FloorplanningContest_ICCAD_2026_v7.pdf)
 
+## Changelog
+
+### April 15, 2026
+- **Scoring**: `compute_total_score` now uses exponential weighting by block count (was linear)
+- **Soft constraints**: `evaluate_solution` now computes all five violation types (fixed, preplaced, grouping, boundary, MIB) and correct `N_soft` denominator; previously hardcoded to 0
+- **Hard constraints**: Added dimension immutability check for fixed-shape and preplaced blocks; violations render solutions infeasible
+- **Baseline extraction**: Fixed inconsistent logic between `_extract_baseline` and `generate_baselines` for HPWL metrics
+- **Training helpers**: Fixed `compute_training_loss_batch` passing `constraints` as `baseline_metrics`; added explicit `metrics_batch` parameter
+- **Validator**: Fixed `--validate` incorrectly picking `FloorplanOptimizer` base class instead of user's subclass
+- **Dataloader docstrings**: Corrected usage examples for `get_training_dataloader` and `get_validation_dataloader`
+- **Shapely warning**: Added warning message when `shapely` is not installed (required dependency)
+- **Robustness**: Added `.flatten()` to `torch.nonzero()` calls for cross-version PyTorch compatibility
+- **README**: Updated to match PDF specification (hard/soft constraints, scoring formula, exponential weighting, getting started instructions)
+
+---
+
 ## Dataset Terminology
 
 | Dataset | Samples | Purpose | Available |
@@ -19,16 +35,24 @@ The following constraints from the original FloorSet dataset are **relaxed** for
 | Constraint | Status | Notes |
 |------------|--------|-------|
 | **Aspect Ratio** | ✅ Relaxed | Any width/height ratio allowed |
-| **Fixed Outline** | ✅ Removed | Implicitly handled by pin-to-block HPWL and bounding box area in cost function |
+| **Fixed Outline** | ✅ Removed | No fixed canvas size; compactness is implicitly optimized via bounding box area and pin-to-block HPWL in the cost function. Note: **boundary constraints** (blocks touching the solution's bounding-box edges/corners) still apply as soft constraints. |
 | **Coordinates** | ✅ Floating-point allowed | Integer coordinates not required |
 
 **Hard Constraints** (violation = infeasible, score 10.0):
 - **No overlaps** between blocks
-- **Area tolerance**: Block area (w × h) must be within **1%** of target area
+- **Area tolerance**: Soft-block area (w × h) must be within **1%** of target area
+- **Dimension immutability**: Fixed-shape and preplaced blocks must have **exact** target dimensions (w, h). Preplaced blocks must also have exact target positions (x, y).
 
-**Soft Constraints** (in cost function):
+**Soft Constraints** (violations penalized via exp(β·V_rel) in cost function):
+- **Fixed-shape**: Block dimensions must match specified (w, h)
+- **Preplaced**: Block position and dimensions must match specified (x, y, w, h)
+- **Grouping**: Blocks in a group must abut (share an edge), forming a single connected component
+- **MIB** (Multi-Instantiation Blocks): Blocks in a group must have identical dimensions
+- **Boundary**: Block must touch specified bounding-box edge(s) or corner
+
+**Quality Metrics** (in cost function quality factor):
 - Block-to-block HPWL (minimize wirelength)
-- Pin-to-block HPWL (encourages placement near fixed pins, replaces fixed outline)
+- Pin-to-block HPWL (encourages placement near fixed pins)
 - Bounding box area (encourages compact placement)
 
 ## Dataset Downloads
@@ -36,9 +60,11 @@ The following constraints from the original FloorSet dataset are **relaxed** for
 - **Training data (1M samples):** [FloorSet-Lite on Hugging Face](https://huggingface.co/datasets/IntelLabs/FloorSet)
 - **Validation data (100 samples):** [FloorSet-Lite-Test on Hugging Face](https://huggingface.co/datasets/IntelLabs/FloorSet)
 
-Place datasets in:
+Place datasets in the FloorSet root directory (parent of `iccad2026contest/`):
 - `FloorSet/LiteTensorData/` (training)
 - `FloorSet/LiteTensorDataTest/` (validation)
+
+This matches the default `data_path="../"` used by the evaluation scripts.
 
 ## PyTorch DataLoaders (Auto-Download)
 
@@ -83,19 +109,22 @@ pip install -r iccad2026contest/requirements.txt
 #    Place in: FloorSet/LiteTensorData/ (training, 1M samples)
 #              FloorSet/LiteTensorDataTest/ (validation, 100 samples)
 
-# 5. Copy the template optimizer
-cp iccad2026contest/optimizer_template.py iccad2026contest/my_optimizer.py
+# 5. Enter the contest directory (all commands below run from here)
+cd iccad2026contest
 
-# 6. Implement your algorithm in my_optimizer.py (edit the solve() method)
+# 6. Copy the template optimizer
+cp optimizer_template.py my_optimizer.py
 
-# 7. Evaluate on validation set
-python iccad2026contest/iccad2026_evaluate.py --evaluate iccad2026contest/my_optimizer.py
+# 7. Implement your algorithm in my_optimizer.py (edit the solve() method)
 
-# 8. Evaluate single validation case (for debugging, 0-99)
-python iccad2026contest/iccad2026_evaluate.py --evaluate iccad2026contest/my_optimizer.py --test-id 0
+# 8. Evaluate on validation set
+python iccad2026_evaluate.py --evaluate my_optimizer.py
 
-# 9. Validate before submission
-python iccad2026contest/iccad2026_evaluate.py --validate iccad2026contest/my_optimizer.py
+# 9. Evaluate single validation case (for debugging, 0-99)
+python iccad2026_evaluate.py --evaluate my_optimizer.py --test-id 0
+
+# 10. Validate before submission
+python iccad2026_evaluate.py --validate my_optimizer.py
 ```
 
 ---
@@ -123,13 +152,16 @@ def solve(self, block_count, area_targets, b2b_connectivity,
     return positions
 ```
 
-**Hard Constraints** (violation = score 10.0):
+**Hard Constraints** (violation = infeasible, score 10.0):
 - No overlapping blocks
-- Block area (w × h) must be within 1% of target
+- Soft-block area (w × h) must be within 1% of target
+- Fixed-shape and preplaced blocks must have exact target dimensions
+
+**Soft Constraints** (penalized in cost function):
+- Fixed-shape, preplaced, grouping, MIB, boundary (see above for details)
 
 **Relaxed Constraints** (not enforced):
 - Aspect ratio: Any width/height ratio is valid
-- Fixed outline: No explicit boundary (implicitly optimized via cost function)
 - Coordinate precision: Floating-point values allowed
 
 ---
@@ -137,8 +169,8 @@ def solve(self, block_count, area_targets, b2b_connectivity,
 ## Using Training Data (1M samples)
 
 ```bash
-# See full example
-python iccad2026contest/training_example.py
+# See full example (run from iccad2026contest/)
+python training_example.py
 ```
 
 ```python
@@ -195,7 +227,7 @@ Your submission will be evaluated on:
 ## Saving and Re-scoring Solutions
 
 ```bash
-# Run optimizer and save solutions to JSON
+# Run optimizer and save solutions to JSON (run from iccad2026contest/)
 python iccad2026_evaluate.py --evaluate my_optimizer.py --save-solutions
 # Output: my_optimizer_solutions.json
 
@@ -212,11 +244,17 @@ This is useful for:
 ## Scoring
 
 ```
-Cost = (1 + 0.5×(HPWL_gap + Area_gap)) × exp(2×Violations) × RuntimeFactor
-     = 10.0 if infeasible
+Cost = (1 + 0.5×(HPWL_gap + Area_gap)) × exp(2×V_rel) × max(0.7, RuntimeFactor^0.3)
+     = 10.0 if infeasible (overlap or dimension violation)
 ```
 
-**Lower score = better.** Final ranking uses weighted average across all 100 tests.
+Where:
+- **HPWL_gap, Area_gap**: Relative gaps vs. baseline (0 = matches baseline)
+- **V_rel** ∈ [0, 1]: Normalized soft constraint violations (fixed, preplaced, grouping, boundary, MIB)
+- **RuntimeFactor**: Your runtime / median runtime of all submissions (per test case)
+- **max(0.7, ...)**: Speed benefit capped at 30%; slowness penalty is uncapped
+
+**Lower score = better.** Final ranking uses **exponentially weighted** average across all 100 tests, where larger instances (more blocks) contribute exponentially more to the total score.
 
 ---
 

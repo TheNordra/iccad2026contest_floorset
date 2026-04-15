@@ -62,6 +62,9 @@ try:
     SHAPELY_AVAILABLE = True
 except ImportError:
     SHAPELY_AVAILABLE = False
+    print("WARNING: shapely is not installed. Soft constraint violations "
+          "(fixed, preplaced, grouping) will not be computed. "
+          "Install it with: pip install shapely>=2.0.0")
 
 # =============================================================================
 # CONTEST PARAMETERS (from problem statement)
@@ -82,6 +85,7 @@ class SolutionMetrics:
     is_feasible: bool
     overlap_violations: int
     area_violations: int
+    dimension_violations: int
     hpwl_b2b: float
     hpwl_p2b: float
     hpwl_total: float
@@ -208,11 +212,23 @@ def check_overlap(positions: List[Tuple[float, float, float, float]]) -> int:
 def check_area_tolerance(
     positions: List[Tuple[float, float, float, float]],
     target_areas: torch.Tensor,
-    tolerance: float = AREA_TOLERANCE
+    tolerance: float = AREA_TOLERANCE,
+    skip_indices: Optional[set] = None
 ) -> int:
-    """Check if block areas are within tolerance of targets."""
+    """
+    Check if soft-block areas are within tolerance of targets.
+
+    Per PDF: "For all other blocks (soft blocks), the realized width wi and
+    height hi must satisfy the target area ai within a 1% relative error."
+
+    Fixed-shape and preplaced blocks are excluded via skip_indices because
+    they are checked for exact dimensions separately (see
+    check_dimension_hard_constraints).
+    """
     violations = 0
     for i, (x, y, w, h) in enumerate(positions):
+        if skip_indices and i in skip_indices:
+            continue
         if i >= len(target_areas) or target_areas[i] == -1:
             continue
         actual_area = w * h
@@ -221,6 +237,53 @@ def check_area_tolerance(
             diff = abs(actual_area - target_area) / target_area
             if diff > tolerance:
                 violations += 1
+    return violations
+
+
+def check_dimension_hard_constraints(
+    positions: List[Tuple[float, float, float, float]],
+    target_positions: Optional[List[Tuple[float, float, float, float]]],
+    target_constraints: Optional[torch.Tensor],
+    block_count: int,
+    tolerance: float = 1e-4
+) -> int:
+    """
+    Check that fixed-shape and preplaced blocks have immutable dimensions.
+
+    Per PDF hard constraints:
+      - Fixed-shape blocks: (w, h) must match input specification exactly.
+      - Preplaced blocks: (x, y, w, h) must all match input specification.
+      - "Any solution that deviates from the fixed dimensions is classified
+        as infeasible."
+
+    Returns the number of blocks that violate these requirements.
+    """
+    if target_positions is None or target_constraints is None:
+        return 0
+    if len(target_constraints) < block_count:
+        return 0
+
+    ncols = target_constraints.shape[1]
+    violations = 0
+
+    for i in range(min(block_count, len(positions), len(target_positions))):
+        is_fixed = ncols > 0 and target_constraints[i, 0] != 0
+        is_preplaced = ncols > 1 and target_constraints[i, 1] != 0
+
+        if not (is_fixed or is_preplaced):
+            continue
+
+        px, py, pw, ph = positions[i]
+        tx, ty, tw, th = target_positions[i]
+
+        if abs(pw - tw) > tolerance or abs(ph - th) > tolerance:
+            violations += 1
+            continue
+
+        if is_preplaced:
+            if abs(px - tx) > tolerance or abs(py - ty) > tolerance:
+                violations += 1
+
     return violations
 
 
@@ -277,43 +340,164 @@ def evaluate_solution(
     area_gap = (bbox_area - area_baseline) / max(area_baseline, 1e-6)
     
     # Check hard constraints (feasibility)
+    # PDF: "For preplaced and fixed-shape blocks, the input dimensions wi
+    # and hi are immutable.  For all other blocks (soft blocks), w*h must
+    # satisfy the target area within 1%.  Any deviation is infeasible."
     overlap_violations = check_overlap(positions)
-    area_violations = check_area_tolerance(positions, target_areas)
-    is_feasible = (overlap_violations == 0) and (area_violations == 0)
+
+    # Identify fixed/preplaced blocks so they are excluded from the 1%
+    # area-tolerance check (they have a stricter exact-dimension check).
+    fixed_or_preplaced = set()
+    if target_constraints is not None and len(target_constraints) >= block_count:
+        ncols_hc = target_constraints.shape[1]
+        for i in range(block_count):
+            if (ncols_hc > 0 and target_constraints[i, 0] != 0) or \
+               (ncols_hc > 1 and target_constraints[i, 1] != 0):
+                fixed_or_preplaced.add(i)
+
+    area_violations = check_area_tolerance(
+        positions, target_areas, skip_indices=fixed_or_preplaced)
+    dimension_violations = check_dimension_hard_constraints(
+        positions, target_positions, target_constraints, block_count)
+    is_feasible = (overlap_violations == 0 and area_violations == 0
+                   and dimension_violations == 0)
     
-    # Check soft constraints
+    # =========================================================================
+    # Soft constraint violations  (PDF Equation 3)
+    #
+    #   Violations_relative = (V_fixed + V_preplaced + V_grouping
+    #                          + V_boundary + V_mib)  /  N_soft
+    #
+    # N_soft is the MAXIMUM POSSIBLE total violations (not just the number
+    # of constrained blocks).  It acts as a normalization constant so that
+    # Violations_relative ∈ [0, 1]:
+    #
+    #   N_soft = |B_fixed| + |B_preplaced| + |B_boundary|
+    #            + Σ_p (|G_p| - 1)       ← max grouping violations
+    #            + Σ_q (|M_q| - 1)       ← max MIB violations
+    #
+    # Per-block constraints (fixed, preplaced, boundary) contribute 1 each
+    # because each block either satisfies (0) or violates (1).
+    #
+    # Per-group constraints contribute (group_size - 1) each because:
+    #   • Grouping worst case: all blocks isolated → c_p = |G_p|,
+    #     violation = c_p - 1 = |G_p| - 1
+    #   • MIB worst case: all blocks have different shapes → s_q = |M_q|,
+    #     violation = s_q - 1 = |M_q| - 1
+    #
+    # Constraint checking reuses the same functions as cost.py's
+    # estimate_cost (check_fixed_const, check_preplaced_const, etc.).
+    # =========================================================================
     fixed_violations = 0
     preplaced_violations = 0
     boundary_violations = 0
     grouping_violations = 0
     mib_violations = 0
-    
-    # Count constraint instances
-    max_violations = 0
+    n_soft = 0  # maximum possible violations (PDF: N_soft)
+
     if target_constraints is not None and len(target_constraints) >= block_count:
-        for i in range(block_count):
-            if target_constraints.shape[1] > 0 and target_constraints[i, 0] != 0:
-                max_violations += 1  # Fixed
-            if target_constraints.shape[1] > 1 and target_constraints[i, 1] != 0:
-                max_violations += 1  # Preplaced
-            if target_constraints.shape[1] > 4 and target_constraints[i, 4] != 0:
-                max_violations += 1  # Boundary
-        
-        # MIB groups
-        if target_constraints.shape[1] > 2:
-            mib_groups = set(int(target_constraints[i, 2]) for i in range(block_count) 
-                           if target_constraints[i, 2] > 0)
-            max_violations += len(mib_groups)
-        
-        # Cluster groups  
-        if target_constraints.shape[1] > 3:
-            cluster_groups = set(int(target_constraints[i, 3]) for i in range(block_count)
-                               if target_constraints[i, 3] > 0)
-            max_violations += len(cluster_groups)
-    
-    total_soft_violations = (fixed_violations + preplaced_violations + 
+        constraints_block = target_constraints[:block_count]
+        ncols = constraints_block.shape[1]
+
+        # Constraint tensor columns: [fixed, preplaced, mib_id, cluster_id, boundary_code]
+        fixed_const = constraints_block[:, 0] if ncols > 0 else torch.zeros(block_count)
+        preplaced_const = constraints_block[:, 1] if ncols > 1 else torch.zeros(block_count)
+        mib_const = constraints_block[:, 2] if ncols > 2 else torch.zeros(block_count)
+        clust_const = constraints_block[:, 3] if ncols > 3 else torch.zeros(block_count)
+        bound_const = constraints_block[:, 4] if ncols > 4 else torch.zeros(block_count)
+
+        # Count blocks that carry each per-block constraint
+        n_fixed = int((fixed_const != 0).sum().item())
+        n_preplaced = int((preplaced_const != 0).sum().item())
+        n_boundary = int((bound_const != 0).sum().item())
+
+        # -----------------------------------------------------------------
+        # N_soft: maximum possible violations (PDF Eq. 3 denominator)
+        # -----------------------------------------------------------------
+        # Per-block: each constrained block can violate at most once
+        n_soft = n_fixed + n_preplaced + n_boundary
+
+        # Per-group (MIB): worst case is |M_q| distinct shapes → |M_q|-1
+        n_mib_groups = int(mib_const.max().item()) if mib_const.numel() > 0 else 0
+        for g in range(1, n_mib_groups + 1):
+            group_size = int((mib_const == g).sum().item())
+            n_soft += max(0, group_size - 1)
+
+        # Per-group (grouping): worst case is |G_p| isolated blocks → |G_p|-1
+        n_clust_groups = int(clust_const.max().item()) if clust_const.numel() > 0 else 0
+        for g in range(1, n_clust_groups + 1):
+            group_size = int((clust_const == g).sum().item())
+            n_soft += max(0, group_size - 1)
+
+        # -----------------------------------------------------------------
+        # Actual violation counts (PDF Eq. 3 numerator)
+        # -----------------------------------------------------------------
+
+        if SHAPELY_AVAILABLE:
+            pred_polys = [box(x, y, x + w, y + h) for x, y, w, h in positions]
+            target_polys = None
+            if target_positions is not None:
+                target_polys = [box(tx, ty, tx + tw, ty + th)
+                                for tx, ty, tw, th in target_positions]
+
+            # V_fixed: 1 per block whose (w,h) differ from target
+            if n_fixed > 0 and target_polys is not None:
+                fixed_violations = check_fixed_const(
+                    torch.nonzero(fixed_const).flatten(), pred_polys, target_polys)
+
+            # V_preplaced: 1 per block whose (x,y,w,h) differ from target
+            if n_preplaced > 0 and target_polys is not None:
+                preplaced_violations = check_preplaced_const(
+                    torch.nonzero(preplaced_const).flatten(), pred_polys, target_polys)
+
+            # V_grouping = Σ(c_p - 1): connected components minus 1 per group.
+            # Blocks that share an edge form a connected component.
+            # Perfectly abutted group → c_p=1 → violation=0.
+            for g in range(1, n_clust_groups + 1):
+                group_indices = torch.where(clust_const == g)[0].tolist()
+                group_polys = [pred_polys[i] for i in group_indices]
+                union_result = unary_union(group_polys)
+                if union_result.geom_type == 'MultiPolygon':
+                    grouping_violations += len(union_result.geoms) - 1
+
+        # V_mib = Σ(s_q - 1): distinct (w,h) pairs minus 1 per group.
+        # All blocks in a group should share identical dimensions.
+        # Perfectly uniform group → s_q=1 → violation=0.
+        for g in range(1, n_mib_groups + 1):
+            group_indices = torch.where(mib_const == g)[0].tolist()
+            distinct_shapes = set()
+            for i in group_indices:
+                bw, bh = round(positions[i][2], 4), round(positions[i][3], 4)
+                distinct_shapes.add((bw, bh))
+            mib_violations += len(distinct_shapes) - 1
+
+        # V_boundary: 1 per block that doesn't touch its required bbox edge/corner.
+        # Encoding is a bitmask: 1=left, 2=right, 4=top, 8=bottom.
+        # Corners are sums, e.g. 5=top-left (4+1), 10=bottom-right (8+2).
+        if n_boundary > 0:
+            x_min_bb = min(p[0] for p in positions)
+            y_min_bb = min(p[1] for p in positions)
+            x_max_bb = max(p[0] + p[2] for p in positions)
+            y_max_bb = max(p[1] + p[3] for p in positions)
+            eps = 1e-6
+
+            for i in range(block_count):
+                code = int(bound_const[i].item())
+                if code == 0:
+                    continue
+                bx, by, bw, bh = positions[i]
+                touches = {
+                    1: abs(bx - x_min_bb) < eps,              # left edge
+                    2: abs(bx + bw - x_max_bb) < eps,         # right edge
+                    4: abs(by + bh - y_max_bb) < eps,         # top edge
+                    8: abs(by - y_min_bb) < eps,              # bottom edge
+                }
+                if not all(touches[bit] for bit in (1, 2, 4, 8) if code & bit):
+                    boundary_violations += 1
+
+    total_soft_violations = (fixed_violations + preplaced_violations +
                             boundary_violations + grouping_violations + mib_violations)
-    violations_relative = total_soft_violations / max(max_violations, 1)
+    violations_relative = total_soft_violations / max(n_soft, 1)
     
     # Compute cost
     runtime_factor = runtime / max(median_runtime, 0.01)
@@ -323,6 +507,7 @@ def evaluate_solution(
         is_feasible=is_feasible,
         overlap_violations=overlap_violations,
         area_violations=area_violations,
+        dimension_violations=dimension_violations,
         hpwl_b2b=hpwl_b2b,
         hpwl_p2b=hpwl_p2b,
         hpwl_total=hpwl_total,
@@ -337,7 +522,7 @@ def evaluate_solution(
         grouping_violations=grouping_violations,
         mib_violations=mib_violations,
         total_soft_violations=total_soft_violations,
-        max_possible_violations=max_violations,
+        max_possible_violations=n_soft,
         violations_relative=violations_relative,
         runtime_seconds=runtime,
         cost=cost
@@ -345,13 +530,23 @@ def evaluate_solution(
 
 
 def compute_total_score(costs: List[float], block_counts: List[int]) -> float:
-    """Compute weighted average score."""
+    """
+    Compute exponentially weighted average score.
+    
+    Total Score = Σ Cost[i] · e^{n_i} / Σ e^{n_j}
+    
+    where n_i is the block count for test case i. Larger instances
+    contribute exponentially more to the final score.
+    """
     if not costs:
         return 0.0
-    total_weight = sum(block_counts)
-    if total_weight == 0:
+    if not block_counts or all(n == 0 for n in block_counts):
         return sum(costs) / len(costs)
-    return sum(c * w for c, w in zip(costs, block_counts)) / total_weight
+    
+    max_n = max(block_counts)
+    weights = [math.exp(n - max_n) for n in block_counts]
+    total_weight = sum(weights)
+    return sum(c * w for c, w in zip(costs, weights)) / total_weight
 
 
 # =============================================================================
@@ -525,12 +720,13 @@ class ContestEvaluator:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         
-        # Find optimizer class
+        # Find optimizer class (compare by name, not identity, because
+        # importlib may create a separate class object for FloorplanOptimizer)
         for name in dir(module):
             obj = getattr(module, name)
-            if (isinstance(obj, type) and 
-                issubclass(obj, FloorplanOptimizer) and 
-                obj is not FloorplanOptimizer):
+            if (isinstance(obj, type) and
+                issubclass(obj, FloorplanOptimizer) and
+                obj.__name__ != 'FloorplanOptimizer'):
                 return obj(verbose=self.verbose)
         
         # Try common names
@@ -556,17 +752,20 @@ class ContestEvaluator:
             else:
                 positions.append((0, 0, 1, 1))
         
-        hpwl = calculate_hpwl_b2b(positions, b2b_conn) + calculate_hpwl_p2b(positions, p2b_conn, pins_pos)
+        hpwl_b2b = calculate_hpwl_b2b(positions, b2b_conn)
+        hpwl_p2b = calculate_hpwl_p2b(positions, p2b_conn, pins_pos)
         area = calculate_bbox_area(positions)
         
-        # Use stored metrics if available
+        # Prefer stored metrics when valid (same logic as generate_baselines)
         if metrics is not None and len(metrics) >= 8:
             if metrics[0] > 0:
                 area = float(metrics[0])
-            if metrics[-2] > 0 and metrics[-1] >= 0:
-                hpwl = float(metrics[-2]) + float(metrics[-1])
+            if metrics[-2] > 0:
+                hpwl_b2b = float(metrics[-2])
+            if metrics[-1] >= 0:
+                hpwl_p2b = float(metrics[-1])
         
-        return {'hpwl_baseline': hpwl, 'area_baseline': area}, positions
+        return {'hpwl_baseline': hpwl_b2b + hpwl_p2b, 'area_baseline': area}, positions
     
     def evaluate(
         self,
@@ -707,16 +906,28 @@ def validate_submission(optimizer_path: str, quick: bool = False, verbose: bool 
         log(f"Module loads: {e}", False)
         return False
     
-    # Find optimizer class
+    # Find optimizer class (same criteria as _load_optimizer to avoid
+    # false positives where --validate passes but --evaluate fails).
+    # Compare by name, not identity, because importlib may create a
+    # separate class object for FloorplanOptimizer.
     optimizer_class = None
     for name in dir(module):
         obj = getattr(module, name)
-        if isinstance(obj, type) and hasattr(obj, 'solve'):
+        if (isinstance(obj, type) and
+                issubclass(obj, FloorplanOptimizer) and
+                obj.__name__ != 'FloorplanOptimizer'):
             optimizer_class = obj
             break
     
+    # Fallback: try common class names (same as _load_optimizer)
     if optimizer_class is None:
-        log("Contains optimizer class with solve() method", False)
+        for name in ['MyOptimizer', 'Optimizer', 'ContestOptimizer']:
+            if hasattr(module, name):
+                optimizer_class = getattr(module, name)
+                break
+    
+    if optimizer_class is None:
+        log("Contains optimizer class (must subclass FloorplanOptimizer)", False)
         return False
     log(f"Contains optimizer class: {optimizer_class.__name__}")
     
@@ -1098,7 +1309,8 @@ def compute_training_loss_differentiable(
 
 def compute_training_loss_batch(
     positions_batch: List[List[Tuple[float, float, float, float]]],
-    inputs_batch: Tuple
+    inputs_batch: Tuple,
+    metrics_batch: Optional[torch.Tensor] = None
 ) -> List[Dict[str, float]]:
     """
     Compute loss for a batch of training samples.
@@ -1106,20 +1318,27 @@ def compute_training_loss_batch(
     Args:
         positions_batch: List of position lists, one per sample in batch
         inputs_batch: Tuple of (area_target, b2b_conn, p2b_conn, pins_pos, constraints)
+        metrics_batch: Baseline metrics tensor (bsz x 8) from training data.
+                       Columns: [area, num_pins, num_total_nets, num_b2b_nets,
+                       num_p2b_nets, num_hardconstraints, b2b_wl, p2b_wl].
+                       When provided, the exact contest cost formula is used.
     
     Returns:
         List of loss dicts, one per sample
     
     Example:
-        for inputs, labels in dataloader:
-            area_target, b2b_conn, p2b_conn, pins_pos, constraints = inputs
+        dataloader = get_training_dataloader(batch_size=64)
+        for batch in dataloader:
+            (area_target, b2b_conn, p2b_conn, pins_pos,
+             constraints, tree_sol, fp_sol, metrics) = batch
             batch_size = area_target.shape[0]
             
             # Your model predicts positions for whole batch
-            predicted_batch = [my_model(inputs, i) for i in range(batch_size)]
+            predicted_batch = [my_model(batch, i) for i in range(batch_size)]
             
-            # Compute losses
-            losses = compute_training_loss_batch(predicted_batch, inputs)
+            # Compute losses (pass metrics for contest-formula scoring)
+            inputs = (area_target, b2b_conn, p2b_conn, pins_pos, constraints)
+            losses = compute_training_loss_batch(predicted_batch, inputs, metrics)
             total_loss = sum(l['total'] for l in losses) / len(losses)
     """
     area_target, b2b_conn, p2b_conn, pins_pos, constraints = inputs_batch
@@ -1127,13 +1346,20 @@ def compute_training_loss_batch(
     
     losses = []
     for i in range(batch_size):
+        per_sample_metrics = None
+        if metrics_batch is not None:
+            per_sample_metrics = (metrics_batch[i] if metrics_batch.dim() > 1
+                                  else metrics_batch)
+
         loss = compute_training_loss(
             positions_batch[i],
             b2b_conn[i] if b2b_conn.dim() > 2 else b2b_conn,
             p2b_conn[i] if p2b_conn.dim() > 2 else p2b_conn,
             pins_pos[i] if pins_pos.dim() > 2 else pins_pos,
             area_target[i] if area_target.dim() > 1 else area_target,
-            constraints[i] if constraints is not None and constraints.dim() > 2 else constraints
+            baseline_metrics=per_sample_metrics,
+            constraints=(constraints[i] if constraints is not None
+                         and constraints.dim() > 2 else constraints),
         )
         losses.append(loss)
     
@@ -1156,14 +1382,20 @@ def get_training_dataloader(
         shuffle: Whether to shuffle (False recommended for speed)
     
     Returns:
-        DataLoader for training
+        DataLoader for training.  Each batch is a flat list of 8 tensors
+        (see liteLoader.py for the canonical unpacking pattern).
         
     Example:
         dataloader = get_training_dataloader(batch_size=64)
         for batch in dataloader:
-            inputs, labels = batch
-            area_target, b2b_conn, p2b_conn, pins_pos, constraints = inputs
-            polygons, metrics = labels
+            (area_target,        # bsz x n_blocks
+             b2b_conn,           # bsz x b2b_edges x 3
+             p2b_conn,           # bsz x p2b_edges x 3
+             pins_pos,           # bsz x n_pins x 2
+             constraints,        # bsz x n_blocks x 5
+             tree_sol,           # bsz x (n_blocks-1) x 3
+             fp_sol,             # bsz x n_blocks x 4  (w, h, x, y)
+             metrics) = batch    # bsz x 8
             # Train your model here
     """
     dataset = FloorplanDatasetLite(data_path)
@@ -1193,13 +1425,17 @@ def get_validation_dataloader(
         batch_size: Batch size (default 1 for evaluation)
     
     Returns:
-        DataLoader for validation (100 samples, indices 0-99)
+        DataLoader for validation (100 samples, indices 0-99).
+        Each batch is a tuple (inputs, labels) where inputs is a list
+        of 5 tensors and labels is [polygons, metrics]
+        (see litetestLoader.py for the canonical unpacking pattern).
         
     Example:
         dataloader = get_validation_dataloader()
-        for idx, sample in enumerate(dataloader):
-            inputs = sample['input']
+        for batch in dataloader:
+            inputs, labels = batch
             area_target, b2b_conn, p2b_conn, pins_pos, constraints = inputs
+            polygons, metrics = labels
             # Evaluate your optimizer
     """
     dataset = FloorplanDatasetLiteTest(data_path)
