@@ -18,6 +18,9 @@ Your solve() receives:
   - p2b_connectivity: [edges, 3] (pin_idx, block_idx, weight)
   - pins_pos: [n_pins, 2] pin (x, y)
   - constraints: [n, 5] (fixed, preplaced, MIB, cluster, boundary)
+  - target_positions: [n, 4] target (x, y, w, h) per block.
+      All -1 by default (free). For fixed-shape blocks, w and h are set.
+      For preplaced blocks, all four (x, y, w, h) are set.
 
 Your solve() must return:
   - List of (x, y, width, height), exactly block_count tuples
@@ -340,7 +343,8 @@ class MyOptimizer(FloorplanOptimizer):
         b2b_connectivity: torch.Tensor,
         p2b_connectivity: torch.Tensor,
         pins_pos: torch.Tensor,
-        constraints: torch.Tensor
+        constraints: torch.Tensor,
+        target_positions: torch.Tensor = None
     ) -> List[Tuple[float, float, float, float]]:
         """
         B*-tree SA optimization.
@@ -348,11 +352,17 @@ class MyOptimizer(FloorplanOptimizer):
         REPLACE THIS METHOD with your algorithm.
         Must return List[(x, y, w, h)] with exactly block_count entries.
         """
-        # Initialize dimensions (w*h = target area, start square)
+        # Initialize dimensions: use target dimensions for fixed/preplaced
+        # blocks, otherwise start with a square matching the area target.
         widths, heights = [], []
         for i in range(block_count):
-            area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
-            w = h = math.sqrt(area)
+            if (target_positions is not None and
+                    target_positions[i, 2] != -1 and target_positions[i, 3] != -1):
+                w = float(target_positions[i, 2])
+                h = float(target_positions[i, 3])
+            else:
+                area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
+                w = h = math.sqrt(area)
             widths.append(w)
             heights.append(h)
         

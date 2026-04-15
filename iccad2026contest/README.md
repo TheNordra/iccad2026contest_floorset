@@ -1,6 +1,6 @@
 # ICCAD 2026 FloorSet Challenge
 
-**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v8.pdf](./FloorplanningContest_ICCAD_2026_v8.pdf)
+**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v7.pdf](./FloorplanningContest_ICCAD_2026_v7.pdf)
 
 ## Changelog
 

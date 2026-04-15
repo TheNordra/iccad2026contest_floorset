@@ -565,10 +565,23 @@ class FloorplanOptimizer:
         b2b_connectivity: torch.Tensor,
         p2b_connectivity: torch.Tensor,
         pins_pos: torch.Tensor,
-        constraints: torch.Tensor
+        constraints: torch.Tensor,
+        target_positions: Optional[torch.Tensor] = None
     ) -> List[Tuple[float, float, float, float]]:
         """
         Solve the floorplanning problem.
+        
+        Args:
+            block_count: Number of blocks to place
+            area_targets: [n_blocks] target area per block
+            b2b_connectivity: [edges, 3] (block_i, block_j, weight)
+            p2b_connectivity: [edges, 3] (pin_idx, block_idx, weight)
+            pins_pos: [n_pins, 2] pin (x, y)
+            constraints: [n_blocks, 5] (fixed, preplaced, mib, cluster, boundary)
+            target_positions: [n_blocks, 4] target (x, y, w, h) per block.
+                All values default to -1 (free). For fixed-shape blocks,
+                (w, h) are set to the required dimensions. For preplaced
+                blocks, all four (x, y, w, h) are set.
         
         Returns: List of (x, y, width, height) for each block
         """
@@ -796,10 +809,28 @@ class ContestEvaluator:
                     idx, labels, b2b_conn, p2b_conn, pins_pos, block_count
                 )
                 
+                # Build target_positions tensor for the optimizer:
+                # all -1 by default; fixed-shape blocks get (w,h);
+                # preplaced blocks get (x,y,w,h).
+                opt_target_pos = torch.full((block_count, 4), -1.0)
+                if target_pos is not None and constraints is not None:
+                    nc = constraints.shape[1] if constraints.dim() > 1 else 0
+                    for i in range(block_count):
+                        is_fixed = nc > 0 and constraints[i, 0] != 0
+                        is_preplaced = nc > 1 and constraints[i, 1] != 0
+                        if is_preplaced:
+                            tx, ty, tw, th = target_pos[i]
+                            opt_target_pos[i] = torch.tensor([tx, ty, tw, th])
+                        elif is_fixed:
+                            _, _, tw, th = target_pos[i]
+                            opt_target_pos[i, 2] = tw
+                            opt_target_pos[i, 3] = th
+                
                 # Run optimizer
                 start = time.time()
                 positions = optimizer.solve(
-                    block_count, area_target, b2b_conn, p2b_conn, pins_pos, constraints
+                    block_count, area_target, b2b_conn, p2b_conn, pins_pos,
+                    constraints, opt_target_pos
                 )
                 runtime = time.time() - start
                 runtimes.append(runtime)
@@ -940,10 +971,12 @@ def validate_submission(optimizer_path: str, quick: bool = False, verbose: bool 
             dummy_p2b = torch.tensor([[0, 0, 1.0]])
             dummy_pins = torch.tensor([[0.0, 0.0]])
             dummy_constraints = torch.zeros(5, 5)
+            dummy_target_pos = torch.full((5, 4), -1.0)
             
             start = time.time()
             result = optimizer.solve(5, dummy_areas, dummy_b2b, dummy_p2b, 
-                                    dummy_pins, dummy_constraints)
+                                    dummy_pins, dummy_constraints,
+                                    dummy_target_pos)
             runtime = time.time() - start
             
             if not isinstance(result, list) or len(result) != 5:
