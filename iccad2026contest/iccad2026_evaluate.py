@@ -579,7 +579,7 @@ class FloorplanOptimizer:
             pins_pos: [n_pins, 2] pin (x, y)
             constraints: [n_blocks, 5] (fixed, preplaced, mib, cluster, boundary)
             target_positions: [n_blocks, 4] target (x, y, w, h) per block.
-                All values default to -1 (free). For fixed-shape blocks,
+                All values default to -1 (free, for soft-blocks). For fixed-shape blocks,
                 (w, h) are set to the required dimensions. For preplaced
                 blocks, all four (x, y, w, h) are set.
         
