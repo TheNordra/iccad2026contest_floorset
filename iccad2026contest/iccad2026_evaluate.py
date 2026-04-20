@@ -81,7 +81,23 @@ AREA_TOLERANCE = 0.01  # 1% area tolerance
 # =============================================================================
 @dataclass
 class SolutionMetrics:
-    """Container for all evaluation metrics."""
+    """Container for all evaluation metrics.
+
+    Hard constraints (any violation → infeasible, cost = M = 10):
+        overlap_violations   — number of overlapping block pairs
+        area_violations      — soft blocks exceeding 1% area tolerance
+        dimension_violations — fixed-shape or preplaced blocks whose
+                               dimensions (or location) deviate from input
+
+    Soft constraints (violations feed into exponential penalty):
+        boundary_violations  — blocks not touching required bbox edge/corner
+        grouping_violations  — Σ(connected_components - 1) per group
+        mib_violations       — Σ(distinct_shapes - 1) per MIB group
+
+    Informational only (not used in scoring):
+        fixed_violations     — Shapely-based shape mismatch count (debugging)
+        preplaced_violations — Shapely-based placement mismatch count (debugging)
+    """
     is_feasible: bool
     overlap_violations: int
     area_violations: int
@@ -94,8 +110,8 @@ class SolutionMetrics:
     bbox_area: float
     bbox_area_baseline: float
     area_gap: float
-    fixed_violations: int
-    preplaced_violations: int
+    fixed_violations: int       # informational only — hard constraint
+    preplaced_violations: int   # informational only — hard constraint
     boundary_violations: int
     grouping_violations: int
     mib_violations: int
@@ -339,10 +355,12 @@ def evaluate_solution(
     area_baseline = baseline_metrics.get('area_baseline', bbox_area)
     area_gap = (bbox_area - area_baseline) / max(area_baseline, 1e-6)
     
-    # Check hard constraints (feasibility)
-    # PDF: "For preplaced and fixed-shape blocks, the input dimensions wi
-    # and hi are immutable.  For all other blocks (soft blocks), w*h must
-    # satisfy the target area within 1%.  Any deviation is infeasible."
+    # Check hard constraints (feasibility).
+    # Three conditions must all hold for a feasible solution:
+    #   1. No block overlaps (intersection area = 0 for all pairs).
+    #   2. Soft-block areas within 1% of target (|w*h - a| / a ≤ 0.01).
+    #   3. Fixed-shape / preplaced dimensions (and locations for preplaced)
+    #      match the input specification exactly (tolerance 1e-4).
     overlap_violations = check_overlap(positions)
 
     # Identify fixed/preplaced blocks so they are excluded from the 1%
@@ -363,30 +381,32 @@ def evaluate_solution(
                    and dimension_violations == 0)
     
     # =========================================================================
-    # Soft constraint violations  (PDF Equation 3)
+    # Soft constraint violations
     #
-    #   Violations_relative = (V_fixed + V_preplaced + V_grouping
-    #                          + V_boundary + V_mib)  /  N_soft
+    # Fixed-shape and preplaced are HARD constraints: any deviation from
+    # the specified dimensions (or location for preplaced) makes the
+    # solution infeasible (cost = M = 10).  They are enforced above via
+    # check_dimension_hard_constraints().
     #
-    # N_soft is the MAXIMUM POSSIBLE total violations (not just the number
-    # of constrained blocks).  It acts as a normalization constant so that
-    # Violations_relative ∈ [0, 1]:
+    # The remaining soft constraints are boundary, grouping, and MIB:
     #
-    #   N_soft = |B_fixed| + |B_preplaced| + |B_boundary|
+    #   Violations_relative = (V_boundary + V_grouping + V_mib) / N_soft
+    #
+    # N_soft is the maximum possible soft violations (normalization
+    # constant so that Violations_relative ∈ [0, 1]):
+    #
+    #   N_soft = |B_boundary|
     #            + Σ_p (|G_p| - 1)       ← max grouping violations
     #            + Σ_q (|M_q| - 1)       ← max MIB violations
     #
-    # Per-block constraints (fixed, preplaced, boundary) contribute 1 each
-    # because each block either satisfies (0) or violates (1).
+    # Per-block constraints (boundary) contribute 1 each because each
+    # block either satisfies (0) or violates (1).
     #
     # Per-group constraints contribute (group_size - 1) each because:
     #   • Grouping worst case: all blocks isolated → c_p = |G_p|,
     #     violation = c_p - 1 = |G_p| - 1
     #   • MIB worst case: all blocks have different shapes → s_q = |M_q|,
     #     violation = s_q - 1 = |M_q| - 1
-    #
-    # Constraint checking reuses the same functions as cost.py's
-    # estimate_cost (check_fixed_const, check_preplaced_const, etc.).
     # =========================================================================
     fixed_violations = 0
     preplaced_violations = 0
@@ -412,10 +432,15 @@ def evaluate_solution(
         n_boundary = int((bound_const != 0).sum().item())
 
         # -----------------------------------------------------------------
-        # N_soft: maximum possible violations (PDF Eq. 3 denominator)
+        # N_soft: maximum possible soft violations (normalization constant
+        # so that Violations_relative ∈ [0, 1]).
+        #
+        # Fixed-shape and preplaced are hard constraints (dimension
+        # deviations make the solution infeasible), so they are excluded
+        # from the soft-violation denominator.  Only boundary (per-block),
+        # grouping (per-group), and MIB (per-group) count here.
         # -----------------------------------------------------------------
-        # Per-block: each constrained block can violate at most once
-        n_soft = n_fixed + n_preplaced + n_boundary
+        n_soft = n_boundary
 
         # Per-group (MIB): worst case is |M_q| distinct shapes → |M_q|-1
         n_mib_groups = int(mib_const.max().item()) if mib_const.numel() > 0 else 0
@@ -440,12 +465,16 @@ def evaluate_solution(
                 target_polys = [box(tx, ty, tx + tw, ty + th)
                                 for tx, ty, tw, th in target_positions]
 
-            # V_fixed: 1 per block whose (w,h) differ from target
+            # Fixed-shape and preplaced violations are reported for
+            # informational/debugging purposes only.  They do NOT
+            # contribute to the soft-violation score — deviations from
+            # specified dimensions or locations are hard constraints
+            # (checked by check_dimension_hard_constraints above) and
+            # make the solution infeasible (cost = M).
             if n_fixed > 0 and target_polys is not None:
                 fixed_violations = check_fixed_const(
                     torch.nonzero(fixed_const).flatten(), pred_polys, target_polys)
 
-            # V_preplaced: 1 per block whose (x,y,w,h) differ from target
             if n_preplaced > 0 and target_polys is not None:
                 preplaced_violations = check_preplaced_const(
                     torch.nonzero(preplaced_const).flatten(), pred_polys, target_polys)
@@ -495,8 +524,12 @@ def evaluate_solution(
                 if not all(touches[bit] for bit in (1, 2, 4, 8) if code & bit):
                     boundary_violations += 1
 
-    total_soft_violations = (fixed_violations + preplaced_violations +
-                            boundary_violations + grouping_violations + mib_violations)
+    # Fixed-shape and preplaced constraints are hard constraints (enforced
+    # via check_dimension_hard_constraints above).  Only boundary, grouping,
+    # and MIB remain as soft constraints whose violations feed into the
+    # exponential penalty term.
+    total_soft_violations = (boundary_violations + grouping_violations
+                            + mib_violations)
     violations_relative = total_soft_violations / max(n_soft, 1)
     
     # Compute cost

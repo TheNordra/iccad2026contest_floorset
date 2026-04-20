@@ -1,8 +1,15 @@
 # ICCAD 2026 FloorSet Challenge
 
-**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v7.pdf](./FloorplanningContest_ICCAD_2026_v7.pdf)
+**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v9.pdf](./FloorplanningContest_ICCAD_2026_v9.pdf)
 
 ## Changelog
+
+### April 19, 2026
+- **Hard constraints**: Fixed-shape and preplaced constraints are now **hard constraints** — any deviation from specified dimensions (or location for preplaced) renders the solution infeasible (cost = M = 10)
+- **Soft constraints**: Removed fixed-shape and preplaced from the soft violation formula; only boundary, grouping, and MIB remain as soft constraints
+- **Violation formula**: Updated `V_relative = (V_boundary + V_grouping + V_mib) / N_soft` and `N_soft = |B_boundary| + Σ(|G_p| - 1) + Σ(|M_q| - 1)` — fixed-shape and preplaced no longer contribute
+- **Evaluation code**: `iccad2026_evaluate.py` updated to match; `total_soft_violations` and `n_soft` no longer include fixed/preplaced counts
+- **PDF**: Updated to v9 with all hard/soft constraint changes and footnotes
 
 ### April 15, 2026
 - **Scoring**: `compute_total_score` now uses exponential weighting by block count (was linear)
@@ -44,8 +51,6 @@ The following constraints from the original FloorSet dataset are **relaxed** for
 - **Dimension immutability**: Fixed-shape and preplaced blocks must have **exact** target dimensions (w, h). Preplaced blocks must also have exact target positions (x, y).
 
 **Soft Constraints** (violations penalized via exp(β·V_rel) in cost function):
-- **Fixed-shape**: Block dimensions must match specified (w, h)
-- **Preplaced**: Block position and dimensions must match specified (x, y, w, h)
 - **Grouping**: Blocks in a group must abut (share an edge), forming a single connected component
 - **MIB** (Multi-Instantiation Blocks): Blocks in a group must have identical dimensions
 - **Boundary**: Block must touch specified bounding-box edge(s) or corner
@@ -158,7 +163,7 @@ def solve(self, block_count, area_targets, b2b_connectivity,
 - Fixed-shape and preplaced blocks must have exact target dimensions
 
 **Soft Constraints** (penalized in cost function):
-- Fixed-shape, preplaced, grouping, MIB, boundary (see above for details)
+- Grouping, MIB, boundary (see above for details)
 
 **Relaxed Constraints** (not enforced):
 - Aspect ratio: Any width/height ratio is valid
@@ -250,7 +255,7 @@ Cost = (1 + 0.5×(HPWL_gap + Area_gap)) × exp(2×V_rel) × max(0.7, RuntimeFact
 
 Where:
 - **HPWL_gap, Area_gap**: Relative gaps vs. baseline (0 = matches baseline)
-- **V_rel** ∈ [0, 1]: Normalized soft constraint violations (fixed, preplaced, grouping, boundary, MIB)
+- **V_rel** ∈ [0, 1]: Normalized soft constraint violations (grouping, boundary, MIB)
 - **RuntimeFactor**: Your runtime / median runtime of all submissions (per test case)
 - **max(0.7, ...)**: Speed benefit capped at 30%; slowness penalty is uncapped
 

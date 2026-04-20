@@ -4,9 +4,11 @@
 
 FloorSet is the basis for the **ICCAD 2026 CAD Contest Problem C, The FloorSet Challenge: Data-Driven SoC Floorplanning**.
 
+> **Contest participants:** Please refer to the [contest README](./iccad2026contest/README.md) for the authoritative getting started guide, constraint definitions, scoring details, and changelog. This top-level README covers the broader FloorSet dataset.
+
 **Contest webpage:** https://www.iccad-contest.org/Problems.html
 
-**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v8.pdf](./iccad2026contest/FloorplanningContest_ICCAD_2026_v8.pdf)
+**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v9.pdf](./iccad2026contest/FloorplanningContest_ICCAD_2026_v9.pdf)
 
 ### Contest Datasets
 
