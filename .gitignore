@@ -43,3 +43,11 @@ contest_venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# --- ICCAD 2026 Contest Data (CRITICAL) ---
+*.tar.gz
+*.gz
+/datasets/
+/data/
+*TensorData*/
+floorset_lite/
