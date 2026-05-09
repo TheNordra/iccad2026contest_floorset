@@ -336,6 +336,79 @@ class MyOptimizer(FloorplanOptimizer):
         self.cooling_rate = 0.9
         self.moves_per_temp = 20
     
+    # def solve(
+    #     self,
+    #     block_count: int,
+    #     area_targets: torch.Tensor,
+    #     b2b_connectivity: torch.Tensor,
+    #     p2b_connectivity: torch.Tensor,
+    #     pins_pos: torch.Tensor,
+    #     constraints: torch.Tensor,
+    #     target_positions: torch.Tensor = None
+    # ) -> List[Tuple[float, float, float, float]]:
+    #     """
+    #     B*-tree SA optimization.
+        
+    #     REPLACE THIS METHOD with your algorithm.
+    #     Must return List[(x, y, w, h)] with exactly block_count entries.
+    #     """
+    #     # Initialize dimensions: use target dimensions for fixed/preplaced
+    #     # blocks, otherwise start with a square matching the area target.
+    #     widths, heights = [], []
+    #     for i in range(block_count):
+    #         if (target_positions is not None and
+    #                 target_positions[i, 2] != -1 and target_positions[i, 3] != -1):
+    #             w = float(target_positions[i, 2])
+    #             h = float(target_positions[i, 3])
+    #         else:
+    #             area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
+    #             w = h = math.sqrt(area)
+    #         widths.append(w)
+    #         heights.append(h)
+        
+    #     # Build B*-tree
+    #     tree = BStarTree(block_count, widths, heights)
+    #     current_positions = tree.pack()
+    #     current_cost = self._cost(current_positions, b2b_connectivity, p2b_connectivity, pins_pos)
+        
+    #     best_tree = tree.copy()
+    #     best_positions = current_positions
+    #     best_cost = current_cost
+        
+    #     # Simulated Annealing
+    #     temp = self.initial_temp
+    #     while temp > self.final_temp:
+    #         for _ in range(self.moves_per_temp):
+    #             old_tree = tree.copy()
+                
+    #             # Random move (only rotate and delete-insert to preserve area)
+    #             move = random.randint(0, 1)
+    #             if move == 0:
+    #                 # Rotate: swap w/h (preserves area w*h)
+    #                 tree.move_rotate(random.randint(0, block_count - 1))
+    #             else:
+    #                 # Delete-insert: move block to new tree position (preserves area)
+    #                 tree.move_delete_insert(random.randint(0, block_count - 1))
+                
+    #             new_positions = tree.pack()
+    #             new_cost = self._cost(new_positions, b2b_connectivity, p2b_connectivity, pins_pos)
+                
+    #             # Accept/reject
+    #             delta = new_cost - current_cost
+    #             if delta < 0 or random.random() < math.exp(-delta / temp):
+    #                 current_positions = new_positions
+    #                 current_cost = new_cost
+    #                 if current_cost < best_cost:
+    #                     best_cost = current_cost
+    #                     best_positions = new_positions
+    #                     best_tree = tree.copy()
+    #             else:
+    #                 tree = old_tree
+            
+    #         temp *= self.cooling_rate
+        
+    #     return best_positions
+
     def solve(
         self,
         block_count: int,
@@ -345,69 +418,124 @@ class MyOptimizer(FloorplanOptimizer):
         pins_pos: torch.Tensor,
         constraints: torch.Tensor,
         target_positions: torch.Tensor = None
-    ) -> List[Tuple[float, float, float, float]]:
-        """
-        B*-tree SA optimization.
-        
-        REPLACE THIS METHOD with your algorithm.
-        Must return List[(x, y, w, h)] with exactly block_count entries.
-        """
-        # Initialize dimensions: use target dimensions for fixed/preplaced
-        # blocks, otherwise start with a square matching the area target.
-        widths, heights = [], []
-        for i in range(block_count):
-            if (target_positions is not None and
-                    target_positions[i, 2] != -1 and target_positions[i, 3] != -1):
-                w = float(target_positions[i, 2])
-                h = float(target_positions[i, 3])
-            else:
-                area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
-                w = h = math.sqrt(area)
-            widths.append(w)
-            heights.append(h)
-        
-        # Build B*-tree
-        tree = BStarTree(block_count, widths, heights)
-        current_positions = tree.pack()
-        current_cost = self._cost(current_positions, b2b_connectivity, p2b_connectivity, pins_pos)
-        
-        best_tree = tree.copy()
-        best_positions = current_positions
-        best_cost = current_cost
-        
-        # Simulated Annealing
-        temp = self.initial_temp
-        while temp > self.final_temp:
-            for _ in range(self.moves_per_temp):
-                old_tree = tree.copy()
-                
-                # Random move (only rotate and delete-insert to preserve area)
-                move = random.randint(0, 1)
-                if move == 0:
-                    # Rotate: swap w/h (preserves area w*h)
-                    tree.move_rotate(random.randint(0, block_count - 1))
-                else:
-                    # Delete-insert: move block to new tree position (preserves area)
-                    tree.move_delete_insert(random.randint(0, block_count - 1))
-                
-                new_positions = tree.pack()
-                new_cost = self._cost(new_positions, b2b_connectivity, p2b_connectivity, pins_pos)
-                
-                # Accept/reject
-                delta = new_cost - current_cost
-                if delta < 0 or random.random() < math.exp(-delta / temp):
-                    current_positions = new_positions
-                    current_cost = new_cost
-                    if current_cost < best_cost:
-                        best_cost = current_cost
-                        best_positions = new_positions
-                        best_tree = tree.copy()
-                else:
-                    tree = old_tree
+    ):
+        # version 1: error on fixed info
+        # results = [None] * block_count
+        # free_block_indices = []
+
+        # # --- 1. 先處理固定方塊 ---
+        # for i in range(block_count):
+        #     is_fixed = constraints[i, 0] == 1
+        #     is_preplaced = constraints[i, 1] == 1
             
-            temp *= self.cooling_rate
+        #     if is_fixed or is_preplaced:
+        #         # 取得固定座標 (x, y, w, h)
+        #         x = float(target_positions[i, 0])
+        #         y = float(target_positions[i, 1])
+        #         w = float(target_positions[i, 2])
+        #         h = float(target_positions[i, 3])
+
+        #         if x < 0 or y < 0 or w < 0 or h < 0:
+        #             print("#438 error: wrong result")
+
+        #         results[i] = (x, y, w, h)
+        #     else:
+        #         # 這些是我們待會要自己放的
+        #         free_block_indices.append(i)
+
+        # # --- 2. 處理自由方塊 (簡易堆疊法) ---
+        # # 為了避免重疊到固定方塊，我們可以先找一個「保險區塊」
+        # # 例如：所有固定方塊的最右邊或最上方
+        # start_x = 0.0
+        # if any(r is not None for r in results):
+        #     # 找到目前所有固定方塊的最右邊界，從那裡開始排，避免重疊
+        #     start_x = max(r[0] + r[2] for r in results if r is not None)
+
+        # current_x = start_x
+        # current_y = 0.0
+        # max_h_in_row = 0.0
+
+        # for i in free_block_indices:
+        #     area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
+        #     w = h = math.sqrt(area)
+            
+        #     # 這裡可以加入換行邏輯 (假設一個很大的寬度)
+        #     if current_x + w > start_x + 2000: # 暫定寬度
+        #         current_x = start_x
+        #         current_y += max_h_in_row
+        #         max_h_in_row = 0.0
+            
+        #     results[i] = (current_x, current_y, w, h)
+        #     current_x += w
+        #     max_h_in_row = max(max_h_in_row, h)
+
+        # return results
+
+
+        # version 2
+        results = [None] * block_count
+        to_be_placed = [] # 儲存需要我們決定位置的 index
+
+        for i in range(block_count):
+            tx, ty = float(target_positions[i, 0]), float(target_positions[i, 1])
+            tw, th = float(target_positions[i, 2]), float(target_positions[i, 3])
+
+            # 類型 1: 完全固定 (座標與長寬都有)
+            if tx != -1 and ty != -1 and tw != -1 and th != -1:
+                results[i] = (tx, ty, tw, th)
+            
+            # 類型 2: 固定長寬，但沒位置 (Hard Macro)
+            elif tw != -1 and th != -1 and tx == -1 and ty == -1:
+                results[i] = [None, None, tw, th] # 座標待定
+                to_be_placed.append(i)
+                
+            # 類型 3: 只有面積，長寬位置都沒 (Soft Macro)
+            elif tw == -1 and th == -1:
+                area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
+                # 第一版先假設為正方形
+                side = math.sqrt(area)
+                results[i] = [None, None, side, side] # 座標待定
+                to_be_placed.append(i)
+            
+            else:
+                # 預防萬一，印出沒考慮到的特殊情況
+                if self.verbose:
+                    print(f"Warning: Block {i} has unusual target: {tx, ty, tw, th}")
+                # 預設處理
+                area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
+                side = math.sqrt(area)
+                results[i] = [None, None, side, side]
+                to_be_placed.append(i)
+
+        # --- 開始簡單擺放 ---
+        # 為了避免重疊，我們先找到目前「完全固定」方塊的邊界
+        fixed_max_x = 0.0
+        for r in results:
+            if r is not None and r[0] is not None:
+                fixed_max_x = max(fixed_max_x, r[0] + r[2])
+
+        # 從固定方塊的最右邊開始排隊，這是一個絕對安全的「保險策略」
+        curr_x, curr_y = fixed_max_x, 0.0
+        max_h_in_row = 0.0
         
-        return best_positions
+        for i in to_be_placed:
+            w, h = results[i][2], results[i][3]
+            
+            # 簡單換行邏輯 (先假設一個夠大的 Die 寬度，例如 5000)
+            if curr_x + w > fixed_max_x + 5000:
+                curr_x = fixed_max_x
+                curr_y += max_h_in_row
+                max_h_in_row = 0
+            
+            results[i][0] = curr_x
+            results[i][1] = curr_y
+            
+            curr_x += w
+            max_h_in_row = max(max_h_in_row, h)
+
+        # 將 results 轉換回符合要求的 List[Tuple]
+        return [tuple(r) for r in results]
+
     
     def _cost(self, positions, b2b_conn, p2b_conn, pins_pos) -> float:
         """Evaluate solution quality (lower is better)."""
