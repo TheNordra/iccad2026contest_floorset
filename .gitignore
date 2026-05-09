@@ -51,3 +51,4 @@ Thumbs.db
 /data/
 *TensorData*/
 floorset_lite/
+viz_results/

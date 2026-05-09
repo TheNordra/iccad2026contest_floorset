@@ -40,6 +40,8 @@ RELAXED CONSTRAINTS:
 import math
 import random
 import sys
+import json
+import os
 from pathlib import Path
 from typing import List, Tuple
 
@@ -335,6 +337,7 @@ class MyOptimizer(FloorplanOptimizer):
         self.final_temp = 1.0
         self.cooling_rate = 0.9
         self.moves_per_temp = 20
+        self.case_counter = 0
     
     # def solve(
     #     self,
@@ -419,62 +422,14 @@ class MyOptimizer(FloorplanOptimizer):
         constraints: torch.Tensor,
         target_positions: torch.Tensor = None
     ):
-        # version 1: error on fixed info
-        # results = [None] * block_count
-        # free_block_indices = []
-
-        # # --- 1. 先處理固定方塊 ---
-        # for i in range(block_count):
-        #     is_fixed = constraints[i, 0] == 1
-        #     is_preplaced = constraints[i, 1] == 1
-            
-        #     if is_fixed or is_preplaced:
-        #         # 取得固定座標 (x, y, w, h)
-        #         x = float(target_positions[i, 0])
-        #         y = float(target_positions[i, 1])
-        #         w = float(target_positions[i, 2])
-        #         h = float(target_positions[i, 3])
-
-        #         if x < 0 or y < 0 or w < 0 or h < 0:
-        #             print("#438 error: wrong result")
-
-        #         results[i] = (x, y, w, h)
-        #     else:
-        #         # 這些是我們待會要自己放的
-        #         free_block_indices.append(i)
-
-        # # --- 2. 處理自由方塊 (簡易堆疊法) ---
-        # # 為了避免重疊到固定方塊，我們可以先找一個「保險區塊」
-        # # 例如：所有固定方塊的最右邊或最上方
-        # start_x = 0.0
-        # if any(r is not None for r in results):
-        #     # 找到目前所有固定方塊的最右邊界，從那裡開始排，避免重疊
-        #     start_x = max(r[0] + r[2] for r in results if r is not None)
-
-        # current_x = start_x
-        # current_y = 0.0
-        # max_h_in_row = 0.0
-
-        # for i in free_block_indices:
-        #     area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
-        #     w = h = math.sqrt(area)
-            
-        #     # 這裡可以加入換行邏輯 (假設一個很大的寬度)
-        #     if current_x + w > start_x + 2000: # 暫定寬度
-        #         current_x = start_x
-        #         current_y += max_h_in_row
-        #         max_h_in_row = 0.0
-            
-        #     results[i] = (current_x, current_y, w, h)
-        #     current_x += w
-        #     max_h_in_row = max(max_h_in_row, h)
-
-        # return results
-
-
         # version 2
         results = [None] * block_count
         to_be_placed = [] # 儲存需要我們決定位置的 index
+
+        # 0: Fixed, 1: Hard, 2: Soft
+        block_types = []
+        current_id = self.case_counter
+        self.case_counter += 1
 
         for i in range(block_count):
             tx, ty = float(target_positions[i, 0]), float(target_positions[i, 1])
@@ -483,11 +438,13 @@ class MyOptimizer(FloorplanOptimizer):
             # 類型 1: 完全固定 (座標與長寬都有)
             if tx != -1 and ty != -1 and tw != -1 and th != -1:
                 results[i] = (tx, ty, tw, th)
+                block_types.append(0)
             
             # 類型 2: 固定長寬，但沒位置 (Hard Macro)
             elif tw != -1 and th != -1 and tx == -1 and ty == -1:
                 results[i] = [None, None, tw, th] # 座標待定
                 to_be_placed.append(i)
+                block_types.append(1)
                 
             # 類型 3: 只有面積，長寬位置都沒 (Soft Macro)
             elif tw == -1 and th == -1:
@@ -496,6 +453,7 @@ class MyOptimizer(FloorplanOptimizer):
                 side = math.sqrt(area)
                 results[i] = [None, None, side, side] # 座標待定
                 to_be_placed.append(i)
+                block_types.append(2)
             
             else:
                 # 預防萬一，印出沒考慮到的特殊情況
@@ -533,6 +491,21 @@ class MyOptimizer(FloorplanOptimizer):
             curr_x += w
             max_h_in_row = max(max_h_in_row, h)
 
+        
+        viz_data = {
+            "test_id": current_id,
+            "block_count": block_count,
+            "positions": results,
+            "block_types": block_types
+        }
+        
+        # 建立一個資料夾來存放這些圖檔資料，避免洗版根目錄
+        os.makedirs("viz_results", exist_ok=True)
+        file_name = f"viz_results/case_{current_id}.json"
+        
+        with open(file_name, "w") as f:
+            json.dump(viz_data, f)
+        
         # 將 results 轉換回符合要求的 List[Tuple]
         return [tuple(r) for r in results]
 
