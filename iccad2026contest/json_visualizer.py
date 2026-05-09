@@ -25,6 +25,8 @@ def visualize_viz_json(case_id):
     }
 
     fig, ax = plt.subplots(figsize=(10, 8))
+
+    ax.set_aspect('equal', adjustable='box')
     
     # 用來追蹤所有方塊的邊界
     all_x_end = []
@@ -52,16 +54,20 @@ def visualize_viz_json(case_id):
     if all_x_end and all_y_end:
         max_x = max(all_x_end)
         max_y = max(all_y_end)
+        min_x = min([p[0] for p in positions])
+        min_y = min([p[1] for p in positions])
         # 加上 10% 的緩衝空間
-        ax.set_xlim(-10, max_x * 1.1)
-        ax.set_ylim(-10, max_y * 1.1)
+        margin = max(max_x - min_x, max_y - min_y) * 0.05
+        ax.set_xlim(min_x - margin, max_x + margin)
+        ax.set_ylim(min_y - margin, max_y + margin)
     else:
         print("警告：沒有偵測到任何方塊座標資料")
 
     ax.set_aspect('equal')
     plt.title(f"Case {case_id}, Block Count: {block_count}")
-    print(f"成功繪製 Test ID: {target_id}")
     plt.grid(True, linestyle=':', alpha=0.4)
+    plt.tight_layout()
+    print(f"成功繪製 Test ID: {target_id}")
     plt.show()
 
 
