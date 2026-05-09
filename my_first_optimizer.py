@@ -412,103 +412,320 @@ class MyOptimizer(FloorplanOptimizer):
         
     #     return best_positions
 
-    def solve(
-        self,
-        block_count: int,
-        area_targets: torch.Tensor,
-        b2b_connectivity: torch.Tensor,
-        p2b_connectivity: torch.Tensor,
-        pins_pos: torch.Tensor,
-        constraints: torch.Tensor,
-        target_positions: torch.Tensor = None
-    ):
-        # version 2
+
+    # version 2
+    # def solve(self, block_count, area_targets, b2b_connectivity, p2b_connectivity, pins_pos, constraints, target_positions=None):
+
+    #     results = [None] * block_count
+    #     block_types = [0] * block_count
+        
+    #     # 1. 識別固定方塊與初始邊界
+    #     fixed_max_x = 0.0
+    #     for i in range(block_count):
+    #         tx, ty = float(target_positions[i, 0]), float(target_positions[i, 1])
+    #         tw, th = float(target_positions[i, 2]), float(target_positions[i, 3])
+            
+    #         if tx != -1 and ty != -1 and tw != -1 and th != -1:
+    #             results[i] = (tx, ty, tw, th)
+    #             block_types[i] = 0 # Fixed
+    #             fixed_max_x = max(fixed_max_x, tx + tw)
+    #         elif tw != -1 and th != -1:
+    #             block_types[i] = 1 # Hard
+    #         else:
+    #             block_types[i] = 2 # Soft
+
+    #     # 2. 設定 Bin Packing 參數
+    #     # 為了壓縮面積，我們縮減 MAX_WIDTH 並移除間距 (Gap = 0)
+    #     MAX_WIDTH = 250.0  
+    #     curr_x = fixed_max_x # 起點緊貼固定塊
+    #     curr_y = 0.0
+    #     row_max_h = 0.0
+    #     start_x_for_row = curr_x
+    #     GAP = 0.0 # 實現共邊，移除浪費空間
+
+    #     # 3. 排序優化 (關鍵步驟)：先放高的方塊，行高會更整齊
+    #     # 建立一個索引清單，排除固定塊後按高度降序排序
+    #     free_blocks = []
+    #     for i in range(block_count):
+    #         if results[i] is None:
+    #             if block_types[i] == 1: # Hard
+    #                 h = float(target_positions[i, 3])
+    #             else: # Soft
+    #                 h = math.sqrt(float(area_targets[i]))
+    #             free_blocks.append((i, h))
+        
+    #     # 按高度從高到低排序 (Decreasing Height)
+    #     free_blocks.sort(key=lambda x: x[1], reverse=True)
+
+    #     # 4. 開始填充
+    #     for i, _ in free_blocks:
+    #         # 取得寬高
+    #         if block_types[i] == 1: # Hard
+    #             w, h = float(target_positions[i, 2]), float(target_positions[i, 3])
+    #         else: # Soft
+    #             area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
+    #             w = h = math.sqrt(area)
+            
+    #         # 換行檢查
+    #         if curr_x + w > start_x_for_row + MAX_WIDTH:
+    #             curr_x = start_x_for_row
+    #             curr_y += row_max_h # 緊貼上一行頂部換行
+    #             row_max_h = 0.0
+            
+    #         # 執行擺放 (座標完全共邊)
+    #         results[i] = (curr_x, curr_y, w, h)
+            
+    #         # 更新狀態
+    #         row_max_h = max(row_max_h, h)
+    #         curr_x += w # 下一個方塊起點就是目前方塊的終點
+            
+    #     # 5. 產出視覺化 JSON
+    #     current_id = self.case_counter
+    #     self.case_counter += 1
+    #     viz_data = {"test_id": current_id, "block_count": block_count, "positions": results, "block_types": block_types}
+    #     os.makedirs("viz_results", exist_ok=True)
+    #     with open(f"viz_results/case_{current_id}.json", "w") as f:
+    #         json.dump(viz_data, f)
+
+    #     return [tuple(r) for r in results]
+
+
+    # version 3
+    # def solve(self, block_count, area_targets, b2b_connectivity, p2b_connectivity, pins_pos, constraints, target_positions=None):
+
+    #     results = [None] * block_count
+    #     block_types = [0] * block_count
+        
+    #     # 1. 識別固定方塊與初始邊界
+    #     fixed_max_x = 0.0
+    #     for i in range(block_count):
+    #         tx, ty = float(target_positions[i, 0]), float(target_positions[i, 1])
+    #         tw, th = float(target_positions[i, 2]), float(target_positions[i, 3])
+            
+    #         if tx != -1 and ty != -1 and tw != -1 and th != -1:
+    #             results[i] = (tx, ty, tw, th)
+    #             block_types[i] = 0 # Fixed
+    #             fixed_max_x = max(fixed_max_x, tx + tw)
+    #         elif tw != -1 and th != -1:
+    #             block_types[i] = 1 # Hard
+    #         else:
+    #             block_types[i] = 2 # Soft
+
+    #     # 2. 設定 Bin Packing 參數
+    #     # 為了壓縮面積，我們縮減 MAX_WIDTH 並移除間距 (Gap = 0)
+    #     MAX_WIDTH = 250.0  
+    #     curr_x = fixed_max_x # 起點緊貼固定塊
+    #     curr_y = 0.0
+    #     row_max_h = 0.0
+    #     start_x_for_row = curr_x
+    #     GAP = 0.0 # 實現共邊，移除浪費空間
+
+    #     # 3. 排序優化 (關鍵步驟)：先放高的方塊，行高會更整齊
+    #     # 建立一個索引清單，排除固定塊後按高度降序排序
+    #     free_blocks = []
+    #     for i in range(block_count):
+    #         if results[i] is None:
+    #             if block_types[i] == 1: # Hard
+    #                 h = float(target_positions[i, 3])
+    #             else: # Soft
+    #                 h = math.sqrt(float(area_targets[i]))
+    #             free_blocks.append((i, h))
+        
+    #     # 按高度從高到低排序 (Decreasing Height)
+    #     free_blocks.sort(key=lambda x: x[1], reverse=True)
+
+    #     # 4. 開始填充
+    #     for i, _ in free_blocks:
+    #         # 取得寬高
+    #         if block_types[i] == 1: # Hard
+    #             w, h = float(target_positions[i, 2]), float(target_positions[i, 3])
+    #         else: # Soft
+    #             area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
+    #             w = h = math.sqrt(area)
+            
+    #         # 換行檢查
+    #         if curr_x + w > start_x_for_row + MAX_WIDTH:
+    #             curr_x = start_x_for_row
+    #             curr_y += row_max_h # 緊貼上一行頂部換行
+    #             row_max_h = 0.0
+            
+    #         # 執行擺放 (座標完全共邊)
+    #         results[i] = (curr_x, curr_y, w, h)
+            
+    #         # 更新狀態
+    #         row_max_h = max(row_max_h, h)
+    #         curr_x += w # 下一個方塊起點就是目前方塊的終點
+            
+    #     # 5. 產出視覺化 JSON
+    #     current_id = self.case_counter
+    #     self.case_counter += 1
+    #     viz_data = {"test_id": current_id, "block_count": block_count, "positions": results, "block_types": block_types}
+    #     os.makedirs("viz_results", exist_ok=True)
+    #     with open(f"viz_results/case_{current_id}.json", "w") as f:
+    #         json.dump(viz_data, f)
+
+    #     return [tuple(r) for r in results]
+
+
+    # version 4
+    # def solve(self, block_count, area_targets, b2b_connectivity, p2b_connectivity, pins_pos, constraints, target_positions=None):
+    #     import math
+    #     import os
+    #     import json
+
+    #     results = [None] * block_count
+    #     block_types = [0] * block_count
+        
+    #     # 1. 識別固定方塊與初始邊界
+    #     fixed_blocks = []
+    #     for i in range(block_count):
+    #         tx, ty = float(target_positions[i, 0]), float(target_positions[i, 1])
+    #         tw, th = float(target_positions[i, 2]), float(target_positions[i, 3])
+            
+    #         if tx != -1 and ty != -1 and tw != -1 and th != -1:
+    #             results[i] = (tx, ty, tw, th)
+    #             block_types[i] = 0 # Fixed
+    #             fixed_blocks.append((tx, ty, tw, th))
+    #         elif tw != -1 and th != -1:
+    #             block_types[i] = 1 # Hard
+    #         else:
+    #             block_types[i] = 2 # Soft
+
+    #     # 2. 排序優化：按高度降序，確保行高由最高的方塊決定
+    #     free_blocks = []
+    #     for i in range(block_count):
+    #         if results[i] is None:
+    #             h = float(target_positions[i, 3]) if block_types[i] == 1 else math.sqrt(float(area_targets[i]))
+    #             free_blocks.append((i, h))
+    #     free_blocks.sort(key=lambda x: x[1], reverse=True)
+
+    #     # 3. 填充邏輯：優先填補固定方塊上方的空間，並調整 Soft Macro 比例
+    #     MAX_WIDTH = 300.0
+    #     curr_x = 0.0
+    #     curr_y = 0.0
+    #     row_max_h = 0.0
+        
+    #     # 處理 17 號等固定方塊上方的填補 (假設從 X=0 開始掃描)
+    #     # 這裡簡化為：將自由方塊從 X=0 開始排，碰到固定方塊就跳過重疊區域
+    #     for idx, _ in free_blocks:
+    #         if results[idx] is not None: continue
+            
+    #         # 取得原始面積與寬高
+    #         if block_types[idx] == 1: # Hard
+    #             w, h = float(target_positions[idx, 2]), float(target_positions[idx, 3])
+    #         else: # Soft: 初始嘗試高度對齊
+    #             area = float(area_targets[idx]) if area_targets[idx] > 0 else 1.0
+    #             # 如果是該行第一個方塊，設為正方形定出行高；否則對齊行高
+    #             if row_max_h == 0:
+    #                 w = h = math.sqrt(area)
+    #                 row_max_h = h
+    #             else:
+    #                 h = row_max_h # 強制對齊行高
+    #                 w = area / h  # 調整寬度以維持面積不變
+
+    #         # 換行檢查
+    #         if curr_x + w > MAX_WIDTH:
+    #             curr_x = 0.0
+    #             curr_y += row_max_h
+    #             row_max_h = 0.0
+    #             # 換行後重新計算第一個方塊的寬高
+    #             if block_types[idx] == 2:
+    #                 w = h = math.sqrt(area)
+    #                 row_max_h = h
+    #             else:
+    #                 row_max_h = h
+
+    #         # 簡單碰撞檢查：如果與固定方塊重疊，則 X 移到固定方塊右側
+    #         for (fx, fy, fw, fh) in fixed_blocks:
+    #             # 檢查 Y 軸是否有交集
+    #             if not (curr_y + h <= fy or curr_y >= fy + fh):
+    #                 # 檢查 X 軸是否重疊
+    #                 if not (curr_x + w <= fx or curr_x >= fx + fw):
+    #                     curr_x = fx + fw # 移到右側
+
+    #         results[idx] = (curr_x, curr_y, w, h)
+    #         curr_x += w
+
+    #     # 4. 產出視覺化與回傳
+    #     current_id = self.case_counter
+    #     self.case_counter += 1
+    #     viz_data = {"test_id": current_id, "block_count": block_count, "positions": results, "block_types": block_types}
+    #     os.makedirs("viz_results", exist_ok=True)
+    #     with open(f"viz_results/case_{current_id}.json", "w") as f:
+    #         json.dump(viz_data, f)
+
+    #     return [tuple(r) for r in results]
+
+
+    # version 5
+    def solve(self, block_count, area_targets, b2b_connectivity, p2b_connectivity, pins_pos, constraints, target_positions=None):
+        import math
+        import os
+        import json
+
         results = [None] * block_count
-        to_be_placed = [] # 儲存需要我們決定位置的 index
-
-        # 0: Fixed, 1: Hard, 2: Soft
-        block_types = []
-        current_id = self.case_counter
-        self.case_counter += 1
-
+        block_types = [0] * block_count
+        
+        # 1. 初始資料整理
         for i in range(block_count):
-            tx, ty = float(target_positions[i, 0]), float(target_positions[i, 1])
-            tw, th = float(target_positions[i, 2]), float(target_positions[i, 3])
-
-            # 類型 1: 完全固定 (座標與長寬都有)
-            if tx != -1 and ty != -1 and tw != -1 and th != -1:
-                results[i] = (tx, ty, tw, th)
-                block_types.append(0)
-            
-            # 類型 2: 固定長寬，但沒位置 (Hard Macro)
-            elif tw != -1 and th != -1 and tx == -1 and ty == -1:
-                results[i] = [None, None, tw, th] # 座標待定
-                to_be_placed.append(i)
-                block_types.append(1)
-                
-            # 類型 3: 只有面積，長寬位置都沒 (Soft Macro)
-            elif tw == -1 and th == -1:
-                area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
-                # 第一版先假設為正方形
-                side = math.sqrt(area)
-                results[i] = [None, None, side, side] # 座標待定
-                to_be_placed.append(i)
-                block_types.append(2)
-            
+            tx, ty, tw, th = map(float, target_positions[i])
+            if tx != -1 and ty != -1:
+                results[i] = [tx, ty, tw, th]
+                block_types[i] = 0
             else:
-                # 預防萬一，印出沒考慮到的特殊情況
-                if self.verbose:
-                    print(f"Warning: Block {i} has unusual target: {tx, ty, tw, th}")
-                # 預設處理
-                area = float(area_targets[i]) if area_targets[i] > 0 else 1.0
-                side = math.sqrt(area)
-                results[i] = [None, None, side, side]
-                to_be_placed.append(i)
+                block_types[i] = 1 if tw != -1 else 2
 
-        # --- 開始簡單擺放 ---
-        # 為了避免重疊，我們先找到目前「完全固定」方塊的邊界
-        fixed_max_x = 0.0
-        for r in results:
-            if r is not None and r[0] is not None:
-                fixed_max_x = max(fixed_max_x, r[0] + r[2])
+        free_indices = [i for i in range(block_count) if results[i] is None]
+        # 按面積降序，大塊先放
+        free_indices.sort(key=lambda x: area_targets[x], reverse=True)
 
-        # 從固定方塊的最右邊開始排隊，這是一個絕對安全的「保險策略」
-        curr_x, curr_y = fixed_max_x, 0.0
-        max_h_in_row = 0.0
-        
-        for i in to_be_placed:
-            w, h = results[i][2], results[i][3]
-            
-            # 簡單換行邏輯 (先假設一個夠大的 Die 寬度，例如 5000)
-            if curr_x + w > fixed_max_x + 5000:
-                curr_x = fixed_max_x
-                curr_y += max_h_in_row
-                max_h_in_row = 0
-            
-            results[i][0] = curr_x
-            results[i][1] = curr_y
-            
-            curr_x += w
-            max_h_in_row = max(max_h_in_row, h)
+        # 2. 定義一個精確的碰撞檢查函數
+        def is_overlap(x, y, w, h, current_results):
+            for res in current_results:
+                if res is None: continue
+                rx, ry, rw, rh = res
+                # 檢查矩形交集
+                if not (x + w <= rx or x >= rx + rw or y + h <= ry or y >= ry + rh):
+                    return True
+            return False
 
-        
-        viz_data = {
-            "test_id": current_id,
-            "block_count": block_count,
-            "positions": results,
-            "block_types": block_types
-        }
-        
-        # 建立一個資料夾來存放這些圖檔資料，避免洗版根目錄
+        # 3. 填充循環
+        MAX_WIDTH = 300.0
+        STEP = 2.0 # 步進值，越小越精確但越慢
+
+        for idx in free_indices:
+            area = float(area_targets[idx])
+            # 初始嘗試：維持一個合理的 Aspect Ratio (例如 0.5 ~ 2.0)
+            best_h = math.sqrt(area)
+            best_w = area / best_h
+            
+            found = False
+            # 由下而上 (y)，由左向右 (x) 搜尋
+            for y_top in range(0, 500, int(STEP)):
+                for x_left in range(0, int(MAX_WIDTH), int(STEP)):
+                    # 測試 Soft Macro 是否可以透過變形塞入目前的 y 高度
+                    # 我們嘗試三種比例：瘦長、正方、扁平
+                    for ratio in [1.5, 1.0, 0.6]:
+                        test_h = math.sqrt(area * ratio)
+                        test_w = area / test_h
+                        
+                        if x_left + test_w <= MAX_WIDTH:
+                            if not is_overlap(x_left, y_top, test_w, test_h, results):
+                                results[idx] = [float(x_left), float(y_top), test_w, test_h]
+                                found = True
+                                break
+                    if found: break
+                if found: break
+
+        # 4. 輸出
+        viz_data = {"test_id": self.case_counter, "block_count": block_count, "positions": results, "block_types": block_types}
+        self.case_counter += 1
         os.makedirs("viz_results", exist_ok=True)
-        file_name = f"viz_results/case_{current_id}.json"
-        
-        with open(file_name, "w") as f:
+        with open(f"viz_results/case_{viz_data['test_id']}.json", "w") as f:
             json.dump(viz_data, f)
-        
-        # 將 results 轉換回符合要求的 List[Tuple]
+            
         return [tuple(r) for r in results]
-
+    
     
     def _cost(self, positions, b2b_conn, p2b_conn, pins_pos) -> float:
         """Evaluate solution quality (lower is better)."""
