@@ -526,6 +526,9 @@ class MyOptimizer(FloorplanOptimizer):
 
         # 6. 輸出結果
         viz_data = {"test_id": self.case_counter, "block_count": block_count, "positions": results, "block_types": block_types}
+        os.makedirs("viz_results", exist_ok=True)
+        with open(f"viz_results/case_{self.case_counter}.json", "w") as f:
+            json.dump(viz_data, f)
         self.case_counter += 1
         return [tuple(r) for r in results]
         
