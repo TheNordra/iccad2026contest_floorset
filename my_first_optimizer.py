@@ -337,199 +337,134 @@ class MyOptimizer(FloorplanOptimizer):
         self.cooling_rate = 0.9
         self.moves_per_temp = 20
         self.case_counter = 0
-    
-    # version 6: Total Score: 21.9174, Avg Cost: 13.5191, Avg Runtime: 3.56s
-    # def solve(self, block_count, area_targets, b2b_connectivity, p2b_connectivity, pins_pos, constraints, target_positions=None):
 
-    #     results = [None] * block_count
-    #     block_types = [0] * block_count # 0:Fixed, 1:Hard, 2:Soft
-    #     fixed_blocks = []
-
-    #     # 1. 初始化資料與計算理想高度
-    #     total_soft_area = 0.0
-    #     for i in range(block_count):
-    #         tx, ty, tw, th = map(float, target_positions[i])
-    #         if tx != -1 and ty != -1:
-    #             results[i] = [tx, ty, tw, th]
-    #             block_types[i] = 0
-    #             fixed_blocks.append((tx, ty, tw, th))
-    #         else:
-    #             block_types[i] = 1 if tw != -1 else 2
-    #             total_soft_area += float(area_targets[i]) if area_targets[i] > 0 else 100.0
-
-    #     # 計算理想目標高度 (1.1x 緩衝)
-    #     MAX_WIDTH = 300.0
-    #     h_target = (total_soft_area / MAX_WIDTH) * 1.1
-
-    #     # 2. 排序優化：大方塊與不可變形的 Hard Macro 優先
-    #     free_indices = [i for i in range(block_count) if results[i] is None]
-    #     free_indices.sort(key=lambda x: (block_types[x], area_targets[x]), reverse=True)
-
-    #     # 3. 幾何碰撞檢查函數 (保證 0 重疊)
-    #     def check_collision(x, y, w, h, placed_results):
-    #         for res in placed_results:
-    #             if res is None: continue
-    #             px, py, pw, ph = res
-    #             # AABB 碰撞檢測：如果不滿足「完全分離」，則重疊
-    #             if not (x + w <= px or x >= px + pw or y + h <= py or y >= py + ph):
-    #                 return True
-    #         return False
-
-    #     # 4. 填充邏輯：搜尋與變形填滿 (Step-based Search)
-    #     # STEP 越小越緊湊但運算越慢，2.0 是一個折衷方案
-    #     X_STEP = 2.0 
-    #     Y_STEP = 2.0
-
-    #     for idx in free_indices:
-    #         area = float(area_targets[idx])
-    #         found = False
-            
-    #         # 從 Y=0, X=0 開始，由下而上、由左向右搜尋空隙
-    #         # 搜尋上限設高一點 (例如 500) 確保能塞下，但會優先填低處
-    #         for y in range(0, 500, int(Y_STEP)):
-    #             for x in range(0, int(MAX_WIDTH), int(X_STEP)):
-                    
-    #                 if block_types[idx] == 1: # Hard Macro: 尺寸固定
-    #                     w, h = float(target_positions[idx, 2]), float(target_positions[idx, 3])
-    #                     if x + w <= MAX_WIDTH:
-    #                         if not check_collision(x, y, w, h, results):
-    #                             results[idx] = [float(x), float(y), w, h]
-    #                             found = True
-    #                             break
-    #                 else: # Soft Macro: 可變形填充
-    #                     # 嘗試不同比例：扁平 (2:1), 正方 (1:1), 瘦長 (1:2)
-    #                     # 這是為了壓縮空間，不執著於正方形
-    #                     possible_ratios = [0.5, 1.0, 2.0] # w:h ratio
-                        
-    #                     # 特殊邏輯：主動填補固定塊下方。如果上方有固定塊，計算高度以貼合
-    #                     w_test = h_test = math.sqrt(area)
-    #                     ceiling_y = 999.0
-    #                     for (fx, fy, fw, fh) in fixed_blocks:
-    #                         if x >= fx and x < fx + fw: # 目前 X 在固定塊下方
-    #                             if fy > y: ceiling_y = min(ceiling_y, fy)
-                        
-    #                     # 如果有天花板，且空間不大不小 (例如是原本 square 高度的 0.8x~1.5x)
-    #                     if ceiling_y != 999.0 and \
-    #                        (h_test * 0.8) <= (ceiling_y - y) <= (h_test * 1.5):
-    #                         possible_ratios = [(area / (ceiling_y - y)**2)] # 計算新的寬高比
-
-    #                     for ratio in possible_ratios:
-    #                         # 確保 Aspect Ratio 在 [1/3, 3] 之內
-    #                         test_ratio = max(0.33, min(3.0, ratio))
-    #                         h = math.sqrt(area / test_ratio)
-    #                         w = area / h
-                            
-    #                         if x + w <= MAX_WIDTH:
-    #                             if not check_collision(x, y, w, h, results):
-    #                                 results[idx] = [float(x), float(y), w, h]
-    #                                 found = True
-    #                                 break
-    #                     if found: break
-    #                 if found: break
-    #             if found: break
-
-    #     # 5. 輸出
-    #     current_id = self.case_counter
-    #     self.case_counter += 1
-    #     viz_data = {"test_id": current_id, "block_count": block_count, "positions": results, "block_types": block_types}
-    #     os.makedirs("viz_results", exist_ok=True)
-    #     with open(f"viz_results/case_{current_id}.json", "w") as f:
-    #         json.dump(viz_data, f)
-
-    #     return [tuple(r) for r in results]
-
-    # version 7:
     def solve(self, block_count, area_targets, b2b_connectivity, p2b_connectivity, pins_pos, constraints, target_positions=None):
+        import math
+        import os
+        import json
 
         results = [None] * block_count
         block_types = [0] * block_count
-        fixed_blocks = []
-
-        # 1. 快速提取固定塊
+        MAX_WIDTH = 300
+        
+        # 1. 預置固定塊
         for i in range(block_count):
             tx, ty, tw, th = map(float, target_positions[i])
             if tx != -1 and ty != -1:
                 results[i] = [tx, ty, tw, th]
                 block_types[i] = 0
-                fixed_blocks.append((tx, ty, tw, th))
             else:
                 block_types[i] = 1 if tw != -1 else 2
 
-        # 2. 預測目標高度以決定 Soft Macro 初始比例
-        total_area = sum([float(a) for a in area_targets if a > 0])
-        MAX_WIDTH = 300.0
-        est_h = total_area / MAX_WIDTH
+        # 碰撞檢查函數
+        def is_overlap(x, y, w, h, current_results):
+            for res in current_results:
+                if res is None: continue
+                rx, ry, rw, rh = res
+                if not (x + w <= rx or x >= rx + rw or y + h <= ry or y >= ry + rh):
+                    return True
+            return False
 
-        # 3. Skyline 陣列：用來儲存每個 X 位置目前的最高 Y (解析度 1 單位，長度 300)
-        skyline = [0.0] * 301
-        
-        # 將固定塊寫入 Skyline（若固定塊下方是空的，此邏輯會優先填下方）
-        # 為了填滿 6 號下方，我們先不把固定塊寫入底部的 Skyline，而是視為「天花板」障礙
-        
-        # 4. 排序：按寬度降序 (大塊先放，底部會更平整)
+        # --- 新增：引力中心計算 (Force-Directed Target) ---
+        def calculate_gravity_center(idx, p2b, pins, b2b, current_results):
+            sum_x, sum_y, total_weight = 0.0, 0.0, 0.0
+            
+            # 計算來自 Pin 的引力
+            if p2b is not None:
+                for edge in p2b:
+                    pin_idx, blk_idx = int(edge[0]), int(edge[1])
+                    weight = float(edge[2]) if len(edge) > 2 else 1.0
+                    if blk_idx == idx:
+                        px, py = float(pins[pin_idx][0]), float(pins[pin_idx][1])
+                        sum_x += px * weight
+                        sum_y += py * weight
+                        total_weight += weight
+                        
+            # 計算來自已放置方塊的引力
+            if b2b is not None:
+                for edge in b2b:
+                    b1, b2 = int(edge[0]), int(edge[1])
+                    weight = float(edge[2]) if len(edge) > 2 else 1.0
+                    target_b = b2 if b1 == idx else (b1 if b2 == idx else -1)
+                    
+                    if target_b != -1 and current_results[target_b] is not None:
+                        tx, ty, tw, th = current_results[target_b]
+                        sum_x += (tx + tw / 2.0) * weight
+                        sum_y += (ty + th / 2.0) * weight
+                        total_weight += weight
+                        
+            if total_weight > 0:
+                return sum_x / total_weight, sum_y / total_weight
+            return -1, -1 # 沒有連線，或者連線對象還沒放置
+        # ------------------------------------------------
+
+        # 2. 排序：大面積優先放置
         free_indices = [i for i in range(block_count) if results[i] is None]
-        free_indices.sort(key=lambda x: area_targets[x], reverse=True)
+        free_indices.sort(key=lambda x: (block_types[x] == 1, area_targets[x]), reverse=True)
 
-        def get_min_y_range(w_int):
-            best_x = 0
-            min_y = 1e9
-            for x in range(0, int(MAX_WIDTH - w_int) + 1, 2): # 步進 2 增加速度
-                current_max_y = max(skyline[x : x + w_int])
-                if current_max_y < min_y:
-                    min_y = current_max_y
-                    best_x = x
-            return best_x, min_y
-
-        # 5. 快速填充
+        # 3. 引力感知放置 (Gravity-Aware Placement)
         for idx in free_indices:
             area = float(area_targets[idx])
             
-            # 決定尺寸：Soft Macro 根據目標高度調整
             if block_types[idx] == 1:
                 w, h = float(target_positions[idx, 2]), float(target_positions[idx, 3])
             else:
-                # 策略：為了壓縮高度，讓寬度稍微大於高度 (Ratio 1.2~1.5)
-                w = math.sqrt(area * 1.3)
+                w = math.sqrt(area * 1.5) 
                 h = area / w
+
+            # 計算該方塊的理想中心點
+            target_x, target_y = calculate_gravity_center(idx, p2b_connectivity, pins_pos, b2b_connectivity, results)
             
-            w_int = int(math.ceil(w))
-            
-            # 尋找最低地面
-            best_x, min_y = get_min_y_range(w_int)
-            
-            # 碰撞檢查與天花板感知 (Case 80, Block 6 下方填充)
-            # 檢查目前位置上方是否有固定塊阻擋
-            for fx, fy, fw, fh in fixed_blocks:
-                # 如果 X 範圍有重疊
-                if not (best_x + w <= fx or best_x >= fx + fw):
-                    # 如果會撞到固定塊，且固定塊在我們上方
-                    if min_y < fy and min_y + h > fy:
-                        # 壓縮高度以填滿空隙
+            best_pos = None
+            best_score = float('inf')
+            found_y_baseline = -1
+
+            # 開始掃描空位
+            for y_ptr in range(0, 1000, 2):
+                # 效能鎖：如果已經找到空位，往上找 30 單位都沒有更好的引力點，就提早結束 (保證 1 秒內)
+                if found_y_baseline != -1 and y_ptr > found_y_baseline + 30:
+                    break
+                    
+                for x_ptr in range(0, MAX_WIDTH - int(w) + 1, 4):
+                    if not is_overlap(x_ptr, y_ptr, w, h, results):
+                        
+                        # Soft Macro 形狀適應
+                        test_w, test_h = w, h
                         if block_types[idx] == 2:
-                            h = fy - min_y
-                            w = area / h
-                            w_int = int(math.ceil(w))
-                            # 重新檢查 X 邊界
-                            if best_x + w_int > MAX_WIDTH:
-                                best_x = int(MAX_WIDTH - w_int)
+                            if x_ptr + w * 1.2 <= MAX_WIDTH and not is_overlap(x_ptr, y_ptr, w * 1.2, area / (w * 1.2), results):
+                                test_w = w * 1.2
+                                test_h = area / test_w
+                                
+                        cand_cx = x_ptr + test_w / 2.0
+                        cand_cy = y_ptr + test_h / 2.0
+                        
+                        # --- 核心評分邏輯 ---
+                        if target_x != -1:
+                            # 綜合評估：與目標的曼哈頓距離 (滿足你的向量引力) + 輕度向下重力 (避免亂飄導致面積暴增)
+                            distance_penalty = abs(cand_cx - target_x) + abs(cand_cy - target_y)
+                            total_score = distance_penalty * 1.0 + y_ptr * 0.2
                         else:
-                            # Hard Macro 撞到了就疊到固定塊上面
-                            min_y = fy + fh
+                            # 沒有連線目標，純粹向下堆疊填滿空白
+                            total_score = y_ptr * 1.0 
+                            
+                        if total_score < best_score:
+                            best_score = total_score
+                            best_pos = [float(x_ptr), float(y_ptr), float(test_w), float(test_h)]
+                            if found_y_baseline == -1:
+                                found_y_baseline = y_ptr
 
-            # 最終檢查是否與任何方塊重疊（確保安全）
-            results[idx] = [float(best_x), float(min_y), w, h]
-            
-            # 更新 Skyline
-            new_top = min_y + h
-            for x in range(best_x, min_y_range_end := min(301, best_x + w_int)):
-                skyline[x] = new_top
+            if best_pos:
+                results[idx] = best_pos
+            else:
+                results[idx] = [0.0, 800.0, w, h] # 備用方案
 
-        # 6. 輸出結果
+        # 4. 輸出視覺化資料
         viz_data = {"test_id": self.case_counter, "block_count": block_count, "positions": results, "block_types": block_types}
         os.makedirs("viz_results", exist_ok=True)
         with open(f"viz_results/case_{self.case_counter}.json", "w") as f:
             json.dump(viz_data, f)
         self.case_counter += 1
+
         return [tuple(r) for r in results]
         
     def _cost(self, positions, b2b_conn, p2b_conn, pins_pos) -> float:

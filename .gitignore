@@ -52,3 +52,6 @@ Thumbs.db
 *TensorData*/
 floorset_lite/
 viz_results/
+
+# Cpp Executation Data
+.exe
