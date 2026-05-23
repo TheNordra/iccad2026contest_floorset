@@ -1,4 +1,4 @@
-# FloorSet - a VLSI Floorplanning Dataset with Design Constraints of Real-World SoCs
+### FloorSet - a VLSI Floorplanning Dataset with Design Constraints of Real-World SoCs
 
 ## ICCAD 2026 Contest
 
@@ -8,7 +8,7 @@ FloorSet is the basis for the **ICCAD 2026 CAD Contest Problem C, The FloorSet C
 
 **Contest webpage:** https://www.iccad-contest.org/Problems.html
 
-**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v9.pdf](./iccad2026contest/FloorplanningContest_ICCAD_2026_v9.pdf)
+**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v10.pdf](./iccad2026contest/FloorplanningContest_ICCAD_2026_v10.pdf)
 
 ### Contest Datasets
 

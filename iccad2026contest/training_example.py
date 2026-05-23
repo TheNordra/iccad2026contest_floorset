@@ -4,6 +4,20 @@ ICCAD 2026 FloorSet Challenge - Training Data Example
 
 Shows how to train a neural network using the DIFFERENTIABLE contest cost function.
 Run: python iccad2026contest/training_example.py
+<<<<<<< HEAD
+=======
+
+The loss approximates the contest evaluation formula:
+  Cost ≈ (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)
+
+Note: RuntimeFactor (× max(0.7, R^γ)) is omitted — it is not available during
+training. The full contest cost is evaluated server-side using per-test-case
+median runtimes across all submissions. V_soft here is a differentiable proxy
+(overlap area + area-tolerance excess), not the exact grouping/MIB/boundary
+violation counts used in final scoring.
+
+But implemented with differentiable operations for .backward()
+>>>>>>> origin/main
 """
 
 import sys

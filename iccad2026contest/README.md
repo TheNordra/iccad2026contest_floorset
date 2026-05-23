@@ -1,8 +1,15 @@
 # ICCAD 2026 FloorSet Challenge
 
-**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v9.pdf](./FloorplanningContest_ICCAD_2026_v9.pdf)
+**Contest specification (PDF):** [FloorplanningContest_ICCAD_2026_v10.pdf](./FloorplanningContest_ICCAD_2026_v10.pdf)
 
 ## Changelog
+
+### May 20, 2026
+- **PDF**: Updated to v10 — corrected Total Score formula to use `exp(n/12)` weighting; updated Equation 2 to cap feasible cost at M−10⁻⁶; listed all 4 hard constraints in the Objective Function section; corrected "Total Score close to 0.1" to "close to 1.0"
+- **iccad2026_evaluate.py**: Exponential weighting changed from `exp(n)` to `exp(n/12)`; feasible cost capped at M−10⁻⁶ to guarantee feasible always scores below infeasible; local RuntimeFactor set to 1.0 (neutral) for all test cases; `compute_cost` docstring updated to reflect all 4 hard constraints, gap clamping, and feasible cost cap
+- **optimizer_template.py**: Added dimension immutability (fixed-shape/preplaced) to hard constraint list in docstring
+- **training_example.py**: Corrected module docstring and inline comment — training loss is a proxy that omits RuntimeFactor and uses differentiable soft violations
+- **README**: Updated PDF link to v10; added `--baseline` and `--visualize` to Commands Reference table; documented boundary constraint bitmask encoding; updated Scoring section with runtime normalization note, feasible cost cap, exponential weighting table, and all 4 hard constraints
 
 ### April 19, 2026
 - **Hard constraints**: Fixed-shape and preplaced constraints are now **hard constraints** — any deviation from specified dimensions (or location for preplaced) renders the solution infeasible (cost = M = 10)
@@ -54,6 +61,19 @@ The following constraints from the original FloorSet dataset are **relaxed** for
 - **Grouping**: Blocks in a group must abut (share an edge), forming a single connected component
 - **MIB** (Multi-Instantiation Blocks): Blocks in a group must have identical dimensions
 - **Boundary**: Block must touch specified bounding-box edge(s) or corner
+
+  The boundary requirement is encoded as an integer bitmask in `constraints[:, 4]`:
+
+  | Bit | Value | Meaning |
+  |-----|-------|---------|
+  | 0 | 1 | Left edge of bounding box |
+  | 1 | 2 | Right edge of bounding box |
+  | 2 | 4 | Top edge of bounding box |
+  | 3 | 8 | Bottom edge of bounding box |
+
+  Edge examples: `1`=left, `2`=right, `4`=top, `8`=bottom.
+  Corner examples: `5`=top-left (4+1), `10`=bottom-right (8+2), `9`=bottom-left (8+1), `6`=top-right (4+2).
+  A block violates its constraint if any required bit is not satisfied.
 
 **Quality Metrics** (in cost function quality factor):
 - Block-to-block HPWL (minimize wirelength)
@@ -250,16 +270,76 @@ This is useful for:
 
 ```
 Cost = (1 + 0.5×(HPWL_gap + Area_gap)) × exp(2×V_rel) × max(0.7, RuntimeFactor^0.3)
-     = 10.0 if infeasible (overlap or dimension violation)
+     = 10.0 if infeasible (any hard constraint violated)
 ```
 
-Where:
-- **HPWL_gap, Area_gap**: Relative gaps vs. baseline (0 = matches baseline)
-- **V_rel** ∈ [0, 1]: Normalized soft constraint violations (grouping, boundary, MIB)
-- **RuntimeFactor**: Your runtime / median runtime of all submissions (per test case)
-- **max(0.7, ...)**: Speed benefit capped at 30%; slowness penalty is uncapped
+**Hard constraints** (any violation → infeasible, Cost = 10.0):
+1. No block overlaps
+2. Soft-block area within 1% of target
+3. Fixed-shape block dimensions exactly match input (w, h)
+4. Preplaced block position and dimensions exactly match input (x, y, w, h)
 
-**Lower score = better.** Final ranking uses **exponentially weighted** average across all 100 tests, where larger instances (more blocks) contribute exponentially more to the total score.
+Where:
+- **HPWL_gap, Area_gap**: Relative gaps vs. baseline, **clamped to zero from below** — solutions that beat the baseline receive no additional score bonus (quality_factor ≥ 1 always)
+- **V_rel** ∈ [0, 1]: Normalized soft constraint violations (grouping, boundary, MIB only; fixed/preplaced are hard constraints and excluded)
+- **RuntimeFactor**: Your runtime / median runtime of all submissions (per test case) — see Runtime Normalization below
+- **max(0.7, ...)**: Speed benefit capped at 30%; slowness penalty is **uncapped**
+
+**Lower score = better.** Final ranking uses **exponentially weighted** average across all 100 tests:
+
+```
+Total Score = Σ Cost[i] · e^{n_i/12} / Σ e^{n_j/12}
+```
+
+where n_i is the block count (21–120). The /12 scaling ensures every size from 21 to 120 carries non-zero weight while still strongly favouring larger instances:
+
+| Weighting | n=120 alone | n=116–120 bucket | n=21–25 bucket |
+|-----------|-------------|------------------|----------------|
+| exp(n) (old) | 63% | 99% | 0% |
+| exp(n/4) | 22% | 71% | 0% |
+| **exp(n/12) (current)** | **34%** | **34%** | **0.01%** |
+
+**Expected score range:**
+- Perfect quality, no violations, **median runtime** → Cost = **1.00** → Total Score ≈ **1.0**
+- Perfect quality, no violations, **≥3× faster** (capped) → Cost = **0.70** → Total Score ≈ **0.70**
+- Infeasible solution → Cost = **10.0**
+
+> **Note:** A perfect solution achieving baseline metrics on all test cases with median runtime has a Total Score of **1.0**. The theoretical minimum (maximum speed bonus, capped) is **0.70**. These values follow directly from substituting into the formula above.
+
+### Runtime Normalization
+
+**Official final evaluation** uses a **per-test-case cross-submission median**: for each of the 100 hidden test cases, the median runtime across *all* contestant submissions is computed independently, and every contestant's RuntimeFactor for that test case is relative to that per-case median.
+
+**Local evaluator** cannot replicate this. The 100 validation cases span block counts from 21 to 120 — runtimes vary enormously by size. Using a mixed-size median as the denominator would give small cases an artificial speed bonus and large cases an artificial slowness penalty, regardless of how your solver actually compares on each size. Therefore the local evaluator sets **RuntimeFactor = 1.0** (neutral — assumes you are at the median) for every test case. Local costs reflect solution quality and soft-constraint violations only; runtime impact is assessed on the official leaderboard.
+
+### Infeasibility Penalty (M = 10) and Feasible Cost Ceiling
+
+Feasible cost is **capped at M − ε (just below 10.0)**, guaranteeing that any feasible solution — regardless of how poor the quality — always scores strictly better than an infeasible one:
+
+```
+feasible cost  = min(quality × violation × runtime,  9.999999)
+infeasible cost = 10.0  (exactly)
+```
+
+This means the statement *"any feasible solution scores better than an infeasible one"* holds unconditionally.
+
+### Exponential Weighting
+
+The Total Score uses `exp(n_i/12)` weights, normalized. With block counts from 21 to 120:
+
+| Bucket | Weight |
+|--------|--------|
+| n = 116–120 | 34% |
+| n = 111–115 | 22% |
+| n = 106–110 | 15% |
+| n = 101–105 | 10% |
+| n = 96–100 | 6% |
+| n = 91–95 | 4% |
+| n = 86–90 | 3% |
+| n = 81–85 | 2% |
+| n ≤ 80 | 4% |
+
+The /12 scaling was chosen as the smallest divisor where every bucket from 21–120 carries non-zero weight, while still strongly rewarding scalability to large instances. The top bucket (116–120) accounts for ~34% of the total score.
 
 ---
 
@@ -270,7 +350,9 @@ Where:
 | `--evaluate FILE` | Run optimizer on 100 test cases, compute score |
 | `--score FILE` | Re-score saved solutions (without re-running optimizer) |
 | `--validate FILE` | Check submission format before submitting |
+| `--baseline` | Generate baseline metrics for the validation set |
 | `--training` | Explore training data statistics |
+| `--visualize` | Visualize a validation case (requires `--test-id N`) |
 | `--test-id N` | Run on single test case (for debugging) |
-| `--save-solutions` | Export positions to JSON (use with --evaluate) |
+| `--save-solutions` | Export positions to JSON (use with `--evaluate`) |
 | `--info` | Show scoring formula |
