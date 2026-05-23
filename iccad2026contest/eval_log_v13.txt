@@ -1,0 +1,46 @@
+﻿Loading validation dataset...
+Loaded 100 validation cases
+python.exe : 
+At line:1 char:88
++ ... 26contest"; & "C:\Users\Nordra\.conda\envs\iccadv\python.exe" iccad20 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Evaluating:   0%|          | 0/100 [00:00<?, ?it/s]
+Evaluating:   1%|1         | 1/100 [00:12<19:59, 12.11s/it]
+Evaluating:   2%|2         | 2/100 [00:24<19:43, 12.08s/it]
+Evaluating:   3%|3         | 3/100 [00:36<19:30, 12.07s/it]
+Evaluating:   4%|4         | 4/100 [00:48<19:17, 12.06s/it]
+Evaluating:   5%|5         | 5/100 [01:00<19:05, 12.06s/it]
+Evaluating:   6%|6         | 6/100 [01:12<18:53, 12.06s/it]
+Evaluating:   7%|7         | 7/100 [01:24<18:41, 12.06s/it]
+Evaluating:   8%|8         | 8/100 [01:36<18:30, 12.07s/it]
+Evaluating:   9%|9         | 9/100 [01:48<18:18, 12.07s/it]
+Evaluating:  10%|#         | 10/100 [02:00<18:05, 12.06s/it]
+Evaluating:  11%|#1        | 11/100 [02:12<17:53, 12.06s/it]
+Evaluating:  12%|#2        | 12/100 [02:24<17:41, 12.06s/it]
+Evaluating:  13%|#3        | 13/100 [02:36<17:29, 12.07s/it]
+Evaluating:  14%|#4        | 14/100 [02:48<17:17, 12.07s/it]
+Evaluating:  15%|#5        | 15/100 [03:00<17:05, 12.07s/it]
+Evaluating:  16%|#6        | 16/100 [03:13<16:53, 12.07s/it]
+Evaluating:  17%|#7        | 17/100 [03:25<16:43, 12.09s/it]
+Evaluating:  18%|#8        | 18/100 [03:37<16:31, 12.10s/it]
+Evaluating:  19%|#9        | 19/100 [03:49<16:21, 12.12s/it]
+Evaluating:  20%|##        | 20/100 [04:01<16:10, 12.13s/it]
+Evaluating:  21%|##1       | 21/100 [04:13<16:02, 12.19s/it]
+Evaluating:  22%|##2       | 22/100 [04:26<15:50, 12.18s/it]
+Evaluating:  23%|##3       | 23/100 [04:38<15:37, 12.17s/it]
+Evaluating:  24%|##4       | 24/100 [04:50<15:29, 12.23s/it]
+Evaluating:  25%|##5       | 25/100 [05:02<15:16, 12.22s/it]
+Evaluating:  26%|##6       | 26/100 [05:15<15:04, 12.23s/it]
+Evaluating:  27%|##7       | 27/100 [05:27<14:51, 12.22s/it]
+Evaluating:  28%|##8       | 28/100 [05:39<14:38, 12.20s/it]
+Evaluating:  29%|##9       | 29/100 [05:51<14:28, 12.24s/it]
+Evaluating:  30%|###       | 30/100 [06:03<14:14, 12.21s/it]
+Evaluating:  31%|###1      | 31/100 [06:16<14:04, 12.23s/it]
+Evaluating:  32%|###2      | 32/100 [06:28<13:52, 12.25s/it]
+Evaluating:  33%|###3      | 33/100 [06:40<13:38, 12.21s/it]
+Evaluating:  34%|###4      | 34/100 [06:52<13:25, 12.20s/it]
+Evaluating:  35%|###5      | 35/100 [07:04<13:11, 12.18s/it]
+Evaluating:  36%|###6      | 36/100 [07:17<12:57, 12.15s/it]

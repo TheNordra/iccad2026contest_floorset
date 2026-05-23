@@ -470,7 +470,7 @@ class MyOptimizer(FloorplanOptimizer):
         def _run_binary(flags=()):
             result = subprocess.run(
                 [str(_BIN)] + list(flags),
-                input=inp, capture_output=True, text=True, timeout=10.0
+                input=inp, capture_output=True, text=True, timeout=55.0
             )
             if result.returncode != 0 or not result.stdout.strip():
                 raise RuntimeError(f"C++ failed: {result.stderr[:200]}")

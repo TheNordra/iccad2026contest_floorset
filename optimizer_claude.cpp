@@ -22,9 +22,10 @@ static double elapsed_sec(chrono::time_point<Clock> t0) {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-static const double TIME_LIMIT  = 1.40;
+static const double TIME_LIMIT  = 12.00;
 static const double AREA_TOL    = 0.005;
-static const double W_VIOL      = 10.0;
+static double W_VIOL            = 10.0;   // calibrated dynamically (∝ initial HPWL)
+static double W_BOUNDARY        = 10.0;   // soft boundary-distance gradient (fixed scale)
 static double W_AREA            = 0.05;   // calibrated dynamically
 
 static const int COL_FIXED      = 0;
@@ -154,7 +155,13 @@ struct Skyline {
 
 // Cluster group ID per block (0 = no cluster). Set by run_sa.
 static vector<int> s_cluster_gid_of;
-static const int MAX_PACK_SIZE = 60;  // apply structured packing for up to this many members
+static const int MAX_PACK_SIZE = 120;  // apply structured packing for up to this many members
+
+// Soft-constraint group tables (populated in run_sa).
+// Forward-declared here so skyline_decode can detect preplaced anchors.
+static map<int,vector<int>> mib_groups, cluster_groups;
+static vector<pair<int,int>> boundary_blocks;
+static int n_soft = 0;
 
 // Multi-row cluster packing: guarantees connectivity while keeping compact footprint.
 // Splits members into rows of ≤ row_len blocks.
@@ -213,6 +220,77 @@ static void pack_cluster_multirow(
     }
 }
 
+// Variant of pack_cluster_multirow that anchors the pack adjacent to a
+// preplaced cluster member, so the free pack touches the preplaced footprint
+// and the cluster stays connected. Returns false if the pack doesn't fit
+// anywhere adjacent to the anchor (caller should fall back to BL packing).
+static bool pack_cluster_anchored(
+    Skyline& sky,
+    vector<int> members,
+    const vector<double>& widths,
+    const vector<double>& heights,
+    vector<Pos>& pos,
+    vector<bool>& placed,
+    double max_width,
+    int row_len,
+    Pos anchor)
+{
+    int nm = (int)members.size();
+    if (nm == 0) return true;
+
+    sort(members.begin(), members.end(),
+         [&](int a, int b){ return heights[a] > heights[b]; });
+
+    int n_rows = (nm + row_len - 1) / row_len;
+    double max_row_w = 0.0, total_h = 0.0;
+    for (int r = 0; r < n_rows; r++) {
+        double rw = 0.0, rh = 0.0;
+        for (int i = r * row_len; i < min((r+1)*row_len, nm); i++) {
+            rw += widths[members[i]]; rh = max(rh, heights[members[i]]);
+        }
+        max_row_w = max(max_row_w, rw);
+        total_h += rh;
+    }
+
+    // Candidate 1: right of anchor. The first member's left edge touches
+    // anchor.x + anchor.w; first member sits at y = anchor.y if skyline allows.
+    double x0_r = anchor.x + anchor.w;
+    bool fit_r = (max_width <= 0 || x0_r + max_row_w <= max_width + 1e-9) && x0_r >= 0;
+    double y0_r = fit_r ? max(anchor.y, sky.max_height(x0_r, x0_r + max_row_w)) : 1e18;
+    bool touch_r = fit_r && y0_r <= anchor.y + anchor.h - 1e-9;
+
+    // Candidate 2: top of anchor. First row sits on top of anchor.
+    double x0_t = anchor.x;
+    bool fit_t = (max_width <= 0 || x0_t + max_row_w <= max_width + 1e-9);
+    double y0_t = fit_t ? max(anchor.y + anchor.h, sky.max_height(x0_t, x0_t + max_row_w)) : 1e18;
+    bool touch_t = fit_t && fabs(y0_t - (anchor.y + anchor.h)) < 1e-6;
+
+    double x0, y_base;
+    if      (touch_r) { x0 = x0_r; y_base = y0_r; }
+    else if (touch_t) { x0 = x0_t; y_base = y0_t; }
+    else if (fit_r)   { x0 = x0_r; y_base = y0_r; }     // not strictly touching, but close
+    else if (fit_t)   { x0 = x0_t; y_base = y0_t; }
+    else              return false;
+
+    double cur_y = y_base;
+    for (int r = 0; r < n_rows; r++) {
+        double row_h = 0.0;
+        double cx = x0;
+        for (int i = r * row_len; i < min((r+1)*row_len, nm); i++) {
+            int m = members[i];
+            if (!placed[m]) {
+                pos[m] = {cx, cur_y, widths[m], heights[m]};
+                sky.place(cx, cur_y, widths[m], heights[m]);
+                placed[m] = true;
+                cx += widths[m];
+                row_h = max(row_h, heights[m]);
+            }
+        }
+        cur_y += row_h;
+    }
+    return true;
+}
+
 static vector<Pos> skyline_decode(
     const vector<int>& perm,
     const vector<double>& widths,
@@ -256,8 +334,6 @@ static vector<Pos> skyline_decode(
             for (int m : members) if (!placed[m]) free_m.push_back(m);
 
             if (!free_m.empty() && nm <= MAX_PACK_SIZE) {
-                // Determine row length: use ceil(sqrt(nm)) for a near-square arrangement.
-                // This minimizes bbox perimeter = min(w + h) subject to w * h = nm * avg_block.
                 int row_len = max(2, (int)ceil(sqrt((double)nm)));
                 pack_cluster_multirow(sky, free_m, widths, heights,
                                       pos, placed, max_width, row_len);
@@ -317,9 +393,8 @@ static double calc_bbox_area(const vector<Pos>& pos) {
 }
 
 // ─── Soft violations ─────────────────────────────────────────────────────────
-static map<int,vector<int>> mib_groups, cluster_groups;
-static vector<pair<int,int>>  boundary_blocks;
-static int n_soft = 0;
+// (mib_groups / cluster_groups / boundary_blocks / n_soft declared above
+//  to allow skyline_decode to inspect cluster membership.)
 
 static double calc_violation(const vector<Pos>& pos) {
     if (n_soft == 0) return 0.0;
@@ -418,8 +493,8 @@ static double calc_boundary_dist(const vector<Pos>& pos) {
 static double proxy_cost(const vector<Pos>& pos) {
     double c = calc_hpwl_b2b(pos) + calc_hpwl_p2b(pos)
              + calc_bbox_area(pos) * W_AREA
-             + calc_violation(pos) * W_VIOL
-             + calc_boundary_dist(pos) * W_VIOL;
+             + calc_violation(pos) * W_VIOL          // hard violations (MIB, cluster, boundary)
+             + calc_boundary_dist(pos) * W_BOUNDARY; // soft gradient toward boundary
     // Soft aspect-ratio penalty: encourage square bounding box
     if (target_width_sq > 0) {
         double xmn=1e18,ymn=1e18,xmx=-1e18,ymx=-1e18;
@@ -501,6 +576,319 @@ static vector<int> connectivity_order(const vector<int>& free_blocks,
         used[best_next] = true;
     }
     return order;
+}
+
+// ─── Post-processing: Boundary snap ──────────────────────────────────────────
+// For each free non-cluster boundary block, push it toward its required edge
+// using available slack (no overlap). Repeats a few passes because moves can
+// change the bbox. Guaranteed to never create overlaps; may reduce boundary
+// violations directly. Cluster blocks are skipped to avoid breaking adjacency.
+static vector<Pos> boundary_snap(vector<Pos> pos) {
+    int n = (int)pos.size();
+    if (boundary_blocks.empty() || n == 0) return pos;
+
+    for (int pass = 0; pass < 6; pass++) {
+        double xmn=1e18, ymn=1e18, xmx=-1e18, ymx=-1e18;
+        for (auto& p : pos) {
+            xmn = min(xmn, p.x); ymn = min(ymn, p.y);
+            xmx = max(xmx, p.x+p.w); ymx = max(ymx, p.y+p.h);
+        }
+
+        int moved = 0;
+        for (auto& [b, flag] : boundary_blocks) {
+            if (blocks[b].is_fixed || blocks[b].is_preplaced) continue;
+            if (blocks[b].cluster > 0) continue;          // skip cluster blocks
+
+            double bw = pos[b].w, bh = pos[b].h;
+
+            // Apply X axis then Y axis (independent slack)
+            for (int axis = 0; axis < 2; axis++) {
+                double bx = pos[b].x, by = pos[b].y;
+                double bx1 = bx + bw, by1 = by + bh;
+                double target_d = 0.0;
+                if (axis == 0) {
+                    if (flag & B_LEFT)  target_d = xmn - bx;       // ≤ 0
+                    if (flag & B_RIGHT) target_d = xmx - bx1;      // ≥ 0
+                } else {
+                    if (flag & B_BOTTOM) target_d = ymn - by;      // ≤ 0
+                    if (flag & B_TOP)    target_d = ymx - by1;     // ≥ 0
+                }
+                if (fabs(target_d) < 1e-9) continue;
+
+                double need = fabs(target_d);
+                double slack = need;
+                for (int o = 0; o < n; o++) {
+                    if (o == b) continue;
+                    if (axis == 0) {
+                        bool yov = pos[o].y < by1-1e-6 && pos[o].y+pos[o].h > by+1e-6;
+                        if (!yov) continue;
+                        if (target_d < 0 && pos[o].x+pos[o].w <= bx+1e-9)
+                            slack = min(slack, bx - (pos[o].x+pos[o].w));
+                        else if (target_d > 0 && pos[o].x >= bx1-1e-9)
+                            slack = min(slack, pos[o].x - bx1);
+                    } else {
+                        bool xov = pos[o].x < bx1-1e-6 && pos[o].x+pos[o].w > bx+1e-6;
+                        if (!xov) continue;
+                        if (target_d < 0 && pos[o].y+pos[o].h <= by+1e-9)
+                            slack = min(slack, by - (pos[o].y+pos[o].h));
+                        else if (target_d > 0 && pos[o].y >= by1-1e-9)
+                            slack = min(slack, pos[o].y - by1);
+                    }
+                }
+                if (slack <= 1e-9) continue;
+
+                double d = (target_d < 0) ? -slack : slack;
+                if (axis == 0) pos[b].x += d; else pos[b].y += d;
+                moved++;
+            }
+        }
+        if (moved == 0) break;
+    }
+    return pos;
+}
+
+// ─── Post-processing: Cluster snap ───────────────────────────────────────────
+// For each cluster with multiple connected components, find the largest
+// component (anchor) and slide non-anchor free members toward the anchor's
+// centroid using available slack. Reduces cluster connectivity violations
+// without creating overlaps. Skips fixed/preplaced members.
+static vector<Pos> cluster_snap(vector<Pos> pos) {
+    int n = (int)pos.size();
+    if (cluster_groups.empty()) return pos;
+
+    for (int pass = 0; pass < 20; pass++) {
+        int moved = 0;
+
+        for (auto& [gid, members] : cluster_groups) {
+            int m = (int)members.size();
+            if (m < 2) continue;
+
+            // Adjacency: cluster members touch if they share an edge segment
+            vector<vector<int>> adj(m);
+            for (int ii = 0; ii < m; ii++) {
+                int bi = members[ii];
+                for (int jj = ii+1; jj < m; jj++) {
+                    int bj = members[jj];
+                    double ox = min(pos[bi].x+pos[bi].w, pos[bj].x+pos[bj].w) - max(pos[bi].x, pos[bj].x);
+                    double oy = min(pos[bi].y+pos[bi].h, pos[bj].y+pos[bj].h) - max(pos[bi].y, pos[bj].y);
+                    bool touch =
+                        (oy > 1e-6 && (fabs(pos[bi].x+pos[bi].w - pos[bj].x) < 1e-4 ||
+                                       fabs(pos[bj].x+pos[bj].w - pos[bi].x) < 1e-4)) ||
+                        (ox > 1e-6 && (fabs(pos[bi].y+pos[bi].h - pos[bj].y) < 1e-4 ||
+                                       fabs(pos[bj].y+pos[bj].h - pos[bi].y) < 1e-4));
+                    if (touch) { adj[ii].push_back(jj); adj[jj].push_back(ii); }
+                }
+            }
+
+            // BFS to find components
+            vector<int> comp(m, -1);
+            vector<int> comp_size;
+            int n_comps = 0;
+            for (int s = 0; s < m; s++) {
+                if (comp[s] != -1) continue;
+                int cs = n_comps++;
+                queue<int> q; q.push(s); comp[s] = cs;
+                int sz = 0;
+                while (!q.empty()) {
+                    int c = q.front(); q.pop(); sz++;
+                    for (int nb : adj[c]) if (comp[nb] == -1) { comp[nb] = cs; q.push(nb); }
+                }
+                comp_size.push_back(sz);
+            }
+            if (n_comps == 1) continue;     // already connected
+
+            // Anchor = largest component
+            int anchor_comp = 0;
+            for (int c = 1; c < n_comps; c++)
+                if (comp_size[c] > comp_size[anchor_comp]) anchor_comp = c;
+
+            // Anchor centroid
+            double acx = 0, acy = 0; int an = 0;
+            for (int i = 0; i < m; i++) if (comp[i] == anchor_comp) {
+                int b = members[i];
+                acx += pos[b].x + pos[b].w/2;
+                acy += pos[b].y + pos[b].h/2;
+                an++;
+            }
+            if (an > 0) { acx /= an; acy /= an; }
+
+            // Slide each non-anchor free member toward anchor centroid.
+            // Try dominant axis first; if blocked, fall back to the other axis.
+            for (int i = 0; i < m; i++) {
+                if (comp[i] == anchor_comp) continue;
+                int b = members[i];
+                if (blocks[b].is_fixed || blocks[b].is_preplaced) continue;
+
+                double bw = pos[b].w, bh = pos[b].h;
+                double bcx = pos[b].x + bw/2;
+                double bcy = pos[b].y + bh/2;
+                double dx_t = acx - bcx, dy_t = acy - bcy;
+                int bflag = blocks[b].boundary;
+
+                bool primary_x = fabs(dx_t) >= fabs(dy_t);
+
+                for (int axis_try = 0; axis_try < 2; axis_try++) {
+                    bool move_x = (axis_try == 0) ? primary_x : !primary_x;
+                    double dir = move_x ? dx_t : dy_t;
+                    if (fabs(dir) < 1e-9) continue;
+
+                    if (move_x) {
+                        if ((bflag & B_LEFT)  && dir > 0) continue;
+                        if ((bflag & B_RIGHT) && dir < 0) continue;
+                    } else {
+                        if ((bflag & B_BOTTOM) && dir > 0) continue;
+                        if ((bflag & B_TOP)    && dir < 0) continue;
+                    }
+
+                    double bx = pos[b].x, by = pos[b].y;
+                    double bx1 = bx + bw, by1 = by + bh;
+                    double slack = fabs(dir);
+
+                    for (int o = 0; o < n; o++) {
+                        if (o == b) continue;
+                        if (move_x) {
+                            bool yov = pos[o].y < by1-1e-6 && pos[o].y+pos[o].h > by+1e-6;
+                            if (!yov) continue;
+                            if (dir < 0 && pos[o].x+pos[o].w <= bx+1e-9)
+                                slack = min(slack, bx - (pos[o].x+pos[o].w));
+                            else if (dir > 0 && pos[o].x >= bx1-1e-9)
+                                slack = min(slack, pos[o].x - bx1);
+                        } else {
+                            bool xov = pos[o].x < bx1-1e-6 && pos[o].x+pos[o].w > bx+1e-6;
+                            if (!xov) continue;
+                            if (dir < 0 && pos[o].y+pos[o].h <= by+1e-9)
+                                slack = min(slack, by - (pos[o].y+pos[o].h));
+                            else if (dir > 0 && pos[o].y >= by1-1e-9)
+                                slack = min(slack, pos[o].y - by1);
+                        }
+                    }
+                    if (slack <= 1e-9) continue;
+
+                    double d = (dir > 0 ? slack : -slack);
+                    double v_before = calc_violation(pos);
+                    double old_x = pos[b].x, old_y = pos[b].y;
+                    if (move_x) pos[b].x += d; else pos[b].y += d;
+                    double v_after = calc_violation(pos);
+                    if (v_after > v_before + 1e-9) {
+                        pos[b].x = old_x; pos[b].y = old_y;
+                    } else {
+                        moved++;
+                        break;     // accepted in this axis; don't try the other
+                    }
+                }
+            }
+        }
+        if (moved == 0) break;
+    }
+    return pos;
+}
+
+// ─── Post-processing: HPWL hill-climber ──────────────────────────────────────
+// For each non-cluster free block, compute connectivity force, slide it toward
+// its neighbours using the available gap (slack), accept only if local HPWL
+// improves.  Guaranteed to never increase wire length or create overlaps.
+static vector<Pos> slack_hpwl_opt(vector<Pos> pos,
+                                   chrono::time_point<Clock> t0,
+                                   double budget_sec = 0.15)
+{
+    int n = (int)pos.size();
+    if (n == 0) return pos;
+
+    // Pre-build per-block adjacency
+    vector<vector<pair<int,double>>> badj(n), padj(n);
+    for (auto& e : b2b_edges)
+        if (e.i>=0&&e.i<n&&e.j>=0&&e.j<n) {
+            badj[e.i].push_back({e.j,e.w});
+            badj[e.j].push_back({e.i,e.w});
+        }
+    for (auto& e : p2b_edges)
+        if (e.j>=0&&e.j<n) padj[e.j].push_back({e.i,e.w});
+
+    // Iterate: for each non-cluster, non-fixed block, try sliding it toward
+    // its connectivity neighbours. Accept only if local HPWL strictly improves
+    // and no overlap is introduced.
+    for (int pass = 0; pass < 40; pass++) {
+        if (elapsed_sec(t0) > TIME_LIMIT + budget_sec) break;
+        int moved = 0;
+
+        for (int b = 0; b < n; b++) {
+            if (blocks[b].is_fixed || blocks[b].is_preplaced) continue;
+            if (blocks[b].cluster > 0) continue;  // skip cluster blocks (adjacency must be preserved)
+
+            double bcx = pos[b].x + pos[b].w/2;
+            double bcy = pos[b].y + pos[b].h/2;
+            double fx=0, fy=0, hpwl0=0;
+
+            for (auto& [nb,w] : badj[b]) {
+                double ox=pos[nb].x+pos[nb].w/2, oy=pos[nb].y+pos[nb].h/2;
+                fx += w*(ox-bcx); fy += w*(oy-bcy);
+                hpwl0 += w*(fabs(ox-bcx)+fabs(oy-bcy));
+            }
+            for (auto& [pi,w] : padj[b]) {
+                fx += w*(pins[pi].first-bcx); fy += w*(pins[pi].second-bcy);
+                hpwl0 += w*(fabs(pins[pi].first-bcx)+fabs(pins[pi].second-bcy));
+            }
+            if (fabs(fx)<1e-9 && fabs(fy)<1e-9) continue;
+
+            // Respect boundary constraints
+            int bflag = blocks[b].boundary;
+            if ((bflag&B_LEFT)   && fx>0) fx=0;
+            if ((bflag&B_RIGHT)  && fx<0) fx=0;
+            if ((bflag&B_BOTTOM) && fy>0) fy=0;
+            if ((bflag&B_TOP)    && fy<0) fy=0;
+            if (fabs(fx)<1e-9 && fabs(fy)<1e-9) continue;
+
+            // Move in the dominant axis only (simpler; less chance of corner issues)
+            bool move_x = fabs(fx) >= fabs(fy);
+            double bx0=pos[b].x, by0=pos[b].y, bx1=pos[b].x+pos[b].w, by1=pos[b].y+pos[b].h;
+
+            // Compute available slack in the chosen direction
+            double slack = 1e18;
+            for (int o=0; o<n; o++) {
+                if (o==b) continue;
+                if (move_x) {
+                    bool yov = pos[o].y<by1-1e-6 && pos[o].y+pos[o].h>by0+1e-6;
+                    if (!yov) continue;
+                    if (fx>0 && pos[o].x>=bx1-1e-9)
+                        slack=min(slack, pos[o].x-bx1);
+                    else if (fx<0 && pos[o].x+pos[o].w<=bx0+1e-9)
+                        slack=min(slack, bx0-(pos[o].x+pos[o].w));
+                } else {
+                    bool xov = pos[o].x<bx1-1e-6 && pos[o].x+pos[o].w>bx0+1e-6;
+                    if (!xov) continue;
+                    if (fy>0 && pos[o].y>=by1-1e-9)
+                        slack=min(slack, pos[o].y-by1);
+                    else if (fy<0 && pos[o].y+pos[o].h<=by0+1e-9)
+                        slack=min(slack, by0-(pos[o].y+pos[o].h));
+                }
+            }
+            if (slack <= 1e-9) continue;
+
+            // Proposed move: force direction, clamped by 90% of slack
+            double dx=0, dy=0;
+            if (move_x)
+                dx = (fx>0) ? min(fx, slack*0.9) : -min(-fx, slack*0.9);
+            else
+                dy = (fy>0) ? min(fy, slack*0.9) : -min(-fy, slack*0.9);
+            if (fabs(dx)<1e-9 && fabs(dy)<1e-9) continue;
+
+            // Accept only if local HPWL strictly improves
+            double new_bcx=bcx+dx, new_bcy=bcy+dy, hpwl1=0;
+            for (auto& [nb,w] : badj[b]) {
+                double ox=pos[nb].x+pos[nb].w/2, oy=pos[nb].y+pos[nb].h/2;
+                hpwl1 += w*(fabs(ox-new_bcx)+fabs(oy-new_bcy));
+            }
+            for (auto& [pi,w] : padj[b]) {
+                hpwl1 += w*(fabs(pins[pi].first-new_bcx)+fabs(pins[pi].second-new_bcy));
+            }
+            if (hpwl1 < hpwl0 - 1e-9) {
+                pos[b].x += dx; pos[b].y += dy;
+                moved++;
+            }
+        }
+        if (moved == 0) break;
+    }
+    return pos;
 }
 
 // ─── SA ───────────────────────────────────────────────────────────────────────
@@ -678,6 +1066,13 @@ static void run_sa(chrono::time_point<Clock> t0) {
             W_AREA = h0 / a0;
             W_AREA = max(0.01, min(W_AREA, 2.0));
         }
+        // Calibrate W_VIOL so each violation is ≈6× more costly than 1 unit
+        // of HPWL gap in the proxy (matches actual scoring formula gradient ratio
+        // ∂cost/∂V_rel / ∂cost/∂HPWL_gap ≈ 6 at typical operating points).
+        if (h0 > 0 && n_soft > 0) {
+            W_VIOL = max(50.0, h0 * 9.0);      // 1.5× best from sweep
+            // W_BOUNDARY stays at 10 — it's just a guidance gradient
+        }
     }
 
     // Enable aspect-ratio penalty if max_width is active
@@ -830,6 +1225,16 @@ static void run_sa(chrono::time_point<Clock> t0) {
             }
         }
     }
+
+    // Post-process: cluster_snap → boundary_snap → HPWL slack → boundary_snap
+    // 1) cluster_snap: pull disconnected free cluster members toward anchors
+    // 2) first boundary_snap: push boundary blocks to required edges
+    // 3) hill-climber: optimise wire length (boundary direction respected)
+    // 4) final boundary_snap: re-align any block displaced by hill-climber
+    best_pos = cluster_snap(best_pos);
+    best_pos = boundary_snap(best_pos);
+    best_pos = slack_hpwl_opt(best_pos, t0, 0.15);
+    best_pos = boundary_snap(best_pos);
 
     // Output
     printf("%d\n", N);
