@@ -22,7 +22,7 @@ static double elapsed_sec(chrono::time_point<Clock> t0) {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-static const double TIME_LIMIT  = 12.00;
+static const double TIME_LIMIT  = 8.00;
 static const double AREA_TOL    = 0.005;
 static double W_VIOL            = 10.0;   // calibrated dynamically (∝ initial HPWL)
 static double W_BOUNDARY        = 10.0;   // soft boundary-distance gradient (fixed scale)
