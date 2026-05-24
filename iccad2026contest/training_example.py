@@ -118,9 +118,28 @@ def main():
         "--sanity", action="store_true",
         help="Sanity-check mode: 20 samples (= 5 batches), no checkpoint, "
              "no final .pth save. Use to validate the pipeline before "
-             "committing to a 1.5h full training run.")
+             "committing to a multi-hour full training run.")
+    parser.add_argument(
+        "--num-samples", type=int, default=None, metavar="N",
+        help="Number of training samples to use. Default: 500 (~1.5h on "
+             "RTX 3060 Ti). 2000 ~= 6h, 3000 ~= 9h. Overridden to 20 if "
+             "--sanity is set unless explicitly provided.")
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Skip loading floorplan_gnn.pth - train from scratch. "
+             "Recommended for long runs (>=2000 samples) where cosine LR "
+             "starting at 0.001 would otherwise destabilise loaded weights.")
     args = parser.parse_args()
     SANITY = args.sanity
+    FRESH  = args.fresh
+
+    # Resolve effective num_samples: explicit arg wins; else sanity=20, else 500.
+    if args.num_samples is not None:
+        NUM_SAMPLES = args.num_samples
+    elif SANITY:
+        NUM_SAMPLES = 20
+    else:
+        NUM_SAMPLES = 500
 
     print("="*70)
     if SANITY:
@@ -128,15 +147,22 @@ def main():
     else:
         print("ICCAD 2026 FloorSet Challenge - GNN Training (GPU)")
     print("="*70)
+    print(f"   num_samples = {NUM_SAMPLES}   fresh = {FRESH}   sanity = {SANITY}")
     if SANITY:
-        print("⚠️  SANITY 模式：20 samples / 5 batches / 不會覆蓋 .pth")
+        print(f"⚠️  SANITY 模式：{NUM_SAMPLES} samples / 不會覆蓋 .pth")
         print("    用途：驗證 pipeline 跑得起來、loss 在跌、lr 在降、沒 crash")
         print("    通過後請拿掉 --sanity 重跑完整訓練。")
-        print("-"*70)
+    elif NUM_SAMPLES >= 1000:
+        approx_hours = NUM_SAMPLES * 1.5 / 500
+        print(f"⚠️  長時間訓練：預計 ~{approx_hours:.1f}h on RTX 3060 Ti")
+        if not FRESH:
+            print("    建議加 --fresh：cosine 從高 LR 開始會敲鬆既有 .pth 權重")
+        print("    強烈建議訓練前備份："
+              "Copy-Item floorplan_gnn.pth floorplan_gnn.backup.pth")
+    print("-"*70)
 
     # 訓練超參數 (好調整)
     BATCH_SIZE      = 4
-    NUM_SAMPLES     = 20 if SANITY else 500
     BASE_LR         = 0.001
     GRAD_CLIP       = 1.0
     # Overlap-penalty β annealing: contest loss is (1+α·gap)·exp(β·V_soft).
@@ -164,9 +190,13 @@ def main():
 
     # 選擇訓練好的模型
     model = FloorplanNet().to(device)
-    if Path("floorplan_gnn.pth").exists():
+    if FRESH:
+        print("[--fresh] Skipping load of floorplan_gnn.pth; training from scratch.")
+    elif Path("floorplan_gnn.pth").exists():
         model.load_state_dict(torch.load("floorplan_gnn.pth", map_location=device))
         print("Successfully loaded trained weights from floorplan_gnn.pth!")
+    else:
+        print("No existing floorplan_gnn.pth found; training from random init.")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=BASE_LR)
     # 餘弦退火：訓練尾段大幅縮小步伐，消除尾端 loss 震盪反彈 (gnn_training.md
