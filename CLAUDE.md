@@ -36,19 +36,47 @@
 - `TIME_LIMIT = 8.00 秒`
 - `W_VIOL = h0 × 7.5` (新評分 sweet spot；舊評分 sweet spot 為 h0×9)
 - `W_AREA = h0/a0` clamped [0.01, 2.0]
-- `W_BOUNDARY = 10.0` ← **注意：程式碼當前為 100.0，但未編譯/驗證**
+- `W_BOUNDARY = 10.0`
 - `MAX_PACK_SIZE = 120`
 
-### ⚠️ 程式碼 vs 已驗證狀態差異
-> `optimizer_claude.cpp` 目前 `W_BOUNDARY = 100.0`（未驗證的實驗）。
-> 若要復現最佳分數 3.2708，請先將 `W_BOUNDARY` 改回 `10.0`，重新編譯。
+### 🆕 GNN-hint 整合 (2026-05-24, 已驗證有效)
+
+`optimizer_claude.py` 現在會 lazy-load `floorplan_gnn.pth`，每個 case 推論一次
+GNN 預測的 (cx, cy)，把它當成「替代 initial perm」候選餵給 C++。C++ 在
+`run_sa` 起始時 decode 兩種 perm（connectivity vs GNN-sorted by cx+cy），
+取 `raw_cost`（HPWL+area+violation）較低者當 SA 起點。
+
+> ⚠️ **note**：原本以為「raw_cost 比較較佳 → SA 最終結果一定不退步」，但
+> SA 8 秒會從不同起點走到不同 basin — 起點 raw_cost 較低 ≠ 終點較低。
+> 所以這實際上**不是嚴格零退步**的設計，需用 full eval 驗證。實測下來確實
+> 是淨改善。
+
+- 環境變數 `ICCAD_DISABLE_GNN=1` 可關閉 GNN，做 A/B 比較
+- 沒 torch / 沒 .pth / 推論失敗時自動跳過，不影響原本流程
+- 額外推論成本 ~10–50ms/case (CPU)，總開銷 < 5s
+
+**100-case full eval A/B (2026-05-24)**：
+| 設定 | Total Score | Avg Cost | Feasible |
+|------|------------|----------|----------|
+| GNN enabled (default) | **3.3469** | 2.6157 | 100/100 |
+| GNN disabled (ICCAD_DISABLE_GNN=1) | 3.4308 | 2.6478 | 100/100 |
+
+→ **GNN 整合淨改善 0.0839 (~2.4%)**。
+
+> ⚠️ 兩者都高於先前文件記錄的 3.2708。可能原因：CLAUDE.md 的 3.2708 是早
+> 期 code state 的結果，當前 code 已飄移。若要追回 3.27，需要 git bisect
+> 找到 regression point — 但這是獨立於 GNN 整合的另一個議題。
 
 ### 關鍵組件
-1. **初始 permutation**：connectivity-driven order，依優先序重排
-   - 0: cluster blocks（按 gid 連續）
-   - 1: LEFT/BOTTOM boundary blocks
-   - 2: 一般 blocks
-   - 3: RIGHT/TOP boundary blocks
+1. **初始 permutation**：兩個候選 → 取 proxy_cost 較低者
+   - **候選 A**：connectivity-driven order (greedy NN on b2b graph)
+   - **候選 B**：GNN-sorted by (cx+cy) (若 GNN hint 存在)
+   - 兩者都套用相同的優先序重排 (見下)
+   - 優先序：
+     - 0: cluster blocks（按 gid 連續）
+     - 1: LEFT/BOTTOM boundary blocks
+     - 2: 一般 blocks
+     - 3: RIGHT/TOP boundary blocks
 
 2. **Skyline decode**：
    - `pack_cluster_multirow`: ceil(sqrt(nm)) 行寬
@@ -113,7 +141,9 @@
 | cluster_hpwl_opt rigid HPWL translation | 3.3548（略退） |
 | + cluster_boundary_snap (viol guard) | 3.3762 |
 | + cluster_boundary_snap (**proxy_cost guard**) | 3.3183 |
-| + cluster_snap **(proxy_cost guard)** | **3.2708** ← current best |
+| + cluster_snap **(proxy_cost guard)** | 3.2708 |
+| 2026-05-24 W_BOUNDARY=10 baseline (no GNN, current code) | 3.4308 |
+| 2026-05-24 + GNN-hint initial perm | **3.3469** ← current best |
 
 ---
 
@@ -230,14 +260,14 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 
 - **PowerShell 用分號或 `if ($?) {...}` 連接指令，不能用 `&&`**
 - **評估需要 13–15 分鐘（100 個 case × 8 秒）**
-- **`optimizer_claude.cpp` 中 `W_BOUNDARY` 目前為 100.0（未驗證）**，
-  最佳分數對應 `W_BOUNDARY = 10.0`
 - **`analyze_violations.py` 無法執行**（lite_dataset_test 缺失）；
   改用 `viol_breakdown.py`（已建立）
 - **`viol_breakdown.py` 的 hpwl_gap/area_gap 為 -0.9～-1.0 範圍**，
   這是因為使用 `metrics[0]`/`metrics[1]` 當 baseline，
   但官方 baseline 不同；數字不可直接對比
 - **`pack_cluster_anchored` 函式仍在程式碼但已不被呼叫**
+- **GNN 推論需要 `torch`**：若 conda env 缺 torch，python wrapper 會跳過 GNN
+  並印 stderr 警告（不會 crash）
 
 ---
 
@@ -245,18 +275,46 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 
 ```
 FloorSet/
-├── optimizer_claude.cpp    ← 主程式 (C++)
-├── optimizer_claude.py     ← Python wrapper
+├── optimizer_claude.cpp    ← 主程式 (C++)，含 GNN-hint 比較邏輯
+├── optimizer_claude.py     ← Python wrapper，含 GNN inference (FloorplanNet)
 ├── optimizer_claude.exe    ← 編譯輸出
+├── floorplan_gnn.pth       ← 訓練好的 GNN 權重 (FloorplanNet, 128 hidden)
+├── floorplan_gnn_checkpoint.pth ← 訓練中自動 checkpoint
 ├── CLAUDE.md               ← 本檔案
+├── gnn_training.md         ← ML 部分文件（FloorplanNet 訓練紀錄）
 └── iccad2026contest/
     ├── iccad2026_evaluate.py       ← 新版評估腳本
+    ├── training_example.py         ← GNN 訓練腳本（已加入 LR scheduler + weight annealing）
     ├── analyze_results.py          ← top cases 顯示（可用）
     ├── viol_breakdown.py           ← violation 分項（已建立，可用）
     ├── analyze_violations.py       ← 舊版，無法跑
     ├── check_viols.py              ← 舊版，無法跑
     └── optimizer_claude_results.json  ← 最新評估結果
 ```
+
+## 機器學習部分 (詳見 `gnn_training.md`)
+
+### 訓練腳本更新 (2026-05-24)
+
+`iccad2026contest/training_example.py` 已加入兩項 gnn_training.md 路線 A 提到的功能：
+
+1. **CosineAnnealingLR scheduler**
+   - `T_max = n_batches`，`η_min = base_lr × 0.01`
+   - 訓練尾段大幅縮小步伐，解決「Batch 120+ 從 3.X 反彈至 5.X」震盪
+
+2. **Overlap-weight annealing**
+   - 訓練初期 (`HPWL_WEIGHT_START=1.0, OVERLAP_WEIGHT_START=1.0`)：方塊收攏
+   - 訓練後期 (`HPWL_WEIGHT_END=0.5, OVERLAP_WEIGHT_END=3.0`)：強力張開
+   - 主 loss 仍是 `compute_training_loss_differentiable` (與 evaluator 對齊)，
+     額外加上 `compute_overlap_only` 補強項 × overlap_weight
+
+3. **`--sanity` flag**（5 分鐘煙霧測試，不會覆蓋 .pth）
+   - `python iccad2026contest/training_example.py --sanity`
+   - 自動 `NUM_SAMPLES=20, BATCH_SIZE=4` → 5 batches
+   - 跳過 checkpoint 與 final save，**保證不污染** `floorplan_gnn.pth`
+   - 通過後拿掉 flag 跑完整訓練
+
+> ⚠️ **本環境禁止跑訓練**，若要訓練請複製到另一個 GPU 環境執行
 
 ---
 

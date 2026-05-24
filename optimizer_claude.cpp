@@ -25,7 +25,7 @@ static double elapsed_sec(chrono::time_point<Clock> t0) {
 static const double TIME_LIMIT  = 8.00;
 static const double AREA_TOL    = 0.005;
 static double W_VIOL            = 10.0;   // calibrated dynamically (∝ initial HPWL)
-static double W_BOUNDARY        = 100.0;  // soft boundary-distance gradient (10×)
+static double W_BOUNDARY        = 10.0;   // soft boundary-distance gradient
 static double W_AREA            = 0.05;   // calibrated dynamically
 
 static const int COL_FIXED      = 0;
@@ -52,6 +52,12 @@ static vector<double> area_targets;
 static vector<Edge>   b2b_edges, p2b_edges;
 static vector<pair<double,double>> pins;
 static vector<Block>  blocks;
+
+// GNN-predicted center hints (cx, cy) per block, or empty if not provided.
+// Populated by main() after the standard input block. Used by run_sa to
+// construct an alternative starting permutation that is compared against
+// the connectivity-driven order; the cheaper one seeds SA.
+static vector<pair<double,double>> gnn_hint;
 
 // ─── Skyline packer ───────────────────────────────────────────────────────────
 // pts[i] = (x_start, height); segment i covers [pts[i].x, pts[i+1].x)
@@ -1239,23 +1245,13 @@ static void run_sa(chrono::time_point<Clock> t0) {
         b2b_adj[e.j].push_back({e.i, e.w});
     }
 
-    // Connectivity-driven initial perm
-    vector<int> perm = connectivity_order(free_blocks, widths, heights);
-
-    // Re-order perm to improve soft constraints:
-    // 1) Group cluster members consecutively (encourages abutment).
-    // 2) LEFT/BOTTOM boundary blocks first, RIGHT/TOP boundary blocks last.
-    {
-        // Build initial position map for stable secondary sort
+    // Re-order helper: cluster-first / boundary-aware priority sort.
+    // Used identically by the connectivity-driven perm and the optional
+    // GNN-hinted perm, so both candidates respect the same soft-constraint
+    // priorities before being compared on proxy_cost.
+    auto apply_priority_sort = [&](vector<int>& p) {
         vector<int> init_pos(N, 0);
-        for (int k = 0; k < (int)perm.size(); k++) init_pos[perm[k]] = k;
-
-        // Priority ordering:
-        //   0: Cluster blocks (grouped by gid) — placed first so row-packing works cleanly
-        //   1: LEFT/BOTTOM boundary blocks — placed early for boundary satisfaction
-        //   2: Unconstrained blocks (by connectivity order)
-        //   3: RIGHT/TOP boundary blocks — placed last (push to outer edge)
-        // Within clusters, keep original connectivity order (init_pos).
+        for (int k = 0; k < (int)p.size(); k++) init_pos[p[k]] = k;
         auto priority = [&](int b) -> pair<int,int> {
             int flag = blocks[b].boundary;
             int cl = cluster_gid_of[b];
@@ -1266,19 +1262,16 @@ static void run_sa(chrono::time_point<Clock> t0) {
             else if (is_lb)  bp = 1;        // LEFT/BOTTOM boundary next
             else if (is_rt)  bp = 3;        // RIGHT/TOP boundary last
             else             bp = 2;        // others in middle
-            // Secondary key: cluster members group by gid (so they're consecutive)
             int sec = (cl > 0) ? (cl * 10000 + init_pos[b]) : (N + init_pos[b]);
             return {bp, sec};
         };
+        stable_sort(p.begin(), p.end(),
+                    [&](int a, int b){ return priority(a) < priority(b); });
+    };
 
-        stable_sort(perm.begin(), perm.end(), [&](int a, int b) {
-            return priority(a) < priority(b);
-        });
-    }
-
-    // Index of each block in perm (for O(1) lookup)
-    vector<int> perm_idx(N, -1);
-    for (int k = 0; k < (int)perm.size(); k++) perm_idx[perm[k]] = k;
+    // Connectivity-driven initial perm (greedy nearest-neighbour on b2b graph)
+    vector<int> perm_conn = connectivity_order(free_blocks, widths, heights);
+    apply_priority_sort(perm_conn);
 
     // Compute target width for rectangular packings (disabled by --no-width)
     double mw = 0.0;
@@ -1289,8 +1282,47 @@ static void run_sa(chrono::time_point<Clock> t0) {
         mw = sqrt(total_area * 1.4);
     }
 
-    // Initial decode
-    auto cur_pos  = skyline_decode(perm, widths, heights, preplaced_map, mw);
+    // Pick starting perm: GNN-hinted vs connectivity-driven, whichever has
+    // lower proxy cost after the same priority sort and skyline decode.
+    // GNN hint comes from FloorplanNet (see optimizer_claude.py + training_example.py):
+    // sort free blocks by predicted (cx+cy) so blocks the GNN wants in the
+    // lower-left land early in the perm and get placed there by the BL packer.
+    vector<int> perm = perm_conn;
+    auto cur_pos = skyline_decode(perm, widths, heights, preplaced_map, mw);
+
+    if (!gnn_hint.empty()) {
+        vector<int> perm_gnn = free_blocks;
+        // Stable spatial sort on GNN centers. Blocks with sentinel (-1,-1)
+        // sink to the end so they're packed last.
+        const double SENTINEL = 1e18;
+        auto bl_score = [&](int b) -> double {
+            if (b < 0 || b >= (int)gnn_hint.size()) return SENTINEL;
+            double cx = gnn_hint[b].first, cy = gnn_hint[b].second;
+            if (cx < 0 || cy < 0) return SENTINEL;
+            return cx + cy;
+        };
+        stable_sort(perm_gnn.begin(), perm_gnn.end(),
+                    [&](int a, int b){ return bl_score(a) < bl_score(b); });
+        apply_priority_sort(perm_gnn);
+
+        auto pos_gnn = skyline_decode(perm_gnn, widths, heights, preplaced_map, mw);
+        // Calibrate-free comparison: use raw HPWL + area + violation count.
+        // (W_AREA / W_VIOL are still default here; they get re-calibrated below
+        //  after the winning perm is chosen, so the relative comparison is fair.)
+        auto raw_cost = [](const vector<Pos>& pos) {
+            return calc_hpwl_b2b(pos) + calc_hpwl_p2b(pos)
+                 + calc_bbox_area(pos) * W_AREA
+                 + calc_violation(pos) * W_VIOL;
+        };
+        if (raw_cost(pos_gnn) < raw_cost(cur_pos)) {
+            perm = perm_gnn;
+            cur_pos = pos_gnn;
+        }
+    }
+
+    // Index of each block in perm (for O(1) lookup)
+    vector<int> perm_idx(N, -1);
+    for (int k = 0; k < (int)perm.size(); k++) perm_idx[perm[k]] = k;
 
     // Calibrate W_AREA: balance area vs HPWL sensitivity in proxy cost.
     // Contest weights HPWL_gap and Area_gap equally, so target:
@@ -1521,6 +1553,19 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < N; i++)
         scanf("%lf %lf %lf %lf",
               &blocks[i].tx, &blocks[i].ty, &blocks[i].tw, &blocks[i].th);
+
+    // Optional GNN hint block: "<has_hint>\n" then N lines of "cx cy".
+    // Sentinel value of "-1 -1" disables the hint for that block.
+    // If has_hint is missing (older Python wrappers / EOF), treat as 0.
+    int has_hint = 0;
+    if (scanf("%d", &has_hint) == 1 && has_hint) {
+        gnn_hint.resize(N);
+        for (int i = 0; i < N; i++) {
+            double cx, cy;
+            if (scanf("%lf %lf", &cx, &cy) != 2) { cx = cy = -1.0; }
+            gnn_hint[i] = {cx, cy};
+        }
+    }
 
     run_sa(t0);
     return 0;

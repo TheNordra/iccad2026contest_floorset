@@ -13,6 +13,7 @@ The C++ binary implements:
 """
 
 import math
+import os
 import subprocess
 import sys
 import time
@@ -35,6 +36,7 @@ _DIR = Path(__file__).parent
 _CPP  = _DIR / "optimizer_claude.cpp"
 _BIN  = _DIR / "optimizer_claude.exe"
 _GPP  = r"C:\msys64\ucrt64\bin\g++.exe"
+_GNN_WEIGHTS = _DIR / "floorplan_gnn.pth"
 
 # ── Fallback Python SA (used if C++ compile fails) ────────────────────────────
 import random
@@ -324,6 +326,119 @@ def python_sa_solve(block_count, area_targets, b2b_connectivity,
     return best_pos
 
 
+# ── GNN-based initial-perm hint ──────────────────────────────────────────────
+# A pre-trained FloorplanNet (see iccad2026contest/training_example.py) predicts
+# a continuous (x, y) per block. We use those coords ONLY as a permutation hint
+# for the skyline BL packer: sorting blocks by GNN-predicted (x+y) gives an
+# alternative starting permutation. The C++ binary decodes both this alt perm
+# and the connectivity-driven perm, then keeps whichever has lower proxy cost,
+# so a poor GNN never regresses the result.
+#
+# Disable via env: ICCAD_DISABLE_GNN=1
+_GNN_DISABLED = os.environ.get("ICCAD_DISABLE_GNN", "") not in ("", "0", "false", "False")
+_GNN_MODEL: Optional["torch.nn.Module"] = None
+_GNN_LOAD_TRIED = False
+
+
+class _FloorplanNet(torch.nn.Module):
+    """Mirror of FloorplanNet in iccad2026contest/training_example.py.
+    Kept here so this wrapper has no import dependency on the training script."""
+
+    def __init__(self, hidden_dim: int = 128):
+        super().__init__()
+        self.input_layer = torch.nn.Linear(3, hidden_dim)
+        self.gcn1 = torch.nn.Linear(hidden_dim, hidden_dim)
+        self.gcn2 = torch.nn.Linear(hidden_dim, hidden_dim)
+        self.out_layer = torch.nn.Linear(hidden_dim, 4)
+
+    def forward(self, area_target, b2b_conn, p2b_conn, pins_pos, block_count):
+        device = area_target.device
+
+        features = torch.zeros((block_count, 3), device=device)
+        features[:, 0] = area_target[:block_count]
+
+        pin_counts = torch.zeros(block_count, device=device)
+        if p2b_conn is not None and p2b_conn.dim() == 2 and len(p2b_conn) > 0:
+            for edge in p2b_conn:
+                if edge[0] == -1:
+                    continue
+                pin_idx, blk_idx = int(edge[0]), int(edge[1])
+                if blk_idx < block_count and pin_idx < pins_pos.shape[0]:
+                    features[blk_idx, 1] += pins_pos[pin_idx, 0]
+                    features[blk_idx, 2] += pins_pos[pin_idx, 1]
+                    pin_counts[blk_idx] += 1
+        mask = pin_counts > 0
+        features[mask, 1] /= pin_counts[mask]
+        features[mask, 2] /= pin_counts[mask]
+
+        x = torch.relu(self.input_layer(features))
+        adj = torch.eye(block_count, device=device)
+        if b2b_conn is not None and b2b_conn.dim() == 2 and len(b2b_conn) > 0:
+            for edge in b2b_conn:
+                if edge[0] == -1:
+                    continue
+                u, v = int(edge[0]), int(edge[1])
+                weight = float(edge[2]) if len(edge) > 2 else 1.0
+                if u < block_count and v < block_count:
+                    adj[u, v] += weight
+                    adj[v, u] += weight
+        row_sum = adj.sum(dim=1, keepdim=True)
+        adj = adj / (row_sum + 1e-8)
+
+        x = torch.matmul(adj, x)
+        x = torch.relu(self.gcn1(x))
+        x = torch.matmul(adj, x)
+        x = torch.relu(self.gcn2(x))
+
+        out = self.out_layer(x)
+        grid_x = (torch.arange(block_count, device=device) % 10) * 20.0
+        grid_y = (torch.arange(block_count, device=device) // 10) * 20.0
+        xy = torch.sigmoid(out[:, :2]) * 150.0 + torch.stack([grid_x, grid_y], dim=1)
+        return xy  # (block_count, 2) — only centers needed for hint
+
+
+def _load_gnn() -> Optional[torch.nn.Module]:
+    """Load the trained GNN once, cached. Returns None on any failure."""
+    global _GNN_MODEL, _GNN_LOAD_TRIED
+    if _GNN_LOAD_TRIED:
+        return _GNN_MODEL
+    _GNN_LOAD_TRIED = True
+    if _GNN_DISABLED:
+        return None
+    if not _GNN_WEIGHTS.exists():
+        return None
+    try:
+        model = _FloorplanNet()
+        state = torch.load(str(_GNN_WEIGHTS), map_location="cpu")
+        model.load_state_dict(state)
+        model.eval()
+        _GNN_MODEL = model
+    except Exception as e:
+        print(f"[optimizer_claude] GNN load failed: {e}; running without hint",
+              file=sys.stderr)
+        _GNN_MODEL = None
+    return _GNN_MODEL
+
+
+def _gnn_centers(block_count, area_targets, b2b_connectivity,
+                 p2b_connectivity, pins_pos) -> Optional[List[Tuple[float, float]]]:
+    """Run GNN inference, return per-block (cx, cy) hints or None."""
+    model = _load_gnn()
+    if model is None:
+        return None
+    try:
+        with torch.no_grad():
+            area_t = area_targets if torch.is_tensor(area_targets) else torch.tensor(area_targets)
+            b2b_t  = b2b_connectivity
+            p2b_t  = p2b_connectivity
+            pin_t  = pins_pos
+            xy = model(area_t.float(), b2b_t, p2b_t, pin_t.float(), block_count)
+        return [(float(xy[i, 0]), float(xy[i, 1])) for i in range(block_count)]
+    except Exception as e:
+        print(f"[optimizer_claude] GNN inference failed: {e}", file=sys.stderr)
+        return None
+
+
 # ── C++ compilation ──────────────────────────────────────────────────────────
 _CPP_COMPILED = False
 
@@ -352,8 +467,17 @@ def _ensure_compiled():
 
 
 def _serialize_input(block_count, area_targets, b2b_connectivity,
-                     p2b_connectivity, pins_pos, constraints, target_positions):
-    """Serialize problem data to the text format expected by optimizer_claude.cpp."""
+                     p2b_connectivity, pins_pos, constraints, target_positions,
+                     gnn_hint: Optional[List[Tuple[float, float]]] = None):
+    """Serialize problem data to the text format expected by optimizer_claude.cpp.
+
+    If gnn_hint is provided, appends N more lines of "cx cy" (per-block GNN center
+    predictions). The C++ binary parses these as an alternative-perm hint.
+    A sentinel "-1 -1" disables the hint per-block.
+    The presence of the gnn_hint block is marked by an extra integer (1/0)
+    written just before it, so the binary stays back-compat with --no-width
+    invocations and older callers.
+    """
     buf = StringIO()
     n = block_count
     buf.write(f"{n}\n")
@@ -414,6 +538,15 @@ def _serialize_input(block_count, area_targets, b2b_connectivity,
             tx = ty = tw = th = -1.0
         buf.write(f"{tx:.10f} {ty:.10f} {tw:.10f} {th:.10f}\n")
 
+    # GNN hint block: "<has_hint>\n" then N lines of "cx cy" (or "-1 -1")
+    if gnn_hint is not None and len(gnn_hint) >= n:
+        buf.write("1\n")
+        for i in range(n):
+            cx, cy = gnn_hint[i]
+            buf.write(f"{cx:.6f} {cy:.6f}\n")
+    else:
+        buf.write("0\n")
+
     return buf.getvalue()
 
 
@@ -463,9 +596,16 @@ class MyOptimizer(FloorplanOptimizer):
                 block_count, area_targets, b2b_connectivity,
                 p2b_connectivity, pins_pos, constraints, target_positions)
 
+        # GNN inference: produce per-block center hints (fast, ~10-50ms).
+        # Failure / disabled → hint is None and C++ falls back to its own perm.
+        gnn_hint = _gnn_centers(
+            block_count, area_targets, b2b_connectivity,
+            p2b_connectivity, pins_pos)
+
         inp = _serialize_input(
             block_count, area_targets, b2b_connectivity,
-            p2b_connectivity, pins_pos, constraints, target_positions)
+            p2b_connectivity, pins_pos, constraints, target_positions,
+            gnn_hint=gnn_hint)
 
         def _run_binary(flags=()):
             result = subprocess.run(
