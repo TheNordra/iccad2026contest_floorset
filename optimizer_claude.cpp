@@ -25,7 +25,7 @@ static double elapsed_sec(chrono::time_point<Clock> t0) {
 static const double TIME_LIMIT  = 8.00;
 static const double AREA_TOL    = 0.005;
 static double W_VIOL            = 10.0;   // calibrated dynamically (∝ initial HPWL)
-static double W_BOUNDARY        = 10.0;   // soft boundary-distance gradient (fixed scale)
+static double W_BOUNDARY        = 100.0;  // soft boundary-distance gradient (10×)
 static double W_AREA            = 0.05;   // calibrated dynamically
 
 static const int COL_FIXED      = 0;
@@ -652,6 +652,242 @@ static vector<Pos> boundary_snap(vector<Pos> pos) {
 // component (anchor) and slide non-anchor free members toward the anchor's
 // centroid using available slack. Reduces cluster connectivity violations
 // without creating overlaps. Skips fixed/preplaced members.
+// ─── Post-processing: Cluster boundary rigid translation ────────────────────
+// For each cluster with at least one boundary-constrained member, compute the
+// required translation (toward LEFT/RIGHT/TOP/BOTTOM bbox edge) and move the
+// whole cluster as a rigid unit. Min-slack guarantees no overlap; only accepts
+// moves that don't increase total violation. Targets the dominant violation
+// axis to make progress without conflicting on diagonal corner constraints.
+static vector<Pos> cluster_boundary_snap(vector<Pos> pos) {
+    int n = (int)pos.size();
+    if (cluster_groups.empty() || n == 0) return pos;
+
+    for (int pass = 0; pass < 4; pass++) {
+        double xmn=1e18, ymn=1e18, xmx=-1e18, ymx=-1e18;
+        for (auto& p : pos) {
+            xmn = min(xmn, p.x); ymn = min(ymn, p.y);
+            xmx = max(xmx, p.x+p.w); ymx = max(ymx, p.y+p.h);
+        }
+
+        int moved = 0;
+        for (auto& [gid, members] : cluster_groups) {
+            if ((int)members.size() < 2) continue;
+            // Skip clusters with fixed/preplaced
+            bool pinned = false;
+            for (int b : members)
+                if (blocks[b].is_fixed || blocks[b].is_preplaced) { pinned = true; break; }
+            if (pinned) continue;
+
+            // Determine required translation: vote on each direction from
+            // each boundary-constrained member's CURRENT mismatch.
+            double need_dx = 0, need_dy = 0;
+            int votes_x = 0, votes_y = 0;
+            for (int b : members) {
+                int flag = blocks[b].boundary;
+                if (flag == 0) continue;
+                double bx = pos[b].x, by = pos[b].y;
+                double bx1 = bx + pos[b].w, by1 = by + pos[b].h;
+                if (flag & B_LEFT)   { need_dx += (xmn - bx);  votes_x++; }
+                if (flag & B_RIGHT)  { need_dx += (xmx - bx1); votes_x++; }
+                if (flag & B_BOTTOM) { need_dy += (ymn - by);  votes_y++; }
+                if (flag & B_TOP)    { need_dy += (ymx - by1); votes_y++; }
+            }
+            if (votes_x == 0 && votes_y == 0) continue;
+
+            // Average direction (cancellation if conflicting)
+            double avg_dx = votes_x > 0 ? need_dx / votes_x : 0;
+            double avg_dy = votes_y > 0 ? need_dy / votes_y : 0;
+            if (fabs(avg_dx) < 1e-6 && fabs(avg_dy) < 1e-6) continue;
+
+            bool move_x = fabs(avg_dx) >= fabs(avg_dy);
+            double dir = move_x ? avg_dx : avg_dy;
+            if (fabs(dir) < 1e-9) continue;
+
+            // Slack: min across all members against non-cluster blocks
+            double slack = fabs(dir);
+            for (int b : members) {
+                double bx = pos[b].x, by = pos[b].y;
+                double bx1 = bx + pos[b].w, by1 = by + pos[b].h;
+                for (int o = 0; o < n; o++) {
+                    if (s_cluster_gid_of[o] == gid) continue;
+                    if (move_x) {
+                        bool yov = pos[o].y < by1-1e-6 && pos[o].y+pos[o].h > by+1e-6;
+                        if (!yov) continue;
+                        if (dir < 0 && pos[o].x+pos[o].w <= bx+1e-9)
+                            slack = min(slack, bx - (pos[o].x+pos[o].w));
+                        else if (dir > 0 && pos[o].x >= bx1-1e-9)
+                            slack = min(slack, pos[o].x - bx1);
+                    } else {
+                        bool xov = pos[o].x < bx1-1e-6 && pos[o].x+pos[o].w > bx+1e-6;
+                        if (!xov) continue;
+                        if (dir < 0 && pos[o].y+pos[o].h <= by+1e-9)
+                            slack = min(slack, by - (pos[o].y+pos[o].h));
+                        else if (dir > 0 && pos[o].y >= by1-1e-9)
+                            slack = min(slack, pos[o].y - by1);
+                    }
+                }
+            }
+            if (slack <= 1e-9) continue;
+
+            double d = (dir > 0 ? slack : -slack);
+
+            // Tentative move; revert if total proxy cost worsens
+            // (proxy_cost accounts for HPWL + area + violation + boundary_dist)
+            double c_before = proxy_cost(pos);
+            for (int b : members) {
+                if (move_x) pos[b].x += d; else pos[b].y += d;
+            }
+            double c_after = proxy_cost(pos);
+
+            if (c_after > c_before - 1e-9) {
+                for (int b : members) {
+                    if (move_x) pos[b].x -= d; else pos[b].y -= d;
+                }
+            } else {
+                moved++;
+            }
+        }
+        if (moved == 0) break;
+    }
+    return pos;
+}
+
+// ─── Post-processing: Cluster HPWL rigid translation ────────────────────────
+// For each cluster group, compute aggregate HPWL force from external b2b/p2b
+// edges, then translate the WHOLE cluster as a rigid unit along the dominant
+// axis. Min-slack across all members guarantees no new overlap; per-member
+// boundary flags suppress moves that would push a boundary-constrained block
+// off its edge. Move is accepted only if HPWL strictly improves and total
+// violation does not increase. Preserves cluster connectivity by construction.
+static vector<Pos> cluster_hpwl_opt(vector<Pos> pos) {
+    int n = (int)pos.size();
+    if (cluster_groups.empty() || n == 0) return pos;
+
+    vector<vector<pair<int,double>>> badj(n), padj(n);
+    for (auto& e : b2b_edges)
+        if (e.i>=0&&e.i<n&&e.j>=0&&e.j<n) {
+            badj[e.i].push_back({e.j,e.w});
+            badj[e.j].push_back({e.i,e.w});
+        }
+    for (auto& e : p2b_edges)
+        if (e.j>=0&&e.j<n) padj[e.j].push_back({e.i,e.w});
+
+    for (int pass = 0; pass < 4; pass++) {
+        int moved = 0;
+        for (auto& [gid, members] : cluster_groups) {
+            if ((int)members.size() < 2) continue;
+
+            // Skip clusters with fixed/preplaced members (rigid translation
+            // would violate their pinned coordinates).
+            bool pinned = false;
+            for (int b : members)
+                if (blocks[b].is_fixed || blocks[b].is_preplaced) { pinned = true; break; }
+            if (pinned) continue;
+
+            // Aggregate HPWL force across all external connections
+            double fx = 0, fy = 0;
+            for (int b : members) {
+                double bcx = pos[b].x + pos[b].w/2;
+                double bcy = pos[b].y + pos[b].h/2;
+                for (auto& [nb, w] : badj[b]) {
+                    if (s_cluster_gid_of[nb] == gid) continue;  // internal
+                    double ox = pos[nb].x + pos[nb].w/2;
+                    double oy = pos[nb].y + pos[nb].h/2;
+                    fx += w * (ox - bcx);
+                    fy += w * (oy - bcy);
+                }
+                for (auto& [pi, w] : padj[b]) {
+                    fx += w * (pins[pi].first  - bcx);
+                    fy += w * (pins[pi].second - bcy);
+                }
+            }
+
+            // Per-member boundary suppression
+            for (int b : members) {
+                int bflag = blocks[b].boundary;
+                if ((bflag&B_LEFT)   && fx>0) fx=0;
+                if ((bflag&B_RIGHT)  && fx<0) fx=0;
+                if ((bflag&B_BOTTOM) && fy>0) fy=0;
+                if ((bflag&B_TOP)    && fy<0) fy=0;
+            }
+            if (fabs(fx) < 1e-9 && fabs(fy) < 1e-9) continue;
+
+            bool move_x = fabs(fx) >= fabs(fy);
+            double dir = move_x ? fx : fy;
+
+            // Slack: min over all members against non-cluster blocks
+            double slack = fabs(dir);
+            for (int b : members) {
+                double bx = pos[b].x, by = pos[b].y;
+                double bx1 = bx + pos[b].w, by1 = by + pos[b].h;
+                for (int o = 0; o < n; o++) {
+                    if (s_cluster_gid_of[o] == gid) continue;
+                    if (move_x) {
+                        bool yov = pos[o].y < by1-1e-6 && pos[o].y+pos[o].h > by+1e-6;
+                        if (!yov) continue;
+                        if (dir < 0 && pos[o].x+pos[o].w <= bx+1e-9)
+                            slack = min(slack, bx - (pos[o].x+pos[o].w));
+                        else if (dir > 0 && pos[o].x >= bx1-1e-9)
+                            slack = min(slack, pos[o].x - bx1);
+                    } else {
+                        bool xov = pos[o].x < bx1-1e-6 && pos[o].x+pos[o].w > bx+1e-6;
+                        if (!xov) continue;
+                        if (dir < 0 && pos[o].y+pos[o].h <= by+1e-9)
+                            slack = min(slack, by - (pos[o].y+pos[o].h));
+                        else if (dir > 0 && pos[o].y >= by1-1e-9)
+                            slack = min(slack, pos[o].y - by1);
+                    }
+                }
+            }
+            if (slack <= 1e-9) continue;
+
+            double d = (dir > 0 ? slack*0.9 : -slack*0.9);
+
+            // Compute external HPWL before/after for affected edges
+            auto compute_ext_hpwl = [&]() {
+                double h = 0;
+                for (int b : members) {
+                    double bcx = pos[b].x + pos[b].w/2;
+                    double bcy = pos[b].y + pos[b].h/2;
+                    for (auto& [nb, w] : badj[b]) {
+                        if (s_cluster_gid_of[nb] == gid) continue;
+                        double ox = pos[nb].x + pos[nb].w/2;
+                        double oy = pos[nb].y + pos[nb].h/2;
+                        h += w * (fabs(ox - bcx) + fabs(oy - bcy));
+                    }
+                    for (auto& [pi, w] : padj[b]) {
+                        h += w * (fabs(pins[pi].first  - bcx) +
+                                  fabs(pins[pi].second - bcy));
+                    }
+                }
+                return h;
+            };
+
+            double hpwl_before = compute_ext_hpwl();
+            double v_before    = calc_violation(pos);
+
+            // Apply rigid translation
+            for (int b : members) {
+                if (move_x) pos[b].x += d; else pos[b].y += d;
+            }
+
+            double hpwl_after = compute_ext_hpwl();
+            double v_after    = calc_violation(pos);
+
+            if (hpwl_after >= hpwl_before - 1e-9 || v_after > v_before + 1e-9) {
+                // Revert
+                for (int b : members) {
+                    if (move_x) pos[b].x -= d; else pos[b].y -= d;
+                }
+            } else {
+                moved++;
+            }
+        }
+        if (moved == 0) break;
+    }
+    return pos;
+}
+
 static vector<Pos> cluster_snap(vector<Pos> pos) {
     int n = (int)pos.size();
     if (cluster_groups.empty()) return pos;
@@ -765,11 +1001,11 @@ static vector<Pos> cluster_snap(vector<Pos> pos) {
                     if (slack <= 1e-9) continue;
 
                     double d = (dir > 0 ? slack : -slack);
-                    double v_before = calc_violation(pos);
+                    double c_before = proxy_cost(pos);
                     double old_x = pos[b].x, old_y = pos[b].y;
                     if (move_x) pos[b].x += d; else pos[b].y += d;
-                    double v_after = calc_violation(pos);
-                    if (v_after > v_before + 1e-9) {
+                    double c_after = proxy_cost(pos);
+                    if (c_after > c_before - 1e-9) {
                         pos[b].x = old_x; pos[b].y = old_y;
                     } else {
                         moved++;
@@ -1070,7 +1306,7 @@ static void run_sa(chrono::time_point<Clock> t0) {
         // of HPWL gap in the proxy (matches actual scoring formula gradient ratio
         // ∂cost/∂V_rel / ∂cost/∂HPWL_gap ≈ 6 at typical operating points).
         if (h0 > 0 && n_soft > 0) {
-            W_VIOL = max(50.0, h0 * 9.0);      // 1.5× best from sweep
+            W_VIOL = max(50.0, h0 * 7.5);      // 1.25× best on new scoring
             // W_BOUNDARY stays at 10 — it's just a guidance gradient
         }
     }
@@ -1232,6 +1468,7 @@ static void run_sa(chrono::time_point<Clock> t0) {
     // 3) hill-climber: optimise wire length (boundary direction respected)
     // 4) final boundary_snap: re-align any block displaced by hill-climber
     best_pos = cluster_snap(best_pos);
+    best_pos = cluster_boundary_snap(best_pos);
     best_pos = boundary_snap(best_pos);
     best_pos = slack_hpwl_opt(best_pos, t0, 0.15);
     best_pos = boundary_snap(best_pos);
