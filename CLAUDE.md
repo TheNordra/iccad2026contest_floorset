@@ -55,13 +55,25 @@ GNN 預測的 (cx, cy)，把它當成「替代 initial perm」候選餵給 C++�
 - 沒 torch / 沒 .pth / 推論失敗時自動跳過，不影響原本流程
 - 額外推論成本 ~10–50ms/case (CPU)，總開銷 < 5s
 
-**100-case full eval A/B (2026-05-24)**：
-| 設定 | Total Score | Avg Cost | Feasible |
-|------|------------|----------|----------|
-| GNN enabled (default) | **3.3469** | 2.6157 | 100/100 |
-| GNN disabled (ICCAD_DISABLE_GNN=1) | 3.4308 | 2.6478 | 100/100 |
+**100-case full eval (2026-05-25, 含 3000-sample 重訓的新 .pth)**：
+| 設定 | GNN training | Total Score | Avg Cost | Feasible |
+|------|-------------|------------|----------|----------|
+| no-GNN baseline | — | 3.4308 | 2.6478 | 100/100 |
+| GNN enabled (old .pth) | 500 sample, loss=2.58 | 3.3469 | 2.6157 | 100/100 |
+| **GNN enabled (new .pth)** | **3000 sample, loss=1.34** | **3.3258** | 2.6548 | 100/100 |
 
-→ **GNN 整合淨改善 0.0839 (~2.4%)**。
+→ **新 .pth 比 no-GNN 改善 3.1%**，比 old GNN 再進步 0.6%。
+
+**邊際效益警告**：500 → 3000 sample (6× 訓練量) 僅換來 0.6% Total Score 進步。
+再加訓 sample 預估收益 < 0.3%。下一個 1% 要從別處挖（改整合方式、攻 boundary
+violations、或 tournament SA）。
+
+**Case 層級分歧** (smoke test 觀察)：
+| Case | n | Old GNN | New GNN |
+|------|---|---------|---------|
+| 0  | 21  | 1.9387 | 2.3845 (+23%) |
+| 99 | 120 | 3.6031 | 4.2474 (+18%) |
+新權重在某些 case 大進，某些大退 — aggregate 淨贏但分佈變分歧。
 
 > ⚠️ 兩者都高於先前文件記錄的 3.2708。可能原因：CLAUDE.md 的 3.2708 是早
 > 期 code state 的結果，當前 code 已飄移。若要追回 3.27，需要 git bisect
@@ -143,7 +155,8 @@ GNN 預測的 (cx, cy)，把它當成「替代 initial perm」候選餵給 C++�
 | + cluster_boundary_snap (**proxy_cost guard**) | 3.3183 |
 | + cluster_snap **(proxy_cost guard)** | 3.2708 |
 | 2026-05-24 W_BOUNDARY=10 baseline (no GNN, current code) | 3.4308 |
-| 2026-05-24 + GNN-hint initial perm | **3.3469** ← current best |
+| 2026-05-24 + GNN-hint initial perm (loss=2.58 .pth) | 3.3469 |
+| 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | **3.3258** ← current best |
 
 ---
 
