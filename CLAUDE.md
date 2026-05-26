@@ -1,5 +1,57 @@
 # ICCAD 2026 FloorSet — Session Context
 
+## 🚨 範式轉移 (2026-05-26, 重要！)
+
+**這個競賽不是 floorplan optimization，而是 reconstruction（拼圖還原）。**
+
+### 證據
+
+組員用**純演算法（無 ML）**做到：
+- **Total Score = 1.0322**
+- **Avg Cost = 1.0408**
+
+對照我們當前的最佳（GNN + SA）= **3.3258**。差距 **3.2×**。
+
+### 為什麼 reconstruction 比 optimization 強
+
+Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
+
+- 當 gap = 0 且 V_soft = 0 時 → **Cost = 1.0**（理論最小）
+- 我們 SA 自己「找最佳解」永遠 > baseline → HPWL_gap > 0 → Cost > 1
+- 組員把問題當「**還原 baseline 那張原圖**」→ HPWL_gap ≈ 0 → Cost ≈ 1
+
+### 訓練資料其實藏著答案
+
+`get_training_dataloader()` 回傳：
+```
+(area_target, b2b_conn, p2b_conn, pins_pos, constraints,
+ tree_sol, fp_sol, metrics)
+                  ^^^^^^^
+              原圖的 (w, h, x, y)
+```
+
+`fp_sol` = ground truth 位置。我們的 `compute_training_loss_differentiable`
+**完全沒用它** — 只看 HPWL + overlap，是無監督。所以 GNN 學到的是「散開且
+連線短的擺法」，而不是「原圖怎麼擺」。
+
+### 對策
+
+1. **演算法**：等組員分享純演算法代碼，研究他怎麼用 constraint + connectivity
+   反推 baseline 佈局
+2. **ML**：把 `training_example.py` 從**無監督** loss 改成 **supervised MSE
+   對 fp_sol**。GNN capacity 都在，只是被訓練成做錯誤任務
+3. **architecture**：目前 SA + skyline BL packer 是 optimization 思維的產物。
+   若要 reconstruction，可能要把 SA 角色從「找解」改成「微調 ML 輸出」，甚至
+   完全拿掉
+
+### 已知未解問題
+
+- 組員的 1.0322 完全在 validation set（100 case）。test set（hidden）效果未知
+- BL packer 的「給對 perm 能還原多接近」沒實驗驗證過；可能架構本身就是瓶頸
+- 監督式訓練的 ML 上限未知；可能跟組員純演算法持平或互補
+
+---
+
 ## 新評分公式 (已確認, 2026-05-23)
 
 ### 公式本身
@@ -156,7 +208,8 @@ violations、或 tournament SA）。
 | + cluster_snap **(proxy_cost guard)** | 3.2708 |
 | 2026-05-24 W_BOUNDARY=10 baseline (no GNN, current code) | 3.4308 |
 | 2026-05-24 + GNN-hint initial perm (loss=2.58 .pth) | 3.3469 |
-| 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | **3.3258** ← current best |
+| 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | 3.3258 |
+| **【外部參考】組員純演算法 reconstruction approach** | **1.0322** ← 真正的目標線 |
 
 ---
 
@@ -333,9 +386,32 @@ FloorSet/
 
 ## 給下一個 session 的優先建議
 
-1. **第一件事**：把 `W_BOUNDARY` 從 100 改回 10（或測試 100 是否真的有幫助）
-2. **第二件事**：跑 `viol_breakdown.py` 確認 vBd 仍是主導
-3. **第三件事**：實作「slack=0 boundary block」的處理機制
-   （chain push 或 swap-based snap）
-4. **第四件事**：如果 boundary 已壓低，下一個方向是 bbox shrinking
-   來降低 area_gap
+> ⚠️ **2026-05-26 更新**：以下舊建議（boundary / bbox / slack）都是 optimization
+> 思維。範式已轉移到 reconstruction，請先看本文件頂部「🚨 範式轉移」段落，
+> 再決定要不要繼續走 optimization 路線。
+
+### 新優先級（reconstruction 範式）
+
+1. **等組員分享純演算法代碼** → 研究怎麼從 constraint + connectivity 反推
+   baseline 佈局。組員已驗證能做到 1.0322
+2. **`training_example.py` 已 pivot 成 supervised MSE on fp_sol**
+   （見「機器學習部分」段落最新更新）
+   - 上 GPU 環境跑訓練前先 `--sanity` 確認 pipeline 還沒壞
+   - 訓出新 .pth 後跑單 case 測試，比較跟 self-supervised .pth 的差距
+3. **驗證 BL packer 上限**：寫一個小腳本，把 `fp_sol` 排序當 perm 餵
+   `optimizer_claude.exe`，看 Total Score 能否逼近 1.0。
+   - 若 ≈ 1.0 → 架構 OK，問題在 GNN 訓練目標
+   - 若 ≈ 2.0+ → BL packer 會把答案拆掉，得換 placer
+4. **若 ML + algorithm 都不夠**：考慮直接輸出 fp_sol 風格的位置，丟給輕量
+   legalizer 修 overlap，完全跳過 SA
+
+### 舊優先級（optimization 範式，已 deprecate）
+
+~~第一件事：W_BOUNDARY 100 → 10~~（已做）
+~~第二件事：viol_breakdown 確認 vBd 主導~~
+~~第三件事：slack=0 boundary block 處理~~
+~~第四件事：bbox shrinking~~
+
+這些只能在「我們要繼續做 optimization」的前提下有意義。在 reconstruction
+範式下，所有 violation/HPWL/area 都是 baseline 內建的副產品 — 還原原圖
+自然就沒問題。

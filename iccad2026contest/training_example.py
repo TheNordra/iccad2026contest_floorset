@@ -1,21 +1,40 @@
 #!/usr/bin/env python3
 """
-ICCAD 2026 FloorSet Challenge - Training Data Example (GPU & Bounded GNN Version)
+ICCAD 2026 FloorSet Challenge - SUPERVISED GNN Training (V2 architecture)
+==========================================================================
 
-Trains a neural network using the DIFFERENTIABLE contest cost function on GPU.
-Locks aspect ratio and coordinates to prevent network cheating.
+Paradigm shift (2026-05-26): the contest is RECONSTRUCTION, not optimization.
+See CLAUDE.md "範式轉移" section for the reasoning.
 
-Run (full training, ~1.5 h on RTX 3060 Ti):
-    python iccad2026contest/training_example.py
+This script trains a GNN to PREDICT THE ORIGINAL FLOORPLAN (fp_sol) given the
+inputs, instead of just minimising HPWL+overlap from scratch.
 
-Run (sanity check, ~5 min — small dataset, no save, validates pipeline):
+Key changes vs the v1 (unsupervised) script:
+1. **Loss = MSE against fp_sol** (ground-truth (w, h, x, y) per block).
+   The cost-function loss is still computed for monitoring but does not drive
+   training.
+2. **FloorplanNetV2 architecture**:
+   - Wider features (14 dims, including boundary flags, preplaced, mib/cluster
+     hints, pin count, log(area))
+   - 4 residual GCN layers with LayerNorm + Dropout
+   - No grid-position prior (interferes with supervised learning)
+   - Single learnable scale: output xy ∈ [0, SCALE], SCALE=500
+3. **Vectorised edge processing** using scatter_add — order-of-magnitude
+   faster than the v1 Python edge loops.
+4. **Saves to floorplan_gnn_v2.pth** — does NOT overwrite the v1 weights.
+   optimizer_claude.py will be updated to prefer v2 over v1.
+
+Run (sanity, ~5 min, no .pth side effects):
     python iccad2026contest/training_example.py --sanity
+
+Run (full training, ~1.5h baseline @ 500 samples; 6-9h for 2000-3000):
+    python iccad2026contest/training_example.py --num-samples 2000 --fresh
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
-import math
 
 import torch
 import torch.nn as nn
@@ -27,98 +46,223 @@ from iccad2026contest.iccad2026_evaluate import (
     compute_training_loss_differentiable,
 )
 
+
 # =========================================================================
-# 定義升級版圖神經網路 (Bounded Graph Neural Network)
+# Architecture
 # =========================================================================
-class FloorplanNet(nn.Module):
-    def __init__(self, hidden_dim=128):
+
+class ResidualGCNLayer(nn.Module):
+    """Pre-norm residual GCN block: x -> x + Dropout(ReLU(Linear(adj @ LN(x))))"""
+
+    def __init__(self, hidden_dim: int, dropout: float = 0.1):
         super().__init__()
-        # 特徵融合層：接收 [面積, 引力Pin_X, 引力Pin_Y]
-        self.input_layer = nn.Linear(3, hidden_dim)
+        self.norm = nn.LayerNorm(hidden_dim)
+        self.linear = nn.Linear(hidden_dim, hidden_dim)
+        self.dropout = nn.Dropout(dropout)
 
-        # 圖卷積層 (Graph Convolution)
-        self.gcn1 = nn.Linear(hidden_dim, hidden_dim)
-        self.gcn2 = nn.Linear(hidden_dim, hidden_dim)
+    def forward(self, adj: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        h = self.norm(x)
+        h = torch.matmul(adj, h)
+        h = self.linear(h)
+        h = torch.relu(h)
+        h = self.dropout(h)
+        return x + h
 
-        # 輸出層：預測 (x_norm, y_norm, log_ratio, _unused)
-        self.out_layer = nn.Linear(hidden_dim, 4)
 
-    def forward(self, area_target, b2b_conn, p2b_conn, pins_pos, block_count):
+class FloorplanNetV2(nn.Module):
+    """Supervised reconstruction GNN.
+
+    Input features (per block, 14 dims):
+        0  area
+        1  sqrt(area)
+        2  log(area + 1)
+        3  avg pin x          (0 if no pins connected)
+        4  avg pin y          (0 if no pins connected)
+        5  pin_count
+        6  log(pin_count + 1)
+        7  is_boundary_left
+        8  is_boundary_right
+        9  is_boundary_top
+        10 is_boundary_bottom
+        11 is_preplaced
+        12 is_fixed
+        13 has_mib OR has_cluster (boolean: in any soft group)
+
+    Output:
+        For each block, (x, y, w, h):
+            - (x, y) = sigmoid(pos_head(h)) * SCALE
+            - (w, h) derived from area + tanh(ratio_head(h)) so that w*h == area
+    """
+
+    INPUT_DIM = 14
+    DEFAULT_SCALE = 500.0
+    LOG_RATIO_MAX = math.log(10.0)
+
+    def __init__(self, hidden_dim: int = 256, n_gcn_layers: int = 4,
+                 dropout: float = 0.1, scale: float = DEFAULT_SCALE):
+        super().__init__()
+        self.scale = scale
+        self.input_proj = nn.Linear(self.INPUT_DIM, hidden_dim)
+        self.input_norm = nn.LayerNorm(hidden_dim)
+        self.gcn_layers = nn.ModuleList(
+            [ResidualGCNLayer(hidden_dim, dropout=dropout)
+             for _ in range(n_gcn_layers)]
+        )
+        self.head_norm = nn.LayerNorm(hidden_dim)
+        self.pos_head = nn.Linear(hidden_dim, 2)
+        self.ratio_head = nn.Linear(hidden_dim, 1)
+
+    # --- Helpers ---------------------------------------------------------
+
+    @staticmethod
+    def _vec_pin_features(p2b_conn: torch.Tensor, pins_pos: torch.Tensor,
+                          n: int, device) -> torch.Tensor:
+        """Returns (n, 3) tensor: (avg_pin_x, avg_pin_y, pin_count) per block.
+        Uses scatter_add — no Python loops over edges."""
+        out = torch.zeros(n, 3, device=device)
+        if p2b_conn is None or p2b_conn.dim() != 2 or p2b_conn.numel() == 0:
+            return out
+        valid = p2b_conn[:, 0] >= 0
+        if not valid.any():
+            return out
+        pi = p2b_conn[valid, 0].long()
+        bi = p2b_conn[valid, 1].long()
+        in_range = (bi < n) & (pi < pins_pos.shape[0])
+        pi = pi[in_range]
+        bi = bi[in_range]
+        if pi.numel() == 0:
+            return out
+        px = pins_pos[pi, 0]
+        py = pins_pos[pi, 1]
+        # scatter sums
+        sum_x = torch.zeros(n, device=device)
+        sum_y = torch.zeros(n, device=device)
+        cnt   = torch.zeros(n, device=device)
+        sum_x.scatter_add_(0, bi, px)
+        sum_y.scatter_add_(0, bi, py)
+        cnt.scatter_add_(0, bi, torch.ones_like(bi, dtype=torch.float, device=device))
+        mask = cnt > 0
+        out[mask, 0] = sum_x[mask] / cnt[mask]
+        out[mask, 1] = sum_y[mask] / cnt[mask]
+        out[:, 2] = cnt
+        return out
+
+    @staticmethod
+    def _vec_adj(b2b_conn: torch.Tensor, n: int, device) -> torch.Tensor:
+        """Returns (n, n) row-normalised adjacency. Vectorised over edges."""
+        adj = torch.eye(n, device=device)
+        if b2b_conn is None or b2b_conn.dim() != 2 or b2b_conn.numel() == 0:
+            return adj / adj.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        valid = b2b_conn[:, 0] >= 0
+        if not valid.any():
+            return adj / adj.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        ei = b2b_conn[valid, 0].long()
+        ej = b2b_conn[valid, 1].long()
+        if b2b_conn.shape[1] > 2:
+            ew = b2b_conn[valid, 2].float()
+        else:
+            ew = torch.ones(ei.shape[0], dtype=torch.float, device=device)
+        in_range = (ei < n) & (ej < n) & (ei >= 0) & (ej >= 0)
+        ei, ej, ew = ei[in_range], ej[in_range], ew[in_range]
+        # Symmetric accumulation
+        adj.index_put_((ei, ej), ew, accumulate=True)
+        adj.index_put_((ej, ei), ew, accumulate=True)
+        adj = adj / adj.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        return adj
+
+    # --- Forward ---------------------------------------------------------
+
+    def forward(self, area_target: torch.Tensor, b2b_conn: torch.Tensor,
+                p2b_conn: torch.Tensor, pins_pos: torch.Tensor,
+                constraints: torch.Tensor, block_count: int) -> torch.Tensor:
         device = area_target.device
+        n = block_count
 
-        # 1. 建立初始節點特徵 [面積, 引力X, 引力Y]
-        features = torch.zeros((block_count, 3), device=device)
-        features[:, 0] = area_target[:block_count]
+        # ---- Build features --------------------------------------------
+        feats = torch.zeros(n, self.INPUT_DIM, device=device)
+        a = area_target[:n].clamp(min=1e-6)
+        feats[:, 0] = a
+        feats[:, 1] = torch.sqrt(a)
+        feats[:, 2] = torch.log(a + 1.0)
 
-        pin_counts = torch.zeros(block_count, device=device)
-        if p2b_conn.dim() == 2 and len(p2b_conn) > 0:
-            for edge in p2b_conn:
-                if edge[0] == -1: continue
-                pin_idx, blk_idx = int(edge[0]), int(edge[1])
-                if blk_idx < block_count:
-                    features[blk_idx, 1] += pins_pos[pin_idx, 0]
-                    features[blk_idx, 2] += pins_pos[pin_idx, 1]
-                    pin_counts[blk_idx] += 1
+        pin_feats = self._vec_pin_features(p2b_conn, pins_pos, n, device)
+        feats[:, 3] = pin_feats[:, 0]
+        feats[:, 4] = pin_feats[:, 1]
+        feats[:, 5] = pin_feats[:, 2]
+        feats[:, 6] = torch.log(pin_feats[:, 2] + 1.0)
 
-        mask = pin_counts > 0
-        features[mask, 1] /= pin_counts[mask]
-        features[mask, 2] /= pin_counts[mask]
+        if constraints is not None and constraints.shape[0] >= n:
+            cons = constraints[:n].long()
+            bflag = cons[:, 4]
+            feats[:, 7]  = ((bflag & 1) > 0).float()  # LEFT
+            feats[:, 8]  = ((bflag & 2) > 0).float()  # RIGHT
+            feats[:, 9]  = ((bflag & 4) > 0).float()  # TOP
+            feats[:, 10] = ((bflag & 8) > 0).float()  # BOTTOM
+            feats[:, 11] = (cons[:, 1] > 0).float()   # preplaced
+            feats[:, 12] = (cons[:, 0] > 0).float()   # fixed
+            feats[:, 13] = ((cons[:, 2] > 0) | (cons[:, 3] > 0)).float()
 
-        # 2. 轉換為隱藏層向量
-        x = torch.relu(self.input_layer(features))
+        # ---- Build adjacency -------------------------------------------
+        adj = self._vec_adj(b2b_conn, n, device)
 
-        # 3. 建立相鄰矩陣 (微調平滑項)
-        adj = torch.eye(block_count, device=device)
-        if b2b_conn.dim() == 2 and len(b2b_conn) > 0:
-            for edge in b2b_conn:
-                if edge[0] == -1: continue
-                u, v = int(edge[0]), int(edge[1])
-                weight = float(edge[2]) if len(edge) > 2 else 1.0
-                if u < block_count and v < block_count:
-                    adj[u, v] += weight
-                    adj[v, u] += weight
+        # ---- Encoder ---------------------------------------------------
+        x = self.input_proj(feats)
+        x = self.input_norm(x)
+        x = torch.relu(x)
+        for layer in self.gcn_layers:
+            x = layer(adj, x)
+        x = self.head_norm(x)
 
-        row_sum = adj.sum(dim=1, keepdim=True)
-        adj = adj / (row_sum + 1e-8)
-
-        # 4. 圖卷積
-        x = torch.matmul(adj, x)
-        x = torch.relu(self.gcn1(x))
-        x = torch.matmul(adj, x)
-        x = torch.relu(self.gcn2(x))
-
-        # 5. 輸出層與防呆映射
-        out = self.out_layer(x)
-
-        # 在 forward 映射座標時，加上一個依 block 編號微調的初始散開值
-        # 讓模型是在「已經稍微鋪開」的基礎上，再去調整位置，而不是大家都從 (0,0) 開始擠
-        grid_x = (torch.arange(block_count, device=device) % 10) * 20.0
-        grid_y = (torch.arange(block_count, device=device) // 10) * 20.0
-        xy = torch.sigmoid(out[:, :2]) * 150.0 + torch.stack([grid_x, grid_y], dim=1)
-
-        # 【手術二】長寬比鎖定：預測 log(ratio)，轉換後範圍限制在 0.1 ~ 10.0 之間
-        log_ratio = torch.tanh(out[:, 2]) * math.log(10.0)
+        # ---- Heads -----------------------------------------------------
+        xy = torch.sigmoid(self.pos_head(x)) * self.scale  # (n, 2)
+        log_ratio = torch.tanh(self.ratio_head(x).squeeze(-1)) * self.LOG_RATIO_MAX
         ratio = torch.exp(log_ratio)
-
-        # 根據精確目標面積計算真實的 w 和 h
-        areas = area_target[:block_count]
-        w = torch.sqrt(areas * ratio)
-        h = torch.sqrt(areas / ratio)
-
-        # 將 w 和 h 重新維度調整為 (N, 1) 並與 xy 拼接
+        w = torch.sqrt(a * ratio)
+        h = torch.sqrt(a / ratio)
         wh = torch.stack([w, h], dim=1)
-
         return torch.cat([xy, wh], dim=1)
+
+
+# =========================================================================
+# Supervised loss
+# =========================================================================
+
+def supervised_loss(pred: torch.Tensor, fp_sol_b: torch.Tensor,
+                    block_count: int):
+    """MSE on (x, y, w, h) where fp_sol stores (w, h, x, y).
+
+    Returns (total_loss, pos_mse, dim_mse) — all scalars.
+    pred shape:    (n, 4)  = (x, y, w, h)
+    fp_sol_b shape (max_n, 4) = (w, h, x, y); we only use first `block_count` rows.
+    """
+    n = block_count
+    target = torch.empty_like(pred[:n])
+    target[:, 0] = fp_sol_b[:n, 2]  # x
+    target[:, 1] = fp_sol_b[:n, 3]  # y
+    target[:, 2] = fp_sol_b[:n, 0]  # w
+    target[:, 3] = fp_sol_b[:n, 1]  # h
+
+    pos_mse = torch.mean((pred[:n, :2] - target[:, :2]) ** 2)
+    dim_mse = torch.mean((pred[:n, 2:] - target[:, 2:]) ** 2)
+    total = pos_mse + dim_mse
+    return total, pos_mse.detach(), dim_mse.detach()
+
+
+# =========================================================================
+# Main
+# =========================================================================
+
+V2_FINAL_PATH      = "floorplan_gnn_v2.pth"
+V2_CHECKPOINT_PATH = "floorplan_gnn_v2_checkpoint.pth"
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GNN training for ICCAD 2026 FloorSet Challenge.")
+        description="Supervised GNN training (V2) for ICCAD 2026 FloorSet.")
     parser.add_argument(
         "--sanity", action="store_true",
         help="Sanity-check mode: 20 samples (= 5 batches), no checkpoint, "
-             "no final .pth save. Use to validate the pipeline before "
-             "committing to a multi-hour full training run.")
+             "no final .pth save. Validates the pipeline before a long run.")
     parser.add_argument(
         "--num-samples", type=int, default=None, metavar="N",
         help="Number of training samples to use. Default: 500 (~1.5h on "
@@ -126,14 +270,13 @@ def main():
              "--sanity is set unless explicitly provided.")
     parser.add_argument(
         "--fresh", action="store_true",
-        help="Skip loading floorplan_gnn.pth - train from scratch. "
-             "Recommended for long runs (>=2000 samples) where cosine LR "
-             "starting at 0.001 would otherwise destabilise loaded weights.")
+        help=f"Skip loading {V2_FINAL_PATH} - train from scratch. "
+             "Recommended for long runs (>=2000 samples) so cosine LR "
+             "starting at 0.001 does not destabilise loaded weights.")
     args = parser.parse_args()
     SANITY = args.sanity
     FRESH  = args.fresh
 
-    # Resolve effective num_samples: explicit arg wins; else sanity=20, else 500.
     if args.num_samples is not None:
         NUM_SAMPLES = args.num_samples
     elif SANITY:
@@ -141,218 +284,190 @@ def main():
     else:
         NUM_SAMPLES = 500
 
+    BATCH_SIZE = 4
+    BASE_LR    = 0.001
+    GRAD_CLIP  = 1.0
+
     print("="*70)
+    title = "Supervised GNN Training (V2)"
     if SANITY:
-        print("ICCAD 2026 FloorSet Challenge - GNN Training [SANITY MODE]")
-    else:
-        print("ICCAD 2026 FloorSet Challenge - GNN Training (GPU)")
+        title += " [SANITY MODE]"
+    print(f"ICCAD 2026 FloorSet - {title}")
     print("="*70)
     print(f"   num_samples = {NUM_SAMPLES}   fresh = {FRESH}   sanity = {SANITY}")
+    print(f"   loss = MSE(prediction, fp_sol)  output = {V2_FINAL_PATH}")
     if SANITY:
-        print(f"⚠️  SANITY 模式：{NUM_SAMPLES} samples / 不會覆蓋 .pth")
-        print("    用途：驗證 pipeline 跑得起來、loss 在跌、lr 在降、沒 crash")
-        print("    通過後請拿掉 --sanity 重跑完整訓練。")
+        print(f"   SANITY: {NUM_SAMPLES} samples / no .pth save / no checkpoint")
     elif NUM_SAMPLES >= 1000:
         approx_hours = NUM_SAMPLES * 1.5 / 500
-        print(f"⚠️  長時間訓練：預計 ~{approx_hours:.1f}h on RTX 3060 Ti")
+        print(f"   long training: estimated ~{approx_hours:.1f}h on RTX 3060 Ti")
         if not FRESH:
-            print("    建議加 --fresh：cosine 從高 LR 開始會敲鬆既有 .pth 權重")
-        print("    強烈建議訓練前備份："
-              "Copy-Item floorplan_gnn.pth floorplan_gnn.backup.pth")
+            print("   tip: add --fresh to avoid disturbing existing weights "
+                  "with high starting LR")
     print("-"*70)
 
-    # 訓練超參數 (好調整)
-    BATCH_SIZE      = 4
-    BASE_LR         = 0.001
-    GRAD_CLIP       = 1.0
-    # Overlap-penalty β annealing: contest loss is (1+α·gap)·exp(β·V_soft).
-    # Loss-function 的 β 固定在 evaluator (=2.0)，但我們可以用「合成 loss
-    # 加權」在訓練前期讓網路先把方塊張開 (overlap-heavy)，後期再放手讓 HPWL
-    # 收斂。Schedule = 線性從 OVERLAP_WEIGHT_START 升到 _END。
-    OVERLAP_WEIGHT_START = 1.0
-    OVERLAP_WEIGHT_END   = 3.0
-    HPWL_WEIGHT_START    = 1.0
-    HPWL_WEIGHT_END      = 0.5
-
-    # 1. 載入資料 (可以試著把 num_samples 放大，例如 1000 筆或更多)
     print("\nLoading training data...")
     dataloader = get_training_dataloader(
-        batch_size=BATCH_SIZE,
-        num_samples=NUM_SAMPLES,
-        shuffle=True
-    )
+        batch_size=BATCH_SIZE, num_samples=NUM_SAMPLES, shuffle=True)
     n_batches = len(dataloader)
     print(f"Loaded {n_batches} batches\n")
 
-    # 2. 初始化神經網路與優化器
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}\n")
 
-    # 選擇訓練好的模型
-    model = FloorplanNet().to(device)
+    model = FloorplanNetV2().to(device)
+
     if FRESH:
-        print("[--fresh] Skipping load of floorplan_gnn.pth; training from scratch.")
-    elif Path("floorplan_gnn.pth").exists():
-        model.load_state_dict(torch.load("floorplan_gnn.pth", map_location=device))
-        print("Successfully loaded trained weights from floorplan_gnn.pth!")
+        print(f"[--fresh] Skipping load of {V2_FINAL_PATH}; training from scratch.")
+    elif Path(V2_FINAL_PATH).exists():
+        try:
+            model.load_state_dict(torch.load(V2_FINAL_PATH, map_location=device))
+            print(f"Loaded existing weights from {V2_FINAL_PATH}.")
+        except Exception as e:
+            print(f"WARNING: could not load {V2_FINAL_PATH} ({e}); "
+                  f"training from scratch instead.")
     else:
-        print("No existing floorplan_gnn.pth found; training from random init.")
+        print(f"No existing {V2_FINAL_PATH}; training from random init.")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=BASE_LR)
-    # 餘弦退火：訓練尾段大幅縮小步伐，消除尾端 loss 震盪反彈 (gnn_training.md
-    # 提到的「從 3.X 反彈至 5.X」現象)。T_max 設為 batch 數，η_min 設為 base/100。
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, n_batches), eta_min=BASE_LR * 0.01
-    )
+        optimizer, T_max=max(1, n_batches), eta_min=BASE_LR * 0.01)
 
     model.train()
 
-    # Loss-component 拆解 helper：用 compute_training_loss_differentiable 跑出
-    # 一個 scalar cost，但我們要做 overlap 與 HPWL 的「加權混合」就必須自己重
-    # 算各分量。為了與 evaluator 完全對齊，最簡單的做法是直接 monkey-patch β
-    # 在每個 batch 動態變化。但 import 的函式內部把 BETA 寫死，所以這裡用
-    # surrogate loss：scaled_cost = w_hpwl * hpwl_gap_proxy + w_overlap * overlap_proxy
-    # 仍然透過 compute_training_loss_differentiable 取得 fully-differentiable 圖，
-    # 並把它當作主目標 + 一個 overlap-only 的補強項。
-    def compute_overlap_only(positions, area_targets):
-        """純 overlap 面積 (normalised) — 只懲罰重疊，不看 HPWL。"""
-        N = positions.shape[0]
-        x = positions[:, 0]; y = positions[:, 1]
-        w = positions[:, 2]; h = positions[:, 3]
-        overlap_area = torch.tensor(0.0, device=positions.device,
-                                     dtype=positions.dtype)
-        for i in range(N):
-            for j in range(i + 1, N):
-                ox = torch.relu(torch.min(x[i]+w[i], x[j]+w[j]) - torch.max(x[i], x[j]))
-                oy = torch.relu(torch.min(y[i]+h[i], y[j]+h[j]) - torch.max(y[i], y[j]))
-                overlap_area = overlap_area + ox * oy
-        total_block_area = (w * h).sum()
-        return overlap_area / (total_block_area + 1e-6)
-
-    # 3. 開始訓練迴圈
     for batch_idx, batch in enumerate(dataloader):
-        area_target, b2b_conn, p2b_conn, pins_pos, constraints, tree_sol, fp_sol, metrics = batch
+        (area_target, b2b_conn, p2b_conn, pins_pos, constraints,
+         tree_sol, fp_sol, metrics) = batch
 
         current_batch_size = area_target.size(0)
         optimizer.zero_grad()
-        total_loss = 0.0
 
-        # 線性 annealing schedule：早期重 HPWL (方塊收攏)、晚期重 overlap
-        # (徹底張開)。alpha=0 在第一個 batch，alpha=1 在最後一個 batch。
-        alpha = batch_idx / max(1, n_batches - 1)
-        w_hpwl = HPWL_WEIGHT_START + alpha * (HPWL_WEIGHT_END - HPWL_WEIGHT_START)
-        w_overlap = OVERLAP_WEIGHT_START + alpha * (OVERLAP_WEIGHT_END - OVERLAP_WEIGHT_START)
+        total_loss = 0.0
+        sum_pos_mse = 0.0
+        sum_dim_mse = 0.0
+        sum_unsup_cost = 0.0   # for monitoring only — not optimised
 
         for b in range(current_batch_size):
             b_area = area_target[b].to(device)
-            b_b2b = b2b_conn[b].to(device)
-            b_p2b = p2b_conn[b].to(device)
+            b_b2b  = b2b_conn[b].to(device)
+            b_p2b  = p2b_conn[b].to(device)
             b_pins = pins_pos[b].to(device)
-            b_metrics = metrics[b].to(device)
+            b_cons = constraints[b].to(device)
+            b_metr = metrics[b].to(device)
+            b_sol  = fp_sol[b].to(device)
 
             block_count = int((b_area != -1).sum().item())
+            if block_count == 0:
+                continue
 
-            positions = model(b_area, b_b2b, b_p2b, b_pins, block_count)
+            positions = model(b_area, b_b2b, b_p2b, b_pins, b_cons, block_count)
 
-            # 主 loss：contest formula (fully differentiable)
-            base_loss = compute_training_loss_differentiable(
-                positions, b_b2b, b_p2b, b_pins, b_area[:block_count], b_metrics
-            )
+            loss, pos_mse, dim_mse = supervised_loss(positions, b_sol, block_count)
+            total_loss = total_loss + loss
+            sum_pos_mse += pos_mse.item()
+            sum_dim_mse += dim_mse.item()
 
-            # 補強項：純 overlap，讓晚期 batch 更強力地把方塊分開
-            extra_overlap = compute_overlap_only(positions, b_area[:block_count])
+            # Diagnostic only: contest-formula cost (no grad path)
+            with torch.no_grad():
+                unsup = compute_training_loss_differentiable(
+                    positions, b_b2b, b_p2b, b_pins,
+                    b_area[:block_count], b_metr
+                )
+                sum_unsup_cost += unsup.item()
 
-            loss = w_hpwl * base_loss + w_overlap * extra_overlap
-            total_loss += loss
-
-        # 算出平均 Loss
-        total_loss = total_loss / current_batch_size
+        total_loss = total_loss / max(1, current_batch_size)
         cur_lr = optimizer.param_groups[0]['lr']
+        avg_pos = sum_pos_mse / max(1, current_batch_size)
+        avg_dim = sum_dim_mse / max(1, current_batch_size)
+        avg_cost = sum_unsup_cost / max(1, current_batch_size)
         print(f"Batch {batch_idx:>3d}  loss={total_loss.item():.4f}  "
-              f"lr={cur_lr:.5f}  w_hpwl={w_hpwl:.2f}  w_overlap={w_overlap:.2f}")
+              f"pos_mse={avg_pos:.2f}  dim_mse={avg_dim:.2f}  "
+              f"unsup_cost={avg_cost:.3f}  lr={cur_lr:.5f}")
 
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
         optimizer.step()
         scheduler.step()
 
-        # ==========================================
-        # 【新增防禦】每 20 個 Batch 自動存檔一次（sanity 模式下跳過）
-        # ==========================================
         if not SANITY and batch_idx > 0 and batch_idx % 20 == 0:
-            torch.save(model.state_dict(), "floorplan_gnn_checkpoint.pth")
-            print(f"[Checkpoint] 已自動備份權重至 floorplan_gnn_checkpoint.pth (Batch {batch_idx})")
+            torch.save(model.state_dict(), V2_CHECKPOINT_PATH)
+            print(f"[Checkpoint] weights -> {V2_CHECKPOINT_PATH} "
+                  f"(batch {batch_idx})")
 
-    # =========================================================================
-    # 🏁 訓練完全結束：【立刻存檔】（放在繪圖之前，絕對安全）
-    # =========================================================================
     print("\n" + "="*70)
     if SANITY:
         print("[SANITY] Training loop finished. SKIPPING .pth save.")
-        print("[SANITY] 觀察上方 loss 是否在下降、lr 是否在降、grad 沒有爆掉。")
-        print("[SANITY] 如果一切正常，請拿掉 --sanity 重跑完整訓練。")
+        print("[SANITY] Check above: loss / pos_mse / dim_mse should DECREASE")
+        print("[SANITY] and unsup_cost should NOT spike (proxy for inference quality).")
+        print("[SANITY] If healthy, drop --sanity and rerun for real training.")
     else:
         print("Training loop finished successfully!")
-        torch.save(model.state_dict(), "floorplan_gnn.pth")
-        print("[Final] 最終精準權重已成功安全存檔至 floorplan_gnn.pth")
+        torch.save(model.state_dict(), V2_FINAL_PATH)
+        print(f"[Final] weights saved to {V2_FINAL_PATH}")
     print("="*70)
 
-    # =========================================================================
-    # 🎨 【修正版】視覺化成果繪圖測試（放在最底層，就算出錯也不影響存檔）
-    # =========================================================================
-    print("\nGenerating Visualization Result...")
+    # ---- Visualisation (also a sanity check that inference shape works) ----
+    print("\nGenerating visualisation...")
     model.eval()
-
     with torch.no_grad():
-        # 安全抽取第一筆資料
-        single_area = area_target[0].to(device)
-        single_b2b = b2b_conn[0].to(device)
-        single_p2b = p2b_conn[0].to(device)
-        single_pins = pins_pos[0].to(device)
-        single_metrics = metrics[0].to(device)
+        s_area = area_target[0].to(device)
+        s_b2b  = b2b_conn[0].to(device)
+        s_p2b  = p2b_conn[0].to(device)
+        s_pins = pins_pos[0].to(device)
+        s_cons = constraints[0].to(device)
+        s_sol  = fp_sol[0].to(device)
+        s_metr = metrics[0].to(device)
+        bc = int((s_area != -1).sum().item())
+        pred = model(s_area, s_b2b, s_p2b, s_pins, s_cons, bc)
+        sl, p_mse, d_mse = supervised_loss(pred, s_sol, bc)
 
-        block_count = int((single_area != -1).sum().item())
-        pred_positions = model(single_area, single_b2b, single_p2b, single_pins, block_count)
-
-        single_loss = compute_training_loss_differentiable(
-            pred_positions, single_b2b, single_p2b, single_pins, single_area[:block_count], single_metrics
-        )
-
-        pred_np = pred_positions.cpu().numpy()
-        pins_np = single_pins.cpu().numpy()
+        pred_np = pred.cpu().numpy()
+        sol_np = s_sol[:bc].cpu().numpy()
+        pins_np = s_pins.cpu().numpy()
 
     try:
         import matplotlib.pyplot as plt
         import matplotlib.patches as patches
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-        for i in range(block_count):
+        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+        # Predicted
+        for i in range(bc):
             x, y, w, h = pred_np[i]
-            rect = patches.Rectangle(
-                (x, y), w, h, linewidth=1, edgecolor='blue', facecolor='skyblue', alpha=0.4
-            )
-            ax.add_patch(rect)
-            ax.text(x + w/2, y + h/2, str(i), fontsize=6, ha='center', va='center')
-
-        if len(pins_np) > 0 and pins_np[0, 0] != -1:
-            valid_pins = pins_np[pins_np[:, 0] != -1]
-            if len(valid_pins) > 0:
-                ax.scatter(valid_pins[:, 0], valid_pins[:, 1], c='red', s=15, marker='x', label='Pins')
-
-        ax.set_xlim(-10, 310)
-        ax.set_ylim(-10, 310)
-        ax.set_aspect('equal')
-        plt.title(f"Predicted Floorplan Layout (Single Loss: {single_loss.item():.4f})")
-        plt.legend()
-
-        output_fig_path = "predicted_floorplan.png"
-        plt.savefig(output_fig_path, dpi=300)
-        print(f"Successfully！Visual reesults saved to {output_fig_path}")
+            axes[0].add_patch(patches.Rectangle(
+                (x, y), w, h, linewidth=1, edgecolor='blue',
+                facecolor='skyblue', alpha=0.4))
+            axes[0].text(x + w/2, y + h/2, str(i), fontsize=6,
+                         ha='center', va='center')
+        # Ground truth
+        for i in range(bc):
+            w, h, x, y = sol_np[i]
+            axes[1].add_patch(patches.Rectangle(
+                (x, y), w, h, linewidth=1, edgecolor='green',
+                facecolor='lightgreen', alpha=0.4))
+            axes[1].text(x + w/2, y + h/2, str(i), fontsize=6,
+                         ha='center', va='center')
+        # Pins on both
+        if len(pins_np) > 0:
+            valid = pins_np[pins_np[:, 0] != -1]
+            if len(valid) > 0:
+                for ax in axes:
+                    ax.scatter(valid[:, 0], valid[:, 1], c='red', s=15,
+                               marker='x', label='Pins')
+        for ax, title in zip(axes,
+                             [f"Predicted (pos_mse={p_mse.item():.2f} "
+                              f"dim_mse={d_mse.item():.2f})",
+                              "Ground truth (fp_sol)"]):
+            ax.set_xlim(-10, 510)
+            ax.set_ylim(-10, 510)
+            ax.set_aspect('equal')
+            ax.set_title(title)
+            ax.legend(loc='upper right')
+        plt.suptitle(f"FloorplanNetV2 — sample 0, n={bc} blocks")
+        out_path = "predicted_floorplan_v2.png"
+        plt.savefig(out_path, dpi=200)
         plt.close()
-
+        print(f"Saved: {out_path}")
     except Exception as e:
-        print(f"繪圖時發生錯誤：{e}")
+        print(f"Plot failed: {e}")
 
 
 if __name__ == '__main__':
