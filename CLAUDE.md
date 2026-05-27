@@ -209,6 +209,8 @@ violations、或 tournament SA）。
 | 2026-05-24 W_BOUNDARY=10 baseline (no GNN, current code) | 3.4308 |
 | 2026-05-24 + GNN-hint initial perm (loss=2.58 .pth) | 3.3469 |
 | 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | 3.3258 |
+| 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
+| 2026-05-27 v3 structural (pairwise ranking, 進行中) | — |
 | **【外部參考】組員純演算法 reconstruction approach** | **1.0322** ← 真正的目標線 |
 
 ---
@@ -342,15 +344,22 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 ```
 FloorSet/
 ├── optimizer_claude.cpp    ← 主程式 (C++)，含 GNN-hint 比較邏輯
-├── optimizer_claude.py     ← Python wrapper，含 GNN inference (FloorplanNet)
+├── optimizer_claude.py     ← Python wrapper，含 GNN inference (v1 FloorplanNet)
 ├── optimizer_claude.exe    ← 編譯輸出
-├── floorplan_gnn.pth       ← 訓練好的 GNN 權重 (FloorplanNet, 128 hidden)
-├── floorplan_gnn_checkpoint.pth ← 訓練中自動 checkpoint
+├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised)
+├── floorplan_gnn_checkpoint.pth ← v1 訓練中 checkpoint
+├── floorplan_gnn_v2.pth    ← v2 權重（已棄，supervised MSE 失敗）
+├── floorplan_gnn_v3.pth    ← v3 權重（待訓練；structural BL ordering）
+├── v8_puzzle_fingerprint_oracle_repair.py ← 組員放在根目錄的 wrapper（讀但不改）
 ├── CLAUDE.md               ← 本檔案
 ├── gnn_training.md         ← ML 部分文件（FloorplanNet 訓練紀錄）
+├── teammate_eva/           ← 組員提供的參考檔（不可修改）
+│   ├── README_baseline.md
+│   ├── my_optimizer.py     ← v3-shelf-packing 級，非 1.03 來源
+│   └── v8_puzzle_fingerprint_oracle_repair.py
 └── iccad2026contest/
     ├── iccad2026_evaluate.py       ← 新版評估腳本
-    ├── training_example.py         ← GNN 訓練腳本（已加入 LR scheduler + weight annealing）
+    ├── training_example.py         ← GNN 訓練腳本（當前 v3 structural ranking）
     ├── analyze_results.py          ← top cases 顯示（可用）
     ├── viol_breakdown.py           ← violation 分項（已建立，可用）
     ├── analyze_violations.py       ← 舊版，無法跑
@@ -360,25 +369,64 @@ FloorSet/
 
 ## 機器學習部分 (詳見 `gnn_training.md`)
 
-### 訓練腳本更新 (2026-05-24)
+### v1 訓練腳本 (2026-05-24, 已退役)
 
-`iccad2026contest/training_example.py` 已加入兩項 gnn_training.md 路線 A 提到的功能：
+無監督 (HPWL + overlap penalty)，2 層 GCN, 128 hidden, 含 grid prior。
+3000 sample / loss=1.34 → Total Score 3.3258（穿 GNN-hint integration）。
 
-1. **CosineAnnealingLR scheduler**
-   - `T_max = n_batches`，`η_min = base_lr × 0.01`
-   - 訓練尾段大幅縮小步伐，解決「Batch 120+ 從 3.X 反彈至 5.X」震盪
+### v2 訓練腳本 (2026-05-26, **失敗**)
 
-2. **Overlap-weight annealing**
-   - 訓練初期 (`HPWL_WEIGHT_START=1.0, OVERLAP_WEIGHT_START=1.0`)：方塊收攏
-   - 訓練後期 (`HPWL_WEIGHT_END=0.5, OVERLAP_WEIGHT_END=3.0`)：強力張開
-   - 主 loss 仍是 `compute_training_loss_differentiable` (與 evaluator 對齊)，
-     額外加上 `compute_overlap_only` 補強項 × overlap_weight
+Supervised MSE 對 `fp_sol`，4 層 residual GCN, 256 hidden, LayerNorm, 14-dim
+features, scatter_add 向量化邊處理。
 
-3. **`--sanity` flag**（5 分鐘煙霧測試，不會覆蓋 .pth）
-   - `python iccad2026contest/training_example.py --sanity`
-   - 自動 `NUM_SAMPLES=20, BATCH_SIZE=4` → 5 batches
-   - 跳過 checkpoint 與 final save，**保證不污染** `floorplan_gnn.pth`
-   - 通過後拿掉 flag 跑完整訓練
+**結果：訓練本身失敗。** 2000 sample log 觀察到：
+
+| 指標 | 觀察 | 含意 |
+|------|------|------|
+| `pos_mse` | 700-2300 大幅震盪，無下降趨勢 | 模型在位置預測上完全沒學到 |
+| `dim_mse` | 17-26 平穩 | 寬高 (aspect ratio) 學得 OK |
+| `unsup_cost` | 10 → **47,000,000** 暴衝 | 預測佈局物理上完全無效（heavy overlap） |
+
+**根因：任務是 ill-posed 的一對多**
+- 輸入 X = (connectivity, area, constraints) → 多個合法佈局 Y₁, Y₂, … 都對應到同樣的 X
+- 訓練只看到一個特定 Y_train（`fp_sol`）
+- MSE 收斂到「所有可能 Y 的平均」 → 一堆方塊疊在中間
+- pos_mse 大幅震盪是因為不同 batch 的 Y_train 把模型往不同方向拉
+
+**訓練時長正面意外**：v2 的 2000 sample 訓練 < 3h（原估 6h）— scatter_add
+向量化邊處理 vs v1 的 Python edge loop，~2× speedup。但 throughput 高跟訓練
+品質無關。
+
+`floorplan_gnn_v2.pth` **不可使用**，請勿 commit。
+
+### v3 訓練腳本 (2026-05-27, 進行中) — 預測結構而非位置
+
+新方向：模型輸出**每個 block 一個 BL ordering score**（scalar），不再預測絕對
+位置。架構同 v2（residual GCN + LayerNorm），但 output head 改為：
+- `bl_head` → 1 scalar BL score per block
+- `ratio_head` → 1 scalar aspect ratio（aux loss）
+
+**Loss**：
+- **Pairwise ranking loss**：對所有 (i, j) pair，若 fp_sol 的 `(x+y)[i] < (x+y)[j]`，
+  則 `bl_score[i] < bl_score[j]`。BCE on `sigmoid(bl[j] - bl[i])`
+- **Aux aspect MSE**：MSE on (w, h) 對 fp_sol，保留 v2 學到的 aspect ratio
+- 總 loss = ranking_loss + λ · aspect_mse
+
+**為什麼這次該成功**：
+- 一對多問題下，**absolute position 不可學**，但**relative order 可學**
+- BL packer 只需要 perm（順序），不需要絕對位置
+- 不同合法佈局之間的 BL ordering 可能相似（small-area-first / boundary-first 等
+  universal 模式），所以 pairwise loss 噪音較小
+
+**儲存**：`floorplan_gnn_v3.pth`（不覆蓋 v1/v2，方便 A/B 比較）
+
+### 通用 flags（所有版本）
+
+```bash
+--sanity              # 20 samples / 5 batches / 不存檔（pipeline 驗證）
+--num-samples N       # 指定樣本數
+--fresh               # 不 load 既有 .pth，從零訓練
+```
 
 > ⚠️ **本環境禁止跑訓練**，若要訓練請複製到另一個 GPU 環境執行
 
@@ -390,20 +438,36 @@ FloorSet/
 > 思維。範式已轉移到 reconstruction，請先看本文件頂部「🚨 範式轉移」段落，
 > 再決定要不要繼續走 optimization 路線。
 
-### 新優先級（reconstruction 範式）
+### 新優先級（reconstruction 範式, 2026-05-27 更新）
 
-1. **等組員分享純演算法代碼** → 研究怎麼從 constraint + connectivity 反推
-   baseline 佈局。組員已驗證能做到 1.0322
-2. **`training_example.py` 已 pivot 成 supervised MSE on fp_sol**
-   （見「機器學習部分」段落最新更新）
-   - 上 GPU 環境跑訓練前先 `--sanity` 確認 pipeline 還沒壞
-   - 訓出新 .pth 後跑單 case 測試，比較跟 self-supervised .pth 的差距
+1. **等組員補齊缺檔** → 已收到 `teammate_eva/`，但只有 wrapper +
+   v3 級 shelf packing helper，**真正的 `v8_puzzle_fingerprint_oracle.py`
+   還沒拿到**。其打到 1.0322 的核心 reconstruction 邏輯仍是黑盒
+2. **v3 訓練腳本（path C）已實作** → `training_example.py` 改為預測 BL
+   ordering score（pairwise ranking loss），不再預測絕對位置
+   - 上 GPU 環境跑 `--sanity` 驗證 pipeline
+   - 訓出 `floorplan_gnn_v3.pth` 後拷回，等我更新 `optimizer_claude.py`
+     支援 v3 推論（目前還沒做）
 3. **驗證 BL packer 上限**：寫一個小腳本，把 `fp_sol` 排序當 perm 餵
-   `optimizer_claude.exe`，看 Total Score 能否逼近 1.0。
-   - 若 ≈ 1.0 → 架構 OK，問題在 GNN 訓練目標
-   - 若 ≈ 2.0+ → BL packer 會把答案拆掉，得換 placer
-4. **若 ML + algorithm 都不夠**：考慮直接輸出 fp_sol 風格的位置，丟給輕量
-   legalizer 修 overlap，完全跳過 SA
+   `optimizer_claude.exe`，看 Total Score 能否逼近 1.0
+   - 若 ≈ 1.0 → 架構 OK，v3 ranking 預測夠準就有救
+   - 若 ≈ 2.0+ → BL packer 會把答案拆掉，需要換 placer
+4. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
+
+### 失敗紀錄（避免重蹈）
+
+- **v2 (2026-05-26) supervised MSE on fp_sol absolute position**：
+  ill-posed 一對多任務，loss 震盪、預測佈局物理無效（unsup_cost 暴衝到 47M）
+  → `floorplan_gnn_v2.pth` 已捨棄，**不要 commit**
+
+### `teammate_eva/` 檔案狀態
+
+- ✅ `README_baseline.md` — 只描述 v1-v5 shelf packing，沒提 v8 oracle
+- ✅ `my_optimizer.py` — v3 級 shelf packing，**不是** 1.03 的來源
+- ✅ `v8_puzzle_fingerprint_oracle_repair.py` — thin wrapper（52 行）
+- ❌ `v8_puzzle_fingerprint_oracle.py` — **missing**（真正核心）
+- ❌ 預期更進階版的 `my_optimizer.py`（含 `_final_boundary_nudge` /
+  `_final_group_boundary_nudge` / `_final_adaptive_single_edge_escape` 三方法）
 
 ### 舊優先級（optimization 範式，已 deprecate）
 
