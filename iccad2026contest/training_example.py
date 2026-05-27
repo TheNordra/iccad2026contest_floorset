@@ -54,7 +54,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from iccad2026contest.iccad2026_evaluate import (
     get_training_dataloader,
-    compute_training_loss_differentiable,
 )
 
 
@@ -297,30 +296,45 @@ def main():
                     "ranking on fp_sol's (x+y).")
     parser.add_argument(
         "--sanity", action="store_true",
-        help="Sanity-check mode: 20 samples (= 5 batches), no checkpoint, "
-             "no final .pth save. Validates the pipeline before long runs.")
+        help="Sanity-check mode: 120 samples (= 30 batches), aspect-weight "
+             "forced to 0, no checkpoint, no final .pth save. Tests whether "
+             "the rank head actually learns. Should see rank_acc climb from "
+             "~0.5 to ~0.6+ over 30 batches if the pipeline is healthy.")
     parser.add_argument(
         "--num-samples", type=int, default=None, metavar="N",
         help="Number of training samples to use. Default: 500 (~30 min @ "
              "RTX 3060 Ti with scatter_add). 2000 ~= 2-3h, 3000 ~= 4-5h. "
-             "Overridden to 20 if --sanity is set unless explicitly provided.")
+             "Overridden to 120 if --sanity is set unless explicitly provided.")
     parser.add_argument(
         "--fresh", action="store_true",
         help=f"Skip loading {V3_FINAL_PATH} - train from scratch. "
              "Recommended for long runs (>=2000 samples).")
     parser.add_argument(
-        "--aspect-weight", type=float, default=0.01, metavar="LAMBDA",
-        help="Weight for auxiliary aspect-ratio MSE loss. Default: 0.01. "
-             "Set 0 to disable aspect supervision (BL ranking only).")
+        "--aspect-weight", type=float, default=None, metavar="LAMBDA",
+        help="Weight for auxiliary aspect-ratio MSE loss. "
+             "Default: 0.001 in normal mode, 0.0 in --sanity mode "
+             "(sanity isolates the ranking signal). "
+             "Pass an explicit value to override.")
     args = parser.parse_args()
     SANITY = args.sanity
     FRESH  = args.fresh
-    LAMBDA_ASPECT = args.aspect_weight
 
+    # Aspect weight resolution: explicit > sanity default (0.0) > normal default (0.001).
+    # In sanity mode we kill aspect so any signal we see is from ranking.
+    if args.aspect_weight is not None:
+        LAMBDA_ASPECT = args.aspect_weight
+    elif SANITY:
+        LAMBDA_ASPECT = 0.0
+    else:
+        LAMBDA_ASPECT = 0.001
+
+    # Sample count: explicit > sanity default (120 -> 30 batches) > normal default (500).
+    # Bumped sanity from 20 (5 batches) to 120 (30 batches) so cosine LR has
+    # room to anneal AND the rank head has enough updates to show convergence.
     if args.num_samples is not None:
         NUM_SAMPLES = args.num_samples
     elif SANITY:
-        NUM_SAMPLES = 20
+        NUM_SAMPLES = 120
     else:
         NUM_SAMPLES = 500
 
@@ -339,7 +353,11 @@ def main():
           f"+ {LAMBDA_ASPECT} * MSE(w,h)")
     print(f"   output: {V3_FINAL_PATH}")
     if SANITY:
-        print(f"   SANITY: {NUM_SAMPLES} samples / no .pth save / no checkpoint")
+        print(f"   SANITY: {NUM_SAMPLES} samples = {NUM_SAMPLES // BATCH_SIZE} batches "
+              f"/ no .pth save / no checkpoint")
+        if LAMBDA_ASPECT == 0.0:
+            print("   SANITY: aspect-weight forced to 0 to isolate rank signal "
+                  "(pass --aspect-weight to override)")
     elif NUM_SAMPLES >= 1000:
         approx_hours = NUM_SAMPLES * 2.5 / 2000  # scatter_add speed assumption
         print(f"   long training: estimated ~{approx_hours:.1f}h on RTX 3060 Ti")
@@ -385,7 +403,6 @@ def main():
         sum_rank_loss = 0.0
         sum_aspect_loss = 0.0
         sum_rank_acc = 0.0
-        sum_unsup = 0.0
         n_processed = 0
 
         for b in range(current_batch_size):
@@ -395,7 +412,6 @@ def main():
             b_pins = pins_pos[b].to(device)
             b_cons = constraints[b].to(device)
             b_sol  = fp_sol[b].to(device)
-            b_metr = metrics[b].to(device)
 
             block_count = int((b_area != -1).sum().item())
             if block_count < 2:
@@ -418,29 +434,6 @@ def main():
             sum_rank_acc += ranking_accuracy(bl_score, gt_bl, block_count)
             n_processed += 1
 
-            # Diagnostic: build a position tensor from BL score + (w, h) and
-            # run through contest cost function. The "positions" we hand it
-            # are NOT meant to be a real layout — sorting blocks by bl_score
-            # and applying the BL packer is what optimizer_claude does at
-            # inference. Here we just sanity-check that the contest cost
-            # doesn't explode on the raw bl_score (no NaN, no inf).
-            with torch.no_grad():
-                # Build a pseudo layout: x = bl_score (rescaled), y = 0
-                # — purely a sanity probe; do not interpret as a quality signal
-                rescale = (bl_score - bl_score.min()).clamp(min=1e-6)
-                rescale = rescale / rescale.max() * 100.0
-                pseudo_pos = torch.zeros(block_count, 4, device=device)
-                pseudo_pos[:, 0] = rescale
-                pseudo_pos[:, 2] = pred[:block_count, 2]
-                pseudo_pos[:, 3] = pred[:block_count, 3]
-                try:
-                    u = compute_training_loss_differentiable(
-                        pseudo_pos, b_b2b, b_p2b, b_pins,
-                        b_area[:block_count], b_metr)
-                    sum_unsup += u.item()
-                except Exception:
-                    pass  # ignore probe failures
-
         if n_processed == 0:
             continue
 
@@ -449,11 +442,9 @@ def main():
         avg_rank = sum_rank_loss / n_processed
         avg_asp  = sum_aspect_loss / n_processed
         avg_acc  = sum_rank_acc / n_processed
-        avg_uns  = sum_unsup / n_processed
         print(f"Batch {batch_idx:>3d}  loss={total_loss.item():.4f}  "
-              f"rank={avg_rank:.4f}  aspect={avg_asp:.2f}  "
-              f"rank_acc={avg_acc:.3f}  "
-              f"probe_unsup={avg_uns:.2f}  lr={cur_lr:.5f}")
+              f"rank={avg_rank:.4f}  rank_acc={avg_acc:.3f}  "
+              f"aspect={avg_asp:.2f}  lr={cur_lr:.5f}")
 
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
@@ -468,9 +459,11 @@ def main():
     print("\n" + "="*70)
     if SANITY:
         print("[SANITY] Training loop finished. SKIPPING .pth save.")
-        print("[SANITY] Key signal to check: rank_acc should INCREASE from")
-        print("[SANITY] ~0.5 (random) toward 1.0 (perfect ranking).")
-        print("[SANITY] rank loss should DECREASE; aspect loss decreasing is a bonus.")
+        print("[SANITY] Health checklist (over 30 batches):")
+        print("[SANITY]   rank_acc:   ~0.5 (batch 0)  ->  >= 0.60 by batch 20-30")
+        print("[SANITY]   rank loss:  ~0.69 (= ln 2) ->  visibly decreasing")
+        print("[SANITY]   aspect:     ignored in sanity mode (LAMBDA=0)")
+        print("[SANITY] If rank_acc stays at 0.5, architecture / loss / LR is wrong.")
         print("[SANITY] If healthy, drop --sanity and rerun for real training.")
     else:
         print("Training loop finished successfully!")
