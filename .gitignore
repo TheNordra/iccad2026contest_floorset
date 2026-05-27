@@ -55,3 +55,6 @@ viz_results/
 
 # Cpp Executation Data
 *.exe
+
+# from teammate
+teammate_eva/

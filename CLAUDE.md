@@ -210,7 +210,7 @@ violations、或 tournament SA）。
 | 2026-05-24 + GNN-hint initial perm (loss=2.58 .pth) | 3.3469 |
 | 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | 3.3258 |
 | 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
-| 2026-05-27 v3 structural (pairwise ranking, 進行中) | — |
+| 2026-05-27 v3 sanity (120 sample, 30 batches) | rank_acc 0.53 → 0.58，訊號弱 — 待 oracle 實驗決定 |
 | **【外部參考】組員純演算法 reconstruction approach** | **1.0322** ← 真正的目標線 |
 
 ---
@@ -420,12 +420,41 @@ features, scatter_add 向量化邊處理。
 
 **儲存**：`floorplan_gnn_v3.pth`（不覆蓋 v1/v2，方便 A/B 比較）
 
+**Sanity 結果 (2026-05-27)**：
+
+第一次 sanity (5 batches, λ_aspect=0.01) 失敗 — aspect_loss 完全 dominate
+gradient（0.01 × 865 = 8.65 vs rank=0.69），cosine LR 在 5 batches 內塌到
+0.00001。修正：sanity 預設 120 samples (= 30 batches)，aspect-weight 預設
+0.0 in sanity，移除 noisy `probe_unsup` diagnostic。
+
+第二次 sanity (120 samples, λ=0.0) 結果：
+
+| Batches | avg rank_acc | rank_loss |
+|---------|--------------|-----------|
+| 0-4 | 0.529 | 0.69 |
+| 5-9 | 0.568 | 0.68 |
+| **20-24** | **0.595** | 0.66 |
+| 25-29 | 0.583 | 0.66 |
+
+**訊號存在但弱**：30 batches 內 rank_acc 從 0.53 → 0.58 (+5%)，但 noise ±0.05。
+不確定 full training (500 batches) 能否突破到 0.75+。
+
+**下一步建議：先做 oracle BL 上限實驗（~45 分鐘）**，再決定要不要花 3h 跑
+full training：
+
+| Oracle Total Score | 結論 |
+|--------------------|------|
+| ≤ 1.5 | ranking 是主 lever，full training 大有意義 |
+| 1.5-2.5 | 邊緣有用 |
+| ≥ 3.0 | BL packer 是天花板，訓練怎麼好都白工 |
+
 ### 通用 flags（所有版本）
 
 ```bash
---sanity              # 20 samples / 5 batches / 不存檔（pipeline 驗證）
+--sanity              # 120 samples / 30 batches / aspect-weight=0 / 不存檔
 --num-samples N       # 指定樣本數
 --fresh               # 不 load 既有 .pth，從零訓練
+--aspect-weight L     # v3 only: 預設 0.001 (sanity 0.0)
 ```
 
 > ⚠️ **本環境禁止跑訓練**，若要訓練請複製到另一個 GPU 環境執行
