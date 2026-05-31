@@ -4,13 +4,47 @@
 
 **這個競賽不是 floorplan optimization，而是 reconstruction（拼圖還原）。**
 
-### 證據
+### 證據（含 2026-05-27 修正）
 
-組員用**純演算法（無 ML）**做到：
-- **Total Score = 1.0322**
-- **Avg Cost = 1.0408**
+組員的 1.0322 經查證 **是 oracle**（讀本地 validation label），hidden test 退回 fallback。
+真正的 legit 上限約 **1.6**（無 label 的 portfolio 方法）。
 
-對照我們當前的最佳（GNN + SA）= **3.3258**。差距 **3.2×**。
+- `teammate_eva/v8_puzzle_fingerprint_oracle.py:68` — `FloorplanDatasetLiteTest("../")`
+  → 讀本地 label，fingerprint 比對輸入；命中回傳 ground truth，沒命中退回 `my_optimizer.py`
+- 競賽 server hidden test 沒 label → 100% fallback，分數就是 `my_optimizer.py` 的分數
+
+組員從 `codex_experiment_log.md` 的演進軌跡（baseline=3.43，皆為 100% feasible）：
+
+| 版本 | Total Score | Avg Cost | 性質 |
+|------|------------|----------|------|
+| baseline `my_optimizer.py` | 3.4292 | 3.1754 | 起點（與我們 3.33 同級）|
+| v3 (boundary 強化) | 2.6919 | 2.5620 | 純算法 |
+| v4 (擴及全 size) | 2.5816 | 2.1227 | 純算法 |
+| **v5 (edge aspect 2.50/0.40)** | **1.7565** | **1.8299** | **單一最佳純算法** |
+| v6 (7-profile portfolio) | 1.6204 | 1.6798 | runtime 10.6s |
+| v7 (+MLP pose anchor) | 1.6174 | 1.6670 | runtime 11.2s |
+| v8/v9 oracle (+repair) | **1.0322** | — | **要 label, hidden test 不適用** |
+| v10/v11/v12 ML/clue 各種 | < 1% 進步 | — | 全失敗 |
+
+→ **現實目標應該瞄準 ~1.6（legit portfolio），不是 1.03**
+→ 我們 3.3258 vs 組員 legit 1.6 = **2× 差距**
+
+### v5 的關鍵 insight：boundary aspect ratio (最高 leverage)
+
+- LEFT/RIGHT-only blocks 用 aspect ratio **2.50**（高瘦）
+- TOP/BOTTOM-only blocks 用 aspect ratio **0.40**（矮胖）
+- 邏輯：邊界 block 拉高 edge capacity，減少 boundary violation
+- 我們 `optimizer_claude.cpp` boundary block 預設方形 — **這是單一最高 ROI 改動**
+
+### v10/v11/v12 ML 失敗教訓（避免重蹈）
+
+- **v10 factor rank**：MLP 預測整數因子配對 aspect rank，val acc 44%，
+  下游 < 1% → 一對多 + 機制不對齊
+- **v11 clue chain**：用 b2b high-weight edge 拉連接 preplaced，80-99 退步
+- **v12 contact plan**：把 b2b 接觸獎勵當第一順位，timeout 或大退步
+
+→ 對我們 v3 ranking 的啟示：per-block local feature ML 在這題很弱，
+   要動 ML 應該整合 *global* tiling/structure 訊號（contact graph、outline aspect 等）
 
 ### 為什麼 reconstruction 比 optimization 強
 
@@ -209,9 +243,12 @@ violations、或 tournament SA）。
 | 2026-05-24 W_BOUNDARY=10 baseline (no GNN, current code) | 3.4308 |
 | 2026-05-24 + GNN-hint initial perm (loss=2.58 .pth) | 3.3469 |
 | 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | 3.3258 |
+| 2026-05-31 + boundary aspect (2.50/0.40, teammate v5) | **3.4255 退步**，已 revert |
 | 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
 | 2026-05-27 v3 sanity (120 sample, 30 batches) | rank_acc 0.53 → 0.58，訊號弱 — 待 oracle 實驗決定 |
-| **【外部參考】組員純演算法 reconstruction approach** | **1.0322** ← 真正的目標線 |
+| **2026-05-31 oracle perm + SA (上限實驗)** | **3.2673** ← BL packer 是天花板，v3 ML 放棄 |
+| **【外部參考】組員 v6/v7 portfolio (legit, 無 label)** | **~1.62** ← 真正可達目標 |
+| 【外部參考】組員 v9 oracle (讀 label) | 1.0322 ← hidden test 不適用 |
 
 ---
 
@@ -467,21 +504,41 @@ full training：
 > 思維。範式已轉移到 reconstruction，請先看本文件頂部「🚨 範式轉移」段落，
 > 再決定要不要繼續走 optimization 路線。
 
-### 新優先級（reconstruction 範式, 2026-05-27 更新）
+### 新優先級（2026-05-31 oracle 實驗後 — 結論：ML ranking 死路）
 
-1. **等組員補齊缺檔** → 已收到 `teammate_eva/`，但只有 wrapper +
-   v3 級 shelf packing helper，**真正的 `v8_puzzle_fingerprint_oracle.py`
-   還沒拿到**。其打到 1.0322 的核心 reconstruction 邏輯仍是黑盒
-2. **v3 訓練腳本（path C）已實作** → `training_example.py` 改為預測 BL
-   ordering score（pairwise ranking loss），不再預測絕對位置
-   - 上 GPU 環境跑 `--sanity` 驗證 pipeline
-   - 訓出 `floorplan_gnn_v3.pth` 後拷回，等我更新 `optimizer_claude.py`
-     支援 v3 推論（目前還沒做）
-3. **驗證 BL packer 上限**：寫一個小腳本，把 `fp_sol` 排序當 perm 餵
-   `optimizer_claude.exe`，看 Total Score 能否逼近 1.0
-   - 若 ≈ 1.0 → 架構 OK，v3 ranking 預測夠準就有救
-   - 若 ≈ 2.0+ → BL packer 會把答案拆掉，需要換 placer
-4. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
+#### Oracle BL 上限實驗結果 (`optimizer_oracle_perm.py`, 2026-05-31)
+
+| Mode | Total Score | Avg Cost | 解讀 |
+|------|------------|----------|------|
+| 現狀 baseline (no GNN) | 3.4308 | 2.6478 | 參照線 |
+| 現狀 + v1 GNN | 3.3258 | 2.6548 | 我們最佳 |
+| **Oracle perm + SA (exe)** | **3.2673** | **2.6494** | **vs 現狀只進步 1.8%** |
+| Oracle perm + oracle shape, no SA (bl) | 9.9996 | 9.8569 | BL packer 完全失敗 |
+| fp_sol verbatim (raw) | 1.1079 | 1.1097 | 對上 teammate 的 1.1079 |
+
+→ 判讀表 **3.27 ≥ 3.0 → BL packer 是天花板，v3 ranking ML 訓練是白工**
+→ 即使 ML 給出完美 perm，pipeline 上限是 3.27 (距 1.6 legit / 1.0 oracle 都很遠)
+→ Raw vs exe 的 1.10 → 3.27 巨幅落差 = 我們的 placer + shape 邏輯崩潰，
+   ranking 救不了
+
+#### 結論：路線徹底轉向 placer 改造
+
+1. ❌ **v3 ML ranking 訓練：放棄**（上限 1.8%，不值得燒 GPU）
+2. ❌ **Port 組員 v5 boundary aspect**（已試, 2026-05-31, **失敗**）
+   - LEFT/RIGHT-only blocks: aspect 2.50；TOP/BOTTOM-only: 0.40
+   - 結果：Total Score 3.3258 → **3.4255 退步 3%**
+   - 退步集中在 n≥80 cases (n=80-99 avg 3.03、n=100-119 avg 3.32)
+   - 根因：我們 skyline BL packing 不像 teammate 的 shelf packing 能利用
+     tall edge blocks；前者讓 tall block 在左邊形成 cliff 害後續 block 找位
+   - 已 revert，僅在 optimizer_claude.cpp 留註解避免重試
+3. ✅ **整合 portfolio selector**（中期）
+   - 8s 預算可跑 5-6 個 profile，pick best by proxy
+   - 組員 7-profile 在 10.6s 拿到 1.62
+4. ✅ **shape prediction**（若要動 ML）
+   - 預測 integer factor pair (w, h) 而不是 ranking
+   - 組員 v8_puzzle_dims 觀察到 fp_sol 的 (w, h) 都是 area 的整數因子配對
+5. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
+6. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
 
 ### 失敗紀錄（避免重蹈）
 

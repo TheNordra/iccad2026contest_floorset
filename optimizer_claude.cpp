@@ -1161,6 +1161,11 @@ static void run_sa(chrono::time_point<Clock> t0) {
     for (auto& [g, m] : mib_groups    ) n_soft += max(0, (int)m.size()-1);
 
     // Initial widths/heights
+    // NOTE (2026-05-31): Tried teammate v5 boundary aspect bias (LEFT/RIGHT=2.50,
+    // TOP/BOTTOM=0.40) here -- REGRESSED Total Score 3.3258 -> 3.4255 (+3%).
+    // Regression concentrated in n>=80 cases.  Skyline BL packing doesn't tolerate
+    // tall edge blocks the way teammate's shelf packer does.  Reverted; see
+    // CLAUDE.md 分數歷程 for details.
     vector<double> widths(N), heights(N);
     for (int i = 0; i < N; i++) {
         if ((is_fixed[i] || is_preplaced[i]) && blocks[i].tw > 0 && blocks[i].th > 0) {

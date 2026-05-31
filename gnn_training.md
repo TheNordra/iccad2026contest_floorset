@@ -11,19 +11,33 @@
 
 ---
 
-## 🚨 範式轉移摘要 (2026-05-26)
+## 🚨 範式轉移摘要 (2026-05-26, 含 2026-05-27 修正)
 
-組員用**純演算法**做到 **Total Score = 1.0322**，我們用 SA + GNN 只到
-**3.3258**。差距 3.2×。
+組員的 **Total Score = 1.0322** 經查證是 **oracle**（讀本地 validation label），
+hidden test 不適用。組員真正 legit 的最佳是 ~1.6（v6/v7 portfolio）或
+~1.76（v5 單一純算法）。我們 SA + GNN 在 3.3258，與 legit 差 2×。
 
-關鍵發現：
+關鍵發現（修正後仍成立）：
 - Cost 公式 `Cost = (1+α·gap)·exp(β·V_soft)`，理論最低 = 1.0
 - 我們從零優化 → gap > 0 → cost > 1
-- 組員把問題當「**還原 baseline 那張原圖**」→ gap ≈ 0 → cost ≈ 1
-- 訓練資料 `fp_sol` 就是原圖位置，我們**完全沒當監督訊號用**
+- 組員 v5 後抓到「**boundary aspect ratio 拉到 2.50/0.40**」這個 leverage，
+  從 2.58 一路掉到 1.76
+- 訓練資料 `fp_sol` 是原圖位置，可作監督訊號，但 v10 ML 嘗試（per-block factor
+  rank prediction）失敗 — val acc 44% 但下游 < 1% 進步
 
 從這個 insight 出發，ML 路線經歷了 v1（無監督）→ v2（監督絕對位置）→ v3
 （監督結構排序）的演進。
+
+### v10 教訓對 v3 ranking 的啟示
+
+組員的 v10 用 per-block MLP 預測 factor rank（離 v3 ranking 路線很近），
+val acc 44%、within-one-rank 86%，但下游下降 < 1%。原因：
+- per-block local feature 在這題訊號太弱
+- BL packer 把 ranking 「破壞」掉的程度未知
+- ML signal 跟 BL packer 行為不對齊
+
+→ v3 在跑 full training 前，**必須先做 oracle BL 上限實驗**（見下節）
+   驗證 BL packer 在 ranking 完美時能達到什麼分數。否則重蹈 v10 覆轍。
 
 ---
 
@@ -192,24 +206,28 @@ placeholder，跟 v1/v2 推論 code 相容（`optimizer_claude.py` 可暫時用
 
 ## 🔍 當前未解決的問題
 
-### Q1: BL packer 上限是多少？
+### Q1: BL packer 上限是多少？— ✅ 已解決 (2026-05-31)
 
-如果 ranking 完美（rank_acc=1.0），下游 BL packer 還原出來的 Total Score
-是多少？這個問題**沒做實驗**，是決定 v3 訓練是否值得的關鍵。
+**結論：BL packer 是天花板，v3 ML ranking 訓練是白工。**
 
-**oracle 實驗設計**：
-1. 對每個 validation case，直接用 `fp_sol` 的 `(x+y)` 排序當 perm
-2. 餵 `optimizer_claude.exe`，跑完整 SA + post-processing
-3. 收集 100 case Total Score
+實驗 (`optimizer_oracle_perm.py`, 3 個 mode)：
+
+| Mode | Total Score | Avg Cost | 機制 |
+|------|------------|----------|------|
+| raw | 1.1079 | 1.1097 | 直接 return fp_sol verbatim（對上 teammate 1.1079） |
+| bl | 9.9996 | 9.8569 | oracle perm + oracle shape + 純 BL packer (no SA) |
+| exe | **3.2673** | **2.6494** | oracle perm 餵 C++ 當 GNN hint，full SA |
+| (現狀 v1 GNN) | 3.3258 | 2.6548 | 對照組 |
 
 **判讀**：
-| Oracle Total Score | 結論 |
-|--------------------|------|
-| ≤ 1.5 | ranking 是主 lever，full training 衝 0.8+ rank_acc 大有意義 |
-| 1.5 - 2.5 | 邊緣有用，full training ROI 一般 |
-| ≥ 3.0 | BL packer 是天花板，**訓練怎麼好都白工**，得換 placer |
+- Oracle perm + SA 只比現狀進步 **1.8%**（3.3258 → 3.2673）
+- 即使 ranking 完美，pipeline 上限就是 3.27 — 距 1.6 legit 還差 2×
+- raw (1.10) vs exe (3.27) 的巨幅落差 = 我們的 BL packer + shape 邏輯崩潰
+- ranking ML 訓練的 ROI 不超過 1.8%
 
-**這個實驗 ~45 分鐘**（含寫腳本+跑 eval），**比直接花 3h 訓練更有資訊量**。
+**因此 v3 訓練放棄**。要動 ML 應該預測 shape（v8_puzzle_dims 觀察到
+fp_sol 的 (w, h) 都是 area 的整數因子配對）或 contact graph。但更高 ROI
+是純算法：port 組員 v5 的 boundary aspect ratio (2.50/0.40)。
 
 ### Q2: rank_acc 0.58 plateau 是 fundamental 還是 cosine LR 問題？
 
