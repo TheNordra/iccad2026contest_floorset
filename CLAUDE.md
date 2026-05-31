@@ -116,7 +116,16 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 最佳已驗證版本：Total Score = **3.2708** (新評分)
+### 🎉 最佳已驗證版本：Total Score = **3.1584** (Portfolio, 2026-05-31)
+
+`optimizer_portfolio.py` — 4 profile 並行（gnn / connectivity / area_desc /
+area_asc）每個吃 full 8s SA，contest-shape proxy 挑最佳。
+- Avg Cost 2.4759（vs 2.6548 baseline, -6.7%）
+- 100/100 feasible
+- Wall time 8.57s（16 cores 充足）
+- 編譯與機制細節見「Portfolio selector 細節」段落
+
+### 歷史最佳（單跑）：Total Score = **3.2708** (新評分)
 
 主要參數：
 - `TIME_LIMIT = 8.00 秒`
@@ -244,6 +253,9 @@ violations、或 tournament SA）。
 | 2026-05-24 + GNN-hint initial perm (loss=2.58 .pth) | 3.3469 |
 | 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | 3.3258 |
 | 2026-05-31 + boundary aspect (2.50/0.40, teammate v5) | **3.4255 退步**，已 revert |
+| **2026-05-31 portfolio (4 profile 並行, contest-shape proxy)** | **3.1584** ← **新最佳, -5% vs 3.3258** |
+| 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
+| 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
 | 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
 | 2026-05-27 v3 sanity (120 sample, 30 batches) | rank_acc 0.53 → 0.58，訊號弱 — 待 oracle 實驗決定 |
 | **2026-05-31 oracle perm + SA (上限實驗)** | **3.2673** ← BL packer 是天花板，v3 ML 放棄 |
@@ -383,6 +395,8 @@ FloorSet/
 ├── optimizer_claude.cpp    ← 主程式 (C++)，含 GNN-hint 比較邏輯
 ├── optimizer_claude.py     ← Python wrapper，含 GNN inference (v1 FloorplanNet)
 ├── optimizer_claude.exe    ← 編譯輸出
+├── optimizer_portfolio.py  ← 🆕 4-profile 並行 wrapper, contest-shape proxy (當前最佳)
+├── optimizer_oracle_perm.py ← oracle BL 上限實驗腳本 (raw/bl/exe 三 mode)
 ├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised)
 ├── floorplan_gnn_checkpoint.pth ← v1 訓練中 checkpoint
 ├── floorplan_gnn_v2.pth    ← v2 權重（已棄，supervised MSE 失敗）
@@ -531,14 +545,22 @@ full training：
    - 根因：我們 skyline BL packing 不像 teammate 的 shelf packing 能利用
      tall edge blocks；前者讓 tall block 在左邊形成 cliff 害後續 block 找位
    - 已 revert，僅在 optimizer_claude.cpp 留註解避免重試
-3. ✅ **整合 portfolio selector**（中期）
-   - 8s 預算可跑 5-6 個 profile，pick best by proxy
-   - 組員 7-profile 在 10.6s 拿到 1.62
-4. ✅ **shape prediction**（若要動 ML）
-   - 預測 integer factor pair (w, h) 而不是 ranking
-   - 組員 v8_puzzle_dims 觀察到 fp_sol 的 (w, h) 都是 area 的整數因子配對
-5. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
-6. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
+3. ✅ **Portfolio selector**（已實作, 2026-05-31, **成功**）
+   - `optimizer_portfolio.py`：4 profile 並行（ThreadPool + 4 subprocess）
+   - 每 profile full 8s SA，wall time 8.6s（16 cores）
+   - Contest-shape proxy 挑最佳：`(1+α(area_gap+hpwl_rel))·exp(β·v_rel)`
+   - 結果：3.3258 → **3.1584 (-5.0%)**, Avg Cost 2.6548 → 2.4759 (-6.7%)
+   - 100/100 feasible
+4. ✅ **下一輪 portfolio 擴充**（最高 ROI 下一步）
+   - 我們還有 12 cores 空著
+   - 候選 profile：reverse connectivity、pin centroid、不同 W_VIOL/W_BOUNDARY
+   - 預期再進步 1-3%
+5. ❌ **shape prediction ML**（已試, 2026-05-31, **失敗**）
+   - oracle 實驗：oracle shape only 3.42 (改善 0.3%)、shape+perm 3.37
+   - 結論：即使給完美 shape，pipeline 上限就是 ~3.4
+   - Shape 不是 lever，跟 perm ML 一樣被 placer 架構 cap 住
+6. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
+7. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
 
 ### 失敗紀錄（避免重蹈）
 

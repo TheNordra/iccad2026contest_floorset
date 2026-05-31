@@ -9,14 +9,21 @@ Pre-loads fp_sol for every validation case via the dataset, then on solve():
   4. Sort non-preplaced blocks by fp_sol (x + y) as the BL perm
   5. Decode via skyline_decode (same packer as optimizer_claude)
 
-Three modes (set ICCAD_ORACLE_MODE):
-  - "bl"   (default): oracle perm + oracle shape -> Python skyline BL packer (no SA)
-  - "raw" : return fp_sol verbatim (sanity: should match teammate's 1.1079)
-  - "exe" : oracle perm fed to optimizer_claude.exe as GNN hint, default
-            sqrt(area) shapes, full SA refinement.  Closest to "v3 ranking
-            predicts perfect perm, rest of pipeline unchanged" question.
+Five modes (set ICCAD_ORACLE_MODE):
+  - "bl"        (default): oracle perm + oracle shape -> Python skyline BL (no SA)
+  - "raw"     : return fp_sol verbatim (sanity: should match teammate's 1.1079)
+  - "exe"     : oracle perm fed to optimizer_claude.exe as GNN hint, default
+                sqrt(area) shapes, full SA.  ("v3 ranking ML predicts perm")
+  - "shape"   : oracle shape (via target_positions w,h + flip constraints.fixed=1
+                so SA never resizes), connectivity perm, full SA.
+                ("shape ML predicts (w,h) factor pair")
+  - "shape_perm": oracle shape + oracle perm (both oracles). Upper bound for
+                "ML predicts both perm AND shape".
 
-This answers "what's the BL packer ceiling given perfect ranking + shapes?"
+Together these tell us which input dimension is the lever:
+  raw  = 1.10  (lower bound, fp_sol verbatim)
+  exe  = 3.27  (perm-only oracle, measured)
+  shape, shape_perm = TBD
 """
 
 import os
@@ -40,10 +47,11 @@ from optimizer_claude import (
 )
 
 _MODE = os.environ.get("ICCAD_ORACLE_MODE", "bl").lower()
-assert _MODE in ("bl", "raw", "exe"), \
-    f"ICCAD_ORACLE_MODE must be 'bl', 'raw', or 'exe', got {_MODE}"
+_ALL_MODES = ("bl", "raw", "exe", "shape", "shape_perm")
+assert _MODE in _ALL_MODES, \
+    f"ICCAD_ORACLE_MODE must be one of {_ALL_MODES}, got {_MODE}"
 
-if _MODE == "exe":
+if _MODE in ("exe", "shape", "shape_perm"):
     # Make sure optimizer_claude's real GNN is OFF; we'll provide our own hint.
     os.environ["ICCAD_DISABLE_GNN"] = "1"
     import subprocess
@@ -195,13 +203,41 @@ class MyOptimizer(FloorplanOptimizer):
         if _MODE == "raw":
             return [tuple(fp_sol[i]) for i in range(n)]
 
-        if _MODE == "exe":
-            # Feed fp_sol (x, y) as the GNN hint; C++ sorts by (x+y) -> oracle
-            # perm.  Default sqrt(area) shapes; SA does its full 8s refinement.
-            hint = [(float(fp_sol[i][0]), float(fp_sol[i][1])) for i in range(n)]
+        if _MODE in ("exe", "shape", "shape_perm"):
+            # Default: connectivity-only perm (no hint).  exe and shape_perm
+            # override with oracle perm.
+            hint = None
+            if _MODE in ("exe", "shape_perm"):
+                hint = [(float(fp_sol[i][0]), float(fp_sol[i][1])) for i in range(n)]
+
+            # Default: pass evaluator's target_positions through unchanged
+            # (only fixed/preplaced have non-(-1) values).  shape and
+            # shape_perm override with oracle (w, h) for every block, and
+            # flip the constraints.fixed bit so SA's resize move skips them.
+            tp = target_positions
+            cons = constraints
+            if _MODE in ("shape", "shape_perm"):
+                tp = torch.full((n, 4), -1.0)
+                cons = constraints.clone()
+                for i in range(n):
+                    fw, fh = float(fp_sol[i][2]), float(fp_sol[i][3])
+                    # Always inject oracle (w, h)
+                    tp[i, 2] = fw
+                    tp[i, 3] = fh
+                    # Preserve preplaced position from fp_sol so C++ keeps
+                    # the original (tx, ty) too.
+                    if int(_val(constraints, i, COL_PREPLACED)) == 1:
+                        tp[i, 0] = float(fp_sol[i][0])
+                        tp[i, 1] = float(fp_sol[i][1])
+                    elif int(_val(constraints, i, COL_FIXED)) != 1:
+                        # Mark as fixed shape so SA's resize/rotate moves
+                        # skip this block; cluster/MIB/boundary moves still
+                        # work normally.
+                        cons[i, COL_FIXED] = 1
+
             inp = _oc._serialize_input(
                 block_count, area_targets, b2b_connectivity,
-                p2b_connectivity, pins_pos, constraints, target_positions,
+                p2b_connectivity, pins_pos, cons, tp,
                 gnn_hint=hint,
             )
             result = subprocess.run(

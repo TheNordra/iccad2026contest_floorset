@@ -225,9 +225,38 @@ placeholder，跟 v1/v2 推論 code 相容（`optimizer_claude.py` 可暫時用
 - raw (1.10) vs exe (3.27) 的巨幅落差 = 我們的 BL packer + shape 邏輯崩潰
 - ranking ML 訓練的 ROI 不超過 1.8%
 
-**因此 v3 訓練放棄**。要動 ML 應該預測 shape（v8_puzzle_dims 觀察到
-fp_sol 的 (w, h) 都是 area 的整數因子配對）或 contact graph。但更高 ROI
-是純算法：port 組員 v5 的 boundary aspect ratio (2.50/0.40)。
+**因此 v3 ranking 訓練放棄**。
+
+### Q1.5: Shape ML 上限是多少？— ✅ 已解決 (2026-05-31)
+
+**結論：shape ML 也死了**。延伸 `optimizer_oracle_perm.py` 加兩個 mode：
+
+| Mode | Total Score | Avg Cost | 機制 |
+|------|------------|----------|------|
+| shape | **3.4199** | 2.7638 | oracle (w,h) + connectivity perm + SA (resize 鎖死) |
+| shape_perm | **3.3672** | 2.8001 | oracle 兩者 + SA (resize 鎖死) |
+| (baseline 對照) | 3.4308 | 2.6478 | 純 SA, 無 GNN, 無 oracle |
+| (exe perm-only 對照) | 3.2673 | 2.6494 | oracle perm + sqrt area |
+
+**判讀**：
+- Shape 3.42 vs baseline 3.43 = **0.3% 改善**（純 noise，shape ML 無價值）
+- Shape_perm 3.37 比 perm-only 3.27 還差 — 鎖死 shape 讓 SA 失去 ~25% move
+  類型（resize + rotate），探索能力下降反而傷害
+- **即使給完美 shape + perm，pipeline 上限就是 ~3.2-3.4**
+
+### Q1 + Q1.5 合併結論：天花板在 placer 架構
+
+| ML 預測目標 | Oracle 上限 | 改善 vs baseline | 結論 |
+|------------|-----------|------------------|------|
+| perm (ranking) | 3.27 | 1.8% | 不值得訓練 |
+| shape (factor pair) | 3.42 | 0.3% | 不值得訓練 |
+| perm + shape | 3.37 | 1.9% | 不值得訓練 |
+
+所有 ML 路線都被「SA + skyline BL packer」這個架構 cap 在 ~3.2-3.4。
+要破 3.0 不能靠 ML 信號 input，要動 placer 本身：
+- 換 placer：B*-tree、sequence-pair、shelf packing（組員用 shelf 到 1.6）
+- 純算法擴充：portfolio selector (已驗證有效, 3.33 → 3.16)
+- Repair-style post-processing：針對性修 violation
 
 ### Q2: rank_acc 0.58 plateau 是 fundamental 還是 cosine LR 問題？
 
