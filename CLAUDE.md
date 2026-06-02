@@ -268,6 +268,7 @@ violations、或 tournament SA）。
 | 2026-05-31 portfolio (4 profile 並行, contest-shape proxy) | 3.1584 ← -5% vs 3.3258 |
 | 2026-06-01 portfolio (7 profile：+pin_centroid/degree_desc/degree_asc) | 3.1082 ← -1.6% vs 4-profile |
 | **2026-06-01 portfolio (8 profile：+high_boundary W_BOUNDARY=100)** | **3.0625** ← **新最佳, -1.5% vs 7-profile, -9.8% vs baseline** |
+| 2026-06-02 portfolio (10 profile：+low_viol/high_viol, W_VIOL ×0.5/×2.0) | 3.0859 ← **退步 +1.0%, 已 revert**（同機 clean A/B: 8-prof 3.0554 vs 10-prof 3.0859）|
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
 | 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
@@ -312,12 +313,21 @@ violations、或 tournament SA）。
 
 ### 短期（1–3 個迭代）
 - **目標 1**：Total Score < 3.00（從 3.0625 再降 2%）
-  - 主路徑：portfolio 擴充 v3（4 cores 空），候選 profile：
-    - W_VIOL × 1.5 / × 0.75 變體（需 C++ env var ICCAD_W_VIOL）
-    - b2b-only / p2b-only degree 變體
-    - SA 不同 seed 的 diversity profile
+  - ❌ ~~portfolio 擴充 v3（W_VIOL 變體）~~ **已試 2026-06-02, 失敗**：
+    加 low_viol(×0.5)/high_viol(×2.0) → 10 profile，同機 clean A/B
+    8-prof 3.0554 vs 10-prof 3.0859（**退步 +1.0%**）。新 profile 雖拿下
+    19/100 case，但 contest-shape proxy 在 <1.5% margin 的 case 選錯
+    （挑了 true-cost 較差的）。**profile 數已飽和在 8。**
+  - 🔑 **新主路徑：改良 proxy selector**（瓶頸從 diversity 轉到 selection）
+    - 現 proxy `(1+α(area_gap+hpwl_rel))·exp(β·v_rel)` 用 best-in-pool 當
+      HPWL baseline、1.035×ΣA 當 area baseline，與真實 contest baseline 不齊
+    - **不可用 target_positions/fp_sol 當 baseline**（= oracle，hidden test 沒）
+    - 方向：tune α/β；或對 winner 用真實 cost-shape 重排而非 proxy；或對
+      <margin% 的 near-tie 做 tie-break（偏好 violation 較低者）
+  - 次路徑：repair-style 後處理（見目標 4）、placer 架構（見目標 5）
 - **目標 2**：驗證 ±2% 變異
-  - 同 code 連跑 3 次，記錄 mean ± std 確認改善是否顯著
+  - 已部分驗證：同機 8-prof 3.0554 ≈ doc 3.0625（差 0.2%，可重現）
+  - 仍建議跑 3 次記 mean ± std，因 7-prof 曾見 3.1082–3.1724 (5.8% spread)
 
 ### 中期（4–6 個迭代）
 - **目標 3**：Total Score < 2.80（需突破 placer 架構）
@@ -593,13 +603,21 @@ full training：
    - 3.1082 → **3.0625 (-1.5%)**，100/100 feasible
    - `high_boundary` 拿下 18/100 (overall #1)，主導大 n cases
      (n=100-109 4/10, n=110-119 3/10, n=120 1/1)
-   - 下一輪候選 (4 cores 空)：W_VIOL 變體、b2b/p2b-only degree、不同 SA 種子
-5. ❌ **shape prediction ML**（已試, 2026-05-31, **失敗**）
+6. ❌ **Portfolio 擴充 v3 + W_VIOL 變體**（已試, 2026-06-02, **失敗**）
+   - C++ `main()` 新增 `ICCAD_W_VIOL_MULT` env var（校正後乘上 W_VIOL）
+   - 加 `low_viol` (×0.5) / `high_viol` (×2.0) → 10 profile
+   - 同機 clean A/B：8-prof **3.0554** vs 10-prof **3.0859**（**退步 +1.0%**）
+   - 新 profile 拿下 19/100 case (low_viol 9 + high_viol 10)、佔 13.9% 加權，
+     **但 proxy 在 <1.5% margin 的 near-tie 選錯** → 淨退步
+   - **結論：profile 數飽和在 8，瓶頸轉移到 proxy selector 準度**
+   - 已 revert default 回 8；env-var 基建 + low_viol/high_viol 定義保留，
+     可經 `ICCAD_PORTFOLIO_PROFILES` 在改良 proxy 後重測
+7. ❌ **shape prediction ML**（已試, 2026-05-31, **失敗**）
    - oracle 實驗：oracle shape only 3.42 (改善 0.3%)、shape+perm 3.37
    - 結論：即使給完美 shape，pipeline 上限就是 ~3.4
    - Shape 不是 lever，跟 perm ML 一樣被 placer 架構 cap 住
-6. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
-7. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
+8. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
+9. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
 
 ### 失敗紀錄（避免重蹈）
 

@@ -24,9 +24,14 @@ Profiles:
   - "high_boundary": connectivity perm + W_BOUNDARY=100 (10x default) — attacks
                      violation-heavy big-n cases by amplifying the soft boundary
                      gradient during SA
+  - "low_viol":      connectivity perm + W_VIOL_MULT=0.5 — SA favors HPWL/area
+                     minimization; wins low-violation cases
+  - "high_viol":     connectivity perm + W_VIOL_MULT=2.0 — SA prioritizes hard-
+                     violation elimination (second lever vs the boundary gradient)
 
-Disable individual profiles via ICCAD_PORTFOLIO_PROFILES env var
-(comma-separated). Default: all eight.
+Select profiles via ICCAD_PORTFOLIO_PROFILES env var (comma-separated). Default
+is the 8 proven profiles; low_viol/high_viol are recognized but excluded from the
+default (they regressed the total — see _DEFAULT_PROFILES).
 """
 
 import concurrent.futures
@@ -79,7 +84,19 @@ _AREA_OVERHEAD = 1.035  # estimated bbox area / sum_block_area baseline
 _DEBUG_LOG_PATH = os.environ.get("ICCAD_PORTFOLIO_DEBUG_LOG", "")
 _DEBUG_LOG_COUNTER = 0
 
+# All recognized profiles (validation set for the ICCAD_PORTFOLIO_PROFILES env var).
 _ALL_PROFILES = [
+    "gnn", "connectivity", "area_desc", "area_asc",
+    "pin_centroid", "degree_desc", "degree_asc",
+    "high_boundary", "low_viol", "high_viol",
+]
+# Default portfolio = the 8 proven profiles (Total Score 3.0554).
+# low_viol/high_viol (W_VIOL ×0.5/×2.0) were tested 2026-06-02: they win 19/100
+# cases by proxy but REGRESS the total (3.0554 -> 3.0859) — the contest-shape
+# proxy mis-picks them on <1.5%-margin wins. Profile-count scaling has saturated;
+# the bottleneck is now selector accuracy, not candidate diversity. Kept available
+# via ICCAD_PORTFOLIO_PROFILES for re-test under an improved selector.
+_DEFAULT_PROFILES = [
     "gnn", "connectivity", "area_desc", "area_asc",
     "pin_centroid", "degree_desc", "degree_asc",
     "high_boundary",
@@ -87,8 +104,15 @@ _ALL_PROFILES = [
 
 # Per-profile env-var overrides passed to the C++ subprocess. Empty dict = use
 # the binary's calibrated defaults.
+#   high_boundary: amplify soft boundary gradient (wins violation-heavy big-n).
+#   low_viol:  halve the calibrated hard-violation weight -> SA spends its budget
+#              on HPWL/area minimization; wins low-violation cases.
+#   high_viol: double it -> SA prioritizes eliminating hard violations; a second
+#              lever (vs boundary gradient) for violation-heavy cases.
 _PROFILE_ENV: dict = {
     "high_boundary": {"ICCAD_W_BOUNDARY": "100"},
+    "low_viol": {"ICCAD_W_VIOL_MULT": "0.5"},
+    "high_viol": {"ICCAD_W_VIOL_MULT": "2.0"},
 }
 _PROFILES = os.environ.get("ICCAD_PORTFOLIO_PROFILES", "")
 if _PROFILES:
@@ -96,7 +120,7 @@ if _PROFILES:
     for p in _PROFILES:
         assert p in _ALL_PROFILES, f"Unknown profile: {p}"
 else:
-    _PROFILES = _ALL_PROFILES
+    _PROFILES = _DEFAULT_PROFILES
 
 # Optional: turn off GNN profile if torch/.pth missing — `_gnn_centers` returns
 # None in that case and the corresponding profile devolves into a no-hint run,
@@ -138,9 +162,9 @@ def _make_hint(
         return _degree_hint(n, b2b, p2b, descending=True)
     if profile == "degree_asc":
         return _degree_hint(n, b2b, p2b, descending=False)
-    if profile == "high_boundary":
-        # No hint — C++ uses connectivity perm. Divergence comes from W_BOUNDARY
-        # env var (set in _PROFILE_ENV), not the perm.
+    if profile in ("high_boundary", "low_viol", "high_viol"):
+        # No hint — C++ uses connectivity perm. Divergence comes from the env-var
+        # weight override (set in _PROFILE_ENV), not the perm.
         return None
     raise ValueError(f"Unknown profile: {profile}")
 

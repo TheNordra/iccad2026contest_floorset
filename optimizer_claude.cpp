@@ -25,6 +25,7 @@ static double elapsed_sec(chrono::time_point<Clock> t0) {
 static const double TIME_LIMIT  = 8.00;
 static const double AREA_TOL    = 0.005;
 static double W_VIOL            = 10.0;   // calibrated dynamically (∝ initial HPWL)
+static double W_VIOL_MULT       = 1.0;    // portfolio diversity: scales calibrated W_VIOL (env ICCAD_W_VIOL_MULT)
 static double W_BOUNDARY        = 10.0;   // soft boundary-distance gradient
 static double W_AREA            = 0.05;   // calibrated dynamically
 
@@ -1344,6 +1345,7 @@ static void run_sa(chrono::time_point<Clock> t0) {
         // ∂cost/∂V_rel / ∂cost/∂HPWL_gap ≈ 6 at typical operating points).
         if (h0 > 0 && n_soft > 0) {
             W_VIOL = max(50.0, h0 * 7.5);      // 1.25× best on new scoring
+            W_VIOL *= W_VIOL_MULT;             // portfolio override (env ICCAD_W_VIOL_MULT)
             // W_BOUNDARY stays at 10 — it's just a guidance gradient
         }
     }
@@ -1528,6 +1530,10 @@ int main(int argc, char* argv[]) {
     if (const char* s = std::getenv("ICCAD_W_BOUNDARY")) {
         double v = atof(s);
         if (v > 0) W_BOUNDARY = v;
+    }
+    if (const char* s = std::getenv("ICCAD_W_VIOL_MULT")) {
+        double v = atof(s);
+        if (v > 0) W_VIOL_MULT = v;
     }
     auto t0 = Clock::now();
 
