@@ -294,23 +294,41 @@ violations、或 tournament SA）。
 - bbox 中沒有任何機制把內部 block 拉向中心（壓縮 bbox）
 
 ### D. 未測試的實驗（待跑）
-- `W_BOUNDARY = 100`（程式碼已改，未編譯）
-- W_BOUNDARY 提升可能讓 SA 的 boundary force 梯度更明顯
+- ~~`W_BOUNDARY = 100`~~ ✅ 已完成，已成為 `high_boundary` profile
+- 還有 4 cores 空，可加更多 portfolio profile
 
 ---
 
 ## 預期目標
 
+> ⚠️ 範式轉移後，optimization 思維的舊目標（boundary count、slack 處理）
+> 重要性降低。當前路線是 portfolio scaling + placer 架構演進。
+
+### 已達成
+- ~~目標 1: boundary violations 中位數 ≤ 10~~（仍未達，但靠 high_boundary 局部改善）
+- ✅ 目標 2: Total Score < 3.20（**3.0625 達成**）
+- ✅ 目標 3: W_BOUNDARY = 100 實驗（**成功，已整合**）
+- ✅ 目標 6: Total Score < 3.10（**3.0625 達成**）
+
 ### 短期（1–3 個迭代）
-- **目標 1**：boundary violations 中位數從 17 降到 ≤ 10
-  - 需要找出「slack=0 的 boundary block」要如何處理
-- **目標 2**：Total Score < 3.20（從 3.2708 再降 2-3%）
-- **目標 3**：完成 `W_BOUNDARY = 100` 實驗，驗證或回退
+- **目標 1**：Total Score < 3.00（從 3.0625 再降 2%）
+  - 主路徑：portfolio 擴充 v3（4 cores 空），候選 profile：
+    - W_VIOL × 1.5 / × 0.75 變體（需 C++ env var ICCAD_W_VIOL）
+    - b2b-only / p2b-only degree 變體
+    - SA 不同 seed 的 diversity profile
+- **目標 2**：驗證 ±2% 變異
+  - 同 code 連跑 3 次，記錄 mean ± std 確認改善是否顯著
 
 ### 中期（4–6 個迭代）
-- **目標 4**：實作「boundary-aware swap」或「chain push」處理 slack=0 案例
-- **目標 5**：壓縮 bbox 來降低 area_gap（bbox shrinking post-processing）
-- **目標 6**：Total Score < 3.10
+- **目標 3**：Total Score < 2.80（需突破 placer 架構）
+- **目標 4**：實作 repair-style 後處理（針對性修 violation，
+  類似組員 v5 後的 boundary nudge / single-edge escape）
+- **目標 5**：探索 shelf packing 或 B*-tree 取代當前 skyline BL packer
+  （組員 v5/v6 用 shelf 達 1.76/1.62）
+
+### 長期
+- **目標 6**：縮小到 legit teammate 1.6 範圍（當前 3.06 / 1.6 = 1.9× gap）
+- **目標 7**：把 SA 角色從「找解」改成「微調 ML 輸出」
 
 ### 長期
 - **目標 7**：替換 BL packer 為 Sequence Pair / B*-Tree
