@@ -1523,6 +1523,12 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--no-width") use_max_width = false;
     }
+    // Optional env-var overrides for portfolio profiles. Read once at startup.
+    // If unset, the dynamic calibration in run_sa() keeps the default behavior.
+    if (const char* s = std::getenv("ICCAD_W_BOUNDARY")) {
+        double v = atof(s);
+        if (v > 0) W_BOUNDARY = v;
+    }
     auto t0 = Clock::now();
 
     scanf("%d", &N);

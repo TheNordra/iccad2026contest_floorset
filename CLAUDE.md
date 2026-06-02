@@ -116,14 +116,26 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🎉 最佳已驗證版本：Total Score = **3.1584** (Portfolio, 2026-05-31)
+### 🎉 最佳已驗證版本：Total Score = **3.0625** (Portfolio 8-profile, 2026-06-01)
 
-`optimizer_portfolio.py` — 4 profile 並行（gnn / connectivity / area_desc /
-area_asc）每個吃 full 8s SA，contest-shape proxy 挑最佳。
-- Avg Cost 2.4759（vs 2.6548 baseline, -6.7%）
+`optimizer_portfolio.py` — **8** profile 並行（gnn / connectivity / area_desc /
+area_asc / pin_centroid / degree_desc / degree_asc / **high_boundary**）每個
+吃 full 8s SA，contest-shape proxy 挑最佳。
+- Avg Cost 2.3944（vs 2.6548 baseline, -9.8%）
 - 100/100 feasible
-- Wall time 8.57s（16 cores 充足）
-- 編譯與機制細節見「Portfolio selector 細節」段落
+- Wall time 9.13s（12 physical cores, 8 subprocess 並行）
+- `high_boundary` 機制：connectivity perm + **W_BOUNDARY=100** (10× default)
+  via env var `ICCAD_W_BOUNDARY` — C++ `main()` 已加 env var override 支援
+- Winner 分佈 (100 cases)：**high_boundary 18 (#1)**, gnn 14, pin_centroid 14,
+  connectivity 13, degree_asc 12, degree_desc 11, area_desc 10, area_asc 8
+- **high_boundary 主導大 n cases**：n=100-109 拿 4/10, n=110-119 拿 3/10,
+  n=120 拿 1/1。Violation-heavy top-10 worst 拿 3 個（case 99/95/63）。
+- 確認 hypothesis：W_BOUNDARY 10 → 100 amplify soft boundary gradient，
+  幫助 SA 在大 n 高 violation cases escape 局部極小。
+
+### 前一版：Total Score = **3.1082** (Portfolio 7-profile, 2026-06-01)
+7 profile（無 high_boundary）, Avg Cost 2.4260, Wall time 9.35s.
+⚠️ run-to-run 變異 ±2%：同 code 跑過 3.1724 也跑過 3.1082。
 
 ### 歷史最佳（單跑）：Total Score = **3.2708** (新評分)
 
@@ -253,7 +265,9 @@ violations、或 tournament SA）。
 | 2026-05-24 + GNN-hint initial perm (loss=2.58 .pth) | 3.3469 |
 | 2026-05-25 + GNN-hint (3000-sample retrained .pth, loss=1.34) | 3.3258 |
 | 2026-05-31 + boundary aspect (2.50/0.40, teammate v5) | **3.4255 退步**，已 revert |
-| **2026-05-31 portfolio (4 profile 並行, contest-shape proxy)** | **3.1584** ← **新最佳, -5% vs 3.3258** |
+| 2026-05-31 portfolio (4 profile 並行, contest-shape proxy) | 3.1584 ← -5% vs 3.3258 |
+| 2026-06-01 portfolio (7 profile：+pin_centroid/degree_desc/degree_asc) | 3.1082 ← -1.6% vs 4-profile |
+| **2026-06-01 portfolio (8 profile：+high_boundary W_BOUNDARY=100)** | **3.0625** ← **新最佳, -1.5% vs 7-profile, -9.8% vs baseline** |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
 | 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
@@ -551,10 +565,17 @@ full training：
    - Contest-shape proxy 挑最佳：`(1+α(area_gap+hpwl_rel))·exp(β·v_rel)`
    - 結果：3.3258 → **3.1584 (-5.0%)**, Avg Cost 2.6548 → 2.4759 (-6.7%)
    - 100/100 feasible
-4. ✅ **下一輪 portfolio 擴充**（最高 ROI 下一步）
-   - 我們還有 12 cores 空著
-   - 候選 profile：reverse connectivity、pin centroid、不同 W_VIOL/W_BOUNDARY
-   - 預期再進步 1-3%
+4. ✅ **Portfolio 擴充 v1**（已實作, 2026-06-01, **成功**）
+   - 加 `pin_centroid` / `degree_desc` / `degree_asc` 共 7 profile
+   - 3.1584 → **3.1082 (-3.2%)**，100/100 feasible
+   - 新 profile 拿下 52/100 cases (degree_desc 21, pin_centroid 16, degree_asc 15)
+5. ✅ **Portfolio 擴充 v2 + W_BOUNDARY=100**（已實作, 2026-06-01, **成功**）
+   - 加 `high_boundary` (connectivity perm + W_BOUNDARY=100 via env var)
+   - C++ `main()` 新增 `ICCAD_W_BOUNDARY` env var override 支援
+   - 3.1082 → **3.0625 (-1.5%)**，100/100 feasible
+   - `high_boundary` 拿下 18/100 (overall #1)，主導大 n cases
+     (n=100-109 4/10, n=110-119 3/10, n=120 1/1)
+   - 下一輪候選 (4 cores 空)：W_VIOL 變體、b2b/p2b-only degree、不同 SA 種子
 5. ❌ **shape prediction ML**（已試, 2026-05-31, **失敗**）
    - oracle 實驗：oracle shape only 3.42 (改善 0.3%)、shape+perm 3.37
    - 結論：即使給完美 shape，pipeline 上限就是 ~3.4

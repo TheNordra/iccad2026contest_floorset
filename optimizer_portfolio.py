@@ -14,13 +14,19 @@ each priority bucket (cluster / LEFT-BOTTOM boundary / regular / RIGHT-TOP
 boundary). Shapes and SA hyperparameters are unchanged.
 
 Profiles:
-  - "gnn":          real FloorplanNet centers (current single-run behavior)
-  - "connectivity": no hint -> C++ uses pure connectivity-driven perm
-  - "area_desc":    sort big blocks first (BL-friendly, pack large then fill)
-  - "area_asc":     sort small blocks first (occasional win on tight layouts)
+  - "gnn":           real FloorplanNet centers (current single-run behavior)
+  - "connectivity":  no hint -> C++ uses pure connectivity-driven perm
+  - "area_desc":     sort big blocks first (BL-friendly, pack large then fill)
+  - "area_asc":      sort small blocks first (occasional win on tight layouts)
+  - "pin_centroid":  per-block hint = mean of connected pin positions
+  - "degree_desc":   sort most-connected blocks first
+  - "degree_asc":    sort least-connected blocks first
+  - "high_boundary": connectivity perm + W_BOUNDARY=100 (10x default) — attacks
+                     violation-heavy big-n cases by amplifying the soft boundary
+                     gradient during SA
 
 Disable individual profiles via ICCAD_PORTFOLIO_PROFILES env var
-(comma-separated). Default: all four.
+(comma-separated). Default: all eight.
 """
 
 import concurrent.futures
@@ -68,7 +74,22 @@ _PROXY_ALPHA = 0.5
 _PROXY_BETA  = 2.0
 _AREA_OVERHEAD = 1.035  # estimated bbox area / sum_block_area baseline
 
-_ALL_PROFILES = ["gnn", "connectivity", "area_desc", "area_asc"]
+# Per-case debug log: appended one JSON line per solve() with all profile metrics
+# + chosen winner. Enabled when ICCAD_PORTFOLIO_DEBUG_LOG points to a path.
+_DEBUG_LOG_PATH = os.environ.get("ICCAD_PORTFOLIO_DEBUG_LOG", "")
+_DEBUG_LOG_COUNTER = 0
+
+_ALL_PROFILES = [
+    "gnn", "connectivity", "area_desc", "area_asc",
+    "pin_centroid", "degree_desc", "degree_asc",
+    "high_boundary",
+]
+
+# Per-profile env-var overrides passed to the C++ subprocess. Empty dict = use
+# the binary's calibrated defaults.
+_PROFILE_ENV: dict = {
+    "high_boundary": {"ICCAD_W_BOUNDARY": "100"},
+}
 _PROFILES = os.environ.get("ICCAD_PORTFOLIO_PROFILES", "")
 if _PROFILES:
     _PROFILES = [p.strip() for p in _PROFILES.split(",") if p.strip()]
@@ -111,7 +132,60 @@ def _make_hint(
         return [(-float(area_targets[i]), -float(area_targets[i])) for i in range(n)]
     if profile == "area_asc":
         return [(float(area_targets[i]), float(area_targets[i])) for i in range(n)]
+    if profile == "pin_centroid":
+        return _pin_centroid_hint(n, p2b, pins)
+    if profile == "degree_desc":
+        return _degree_hint(n, b2b, p2b, descending=True)
+    if profile == "degree_asc":
+        return _degree_hint(n, b2b, p2b, descending=False)
+    if profile == "high_boundary":
+        # No hint — C++ uses connectivity perm. Divergence comes from W_BOUNDARY
+        # env var (set in _PROFILE_ENV), not the perm.
+        return None
     raise ValueError(f"Unknown profile: {profile}")
+
+
+def _pin_centroid_hint(n, p2b, pins):
+    """Per-block hint = mean (px, py) over connected pins; fallback (0,0)."""
+    sx = [0.0] * n
+    sy = [0.0] * n
+    cnt = [0] * n
+    if p2b is not None and pins is not None and len(p2b) > 0 and len(pins) > 0:
+        for edge in p2b:
+            pi = int(edge[0]); bi = int(edge[1])
+            if pi == -1 or bi == -1 or bi >= n or pi >= len(pins):
+                continue
+            px = float(pins[pi][0]); py = float(pins[pi][1])
+            if px == -1 and py == -1:
+                continue
+            sx[bi] += px; sy[bi] += py; cnt[bi] += 1
+    out = []
+    for i in range(n):
+        if cnt[i] > 0:
+            out.append((sx[i] / cnt[i], sy[i] / cnt[i]))
+        else:
+            out.append((0.0, 0.0))
+    return out
+
+
+def _degree_hint(n, b2b, p2b, descending=True):
+    """Sort blocks by total (b2b + p2b) edge-weight degree."""
+    deg = [0.0] * n
+    if b2b is not None and len(b2b) > 0:
+        for edge in b2b:
+            i = int(edge[0]); j = int(edge[1])
+            if i == -1 or j == -1: continue
+            w = float(edge[2])
+            if 0 <= i < n: deg[i] += w
+            if 0 <= j < n: deg[j] += w
+    if p2b is not None and len(p2b) > 0:
+        for edge in p2b:
+            pi = int(edge[0]); bi = int(edge[1])
+            if pi == -1 or bi == -1: continue
+            w = float(edge[2])
+            if 0 <= bi < n: deg[bi] += w
+    sign = -1.0 if descending else 1.0
+    return [(sign * deg[i], sign * deg[i]) for i in range(n)]
 
 
 def _run_one_profile(
@@ -127,10 +201,17 @@ def _run_one_profile(
         block_count, area_targets, b2b, p2b, pins, constraints,
         target_positions, gnn_hint=hint,
     )
+    # Build env for this subprocess (inherit + per-profile overrides)
+    env_extra = _PROFILE_ENV.get(profile)
+    proc_env = None
+    if env_extra:
+        proc_env = os.environ.copy()
+        proc_env.update(env_extra)
     try:
         result = subprocess.run(
             [str(_BIN)], input=inp,
             capture_output=True, text=True, timeout=55.0,
+            env=proc_env,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return (profile, None, time.time() - t0)
@@ -289,5 +370,23 @@ class MyOptimizer(FloorplanOptimizer):
                     f"area={a:.1f} vrel={v:.3f} t={dt:.1f}s"
                 )
             print(f"[portfolio] " + " | ".join(parts), file=sys.stderr)
+
+        if _DEBUG_LOG_PATH:
+            global _DEBUG_LOG_COUNTER
+            import json as _json
+            entry = {
+                "seq": _DEBUG_LOG_COUNTER,
+                "n": block_count,
+                "winner": best_profile,
+                "profiles": {
+                    p: {"proxy": float(prx), "hpwl": float(h),
+                        "area": float(a), "vrel": float(v),
+                        "t": float(results[p][1])}
+                    for p, (prx, h, a, v) in debug.items()
+                },
+            }
+            _DEBUG_LOG_COUNTER += 1
+            with open(_DEBUG_LOG_PATH, "a") as f:
+                f.write(_json.dumps(entry) + "\n")
 
         return best_pos
