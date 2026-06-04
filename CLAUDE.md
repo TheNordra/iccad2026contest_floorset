@@ -167,9 +167,9 @@ violation 不是「penalty 太低被 area 蓋過」，而是「無可行 bp=0 �
 
 ### 舊最佳：Total Score = **3.0625** (Portfolio 8-profile, 2026-06-01)
 
-`optimizer_portfolio.py` — **8** profile 並行（gnn / connectivity / area_desc /
-area_asc / pin_centroid / degree_desc / degree_asc / **high_boundary**）每個
-吃 full 8s SA，contest-shape proxy 挑最佳。
+Portfolio wrapper（code 已刪，僅留紀錄）— **8** profile 並行（gnn / connectivity /
+area_desc / area_asc / pin_centroid / degree_desc / degree_asc / **high_boundary**）
+每個吃 full 8s SA，contest-shape proxy 挑最佳。
 - Avg Cost 2.3944（vs 2.6548 baseline, -9.8%）
 - 100/100 feasible
 - Wall time 9.13s（12 physical cores, 8 subprocess 並行）
@@ -378,8 +378,8 @@ violations、或 tournament SA）。
     （挑了 true-cost 較差的）。**profile 數已飽和在 8。**
   - ✅ **proxy selector 改良（已試 2026-06-02, 小贏並 ship）**
     - 建工具：`proxy_analysis.py`（跑全 8 profile，用 harness 自己的
-      `evaluate_solution` 算每個 profile 的**真實 cost**，dump `proxy_raw.json`）
-      + `proxy_search.py`（離線掃 proxy 公式對真實 cost 評分）
+      `evaluate_solution` 算每個 profile 的**真實 cost**，dump 出真實-cost JSON）
+      + 離線掃 proxy 公式評分腳本（後兩者 code/dump 已刪，僅留結論）
     - 🔑 **Oracle-selector 天花板 = ~3.03**（8-profile 集合, 同 run proxy 3.1288
       vs oracle 3.0335, gap 3.0%）→ **完美選擇也破不了 3.00**。proxy tuning
       ROI 上限就是這 3.0%，且實際抓不到全部
@@ -399,7 +399,7 @@ violations、或 tournament SA）。
   - **根因：C++ rng seed 固定 (42) 但 SA 是 wall-clock 限時 (8s) 非 iteration 限**
     → 平行 8-10 subprocess 競爭 CPU，每 run 8s 內跑的 iteration 數不同 → 結果飄
   - 含意：**單一 live run 無法量測 < 2-3% 的改動**，要用離線固定輸出 A/B
-    （proxy_search 模式）。或改 SA 為 iteration-limited 讓它 deterministic
+    （fixed-output 模式）。或改 SA 為 iteration-limited 讓它 deterministic
     （未做，屬 placer 改動）
 
 ### 中期（4–6 個迭代）
@@ -517,16 +517,9 @@ FloorSet/
 ├── analyze_constructive.py ← 🆕 per-case violation breakdown，重算 vBd/vCl/vMb + 權重排序
 │                              (與官方 eval 完全吻合，~30s，乾淨 A/B 工具)
 ├── dbg_boundary.py         ← 🆕 分類 boundary 違反 (single/cluster/preplaced + blocked/free)
-├── optimizer_portfolio.py  ← 8-profile SA 並行 wrapper (舊最佳 3.0625, 已被 constructive 取代)
-├── proxy_analysis.py       ← 🆕 OFFLINE: 跑全 profile 算每個真實 cost → proxy_raw.json
-│                              (用 GT baseline, 只供離線分析, 不入 live selector)
-├── proxy_search.py         ← 🆕 OFFLINE: 掃 proxy 公式對 proxy_raw.json 真實 cost 評分
-├── optimizer_oracle_perm.py ← oracle BL 上限實驗腳本 (raw/bl/exe 三 mode)
-├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised)
-├── floorplan_gnn_checkpoint.pth ← v1 訓練中 checkpoint
-├── floorplan_gnn_v2.pth    ← v2 權重（已棄，supervised MSE 失敗）
-├── floorplan_gnn_v3.pth    ← v3 權重（待訓練；structural BL ordering）
-├── v8_puzzle_fingerprint_oracle_repair.py ← 組員放在根目錄的 wrapper（讀但不改）
+├── proxy_analysis.py       ← OFFLINE 工具: build_opt_target_pos 等，被 dbg/analyze import
+│                              (proxy selector 路線已結案，但 helper 仍被分析腳本依賴)
+├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised；僅舊 SA+GNN 路線用)
 ├── CLAUDE.md               ← 本檔案
 ├── gnn_training.md         ← ML 部分文件（FloorplanNet 訓練紀錄）
 ├── teammate_eva/           ← 組員提供的參考檔（不可修改）
@@ -683,7 +676,7 @@ full training：
 
 ### 新優先級（2026-05-31 oracle 實驗後 — 結論：ML ranking 死路）
 
-#### Oracle BL 上限實驗結果 (`optimizer_oracle_perm.py`, 2026-05-31)
+#### Oracle BL 上限實驗結果 (oracle-perm 腳本, code 已刪, 2026-05-31)
 
 | Mode | Total Score | Avg Cost | 解讀 |
 |------|------------|----------|------|
@@ -708,8 +701,8 @@ full training：
    - 根因：我們 skyline BL packing 不像 teammate 的 shelf packing 能利用
      tall edge blocks；前者讓 tall block 在左邊形成 cliff 害後續 block 找位
    - 已 revert，僅在 optimizer_claude.cpp 留註解避免重試
-3. ✅ **Portfolio selector**（已實作, 2026-05-31, **成功**）
-   - `optimizer_portfolio.py`：4 profile 並行（ThreadPool + 4 subprocess）
+3. ✅ **Portfolio selector**（已實作, 2026-05-31, **成功**；code 後已刪）
+   - Portfolio wrapper：4 profile 並行（ThreadPool + 4 subprocess）
    - 每 profile full 8s SA，wall time 8.6s（16 cores）
    - Contest-shape proxy 挑最佳：`(1+α(area_gap+hpwl_rel))·exp(β·v_rel)`
    - 結果：3.3258 → **3.1584 (-5.0%)**, Avg Cost 2.6548 → 2.4759 (-6.7%)
@@ -734,7 +727,7 @@ full training：
    - 已 revert default 回 8；env-var 基建 + low_viol/high_viol 定義保留，
      可經 `ICCAD_PORTFOLIO_PROFILES` 在改良 proxy 後重測
 7. ✅ **proxy near-tie tie-break**（已試, 2026-06-02, **小贏並 ship**）
-   - 建 `proxy_analysis.py` + `proxy_search.py` 量測 oracle 天花板與掃公式
+   - 建 `proxy_analysis.py`（仍在）+ 掃公式腳本（已刪）量測 oracle 天花板
    - **Oracle-selector 天花板 = ~3.03**（同 run proxy 3.1288 vs oracle 3.0335,
      gap 3.0%）→ **完美選擇也破不了 3.00，selection 路線已盡**
    - 有效 lever 僅 near-tie min-viol tie-break (margin 0.02)：離線固定輸出
