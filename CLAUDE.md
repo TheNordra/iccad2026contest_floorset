@@ -269,6 +269,8 @@ violations、或 tournament SA）。
 | 2026-06-01 portfolio (7 profile：+pin_centroid/degree_desc/degree_asc) | 3.1082 ← -1.6% vs 4-profile |
 | **2026-06-01 portfolio (8 profile：+high_boundary W_BOUNDARY=100)** | **3.0625** ← **新最佳, -1.5% vs 7-profile, -9.8% vs baseline** |
 | 2026-06-02 portfolio (10 profile：+low_viol/high_viol, W_VIOL ×0.5/×2.0) | 3.0859 ← **退步 +1.0%, 已 revert**（同機 clean A/B: 8-prof 3.0554 vs 10-prof 3.0859）|
+| 2026-06-02 proxy near-tie min-viol tie-break (margin 0.02) | **離線固定輸出 A/B 3.1288 → 3.0979 (-1.0%)**, 已 ship；live run 3.1040（被 ±2-3% 限時噪音蓋過）|
+| 2026-06-02 oracle-selector 天花板 (8-profile) | 3.0335 ← **完美選擇也破不了 3.00**，selection 已盡 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
 | 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
@@ -318,16 +320,31 @@ violations、或 tournament SA）。
     8-prof 3.0554 vs 10-prof 3.0859（**退步 +1.0%**）。新 profile 雖拿下
     19/100 case，但 contest-shape proxy 在 <1.5% margin 的 case 選錯
     （挑了 true-cost 較差的）。**profile 數已飽和在 8。**
-  - 🔑 **新主路徑：改良 proxy selector**（瓶頸從 diversity 轉到 selection）
-    - 現 proxy `(1+α(area_gap+hpwl_rel))·exp(β·v_rel)` 用 best-in-pool 當
-      HPWL baseline、1.035×ΣA 當 area baseline，與真實 contest baseline 不齊
-    - **不可用 target_positions/fp_sol 當 baseline**（= oracle，hidden test 沒）
-    - 方向：tune α/β；或對 winner 用真實 cost-shape 重排而非 proxy；或對
-      <margin% 的 near-tie 做 tie-break（偏好 violation 較低者）
+  - ✅ **proxy selector 改良（已試 2026-06-02, 小贏並 ship）**
+    - 建工具：`proxy_analysis.py`（跑全 8 profile，用 harness 自己的
+      `evaluate_solution` 算每個 profile 的**真實 cost**，dump `proxy_raw.json`）
+      + `proxy_search.py`（離線掃 proxy 公式對真實 cost 評分）
+    - 🔑 **Oracle-selector 天花板 = ~3.03**（8-profile 集合, 同 run proxy 3.1288
+      vs oracle 3.0335, gap 3.0%）→ **完美選擇也破不了 3.00**。proxy tuning
+      ROI 上限就是這 3.0%，且實際抓不到全部
+    - 診斷：area baseline 1.035 已正確（A/ΣA median 1.03）；HPWL baseline
+      無穩定常數（H/best_h range [0.43,0.94]）→ hpwl_c / area_c 都不是 lever
+    - **唯一有效 lever：near-tie → min-violation tie-break**（margin 0.02）：
+      離線固定輸出 A/B 3.1288 → **3.0979 (-1.0%)**。原理：proxy 的 HPWL/area
+      baseline 是估計值，sub-% margin 不可信，但 v_rel 是精確算出的 → near-tie
+      時 defer 給 v_rel。已實作於 `_pick_best`，env `ICCAD_PROXY_TIE_MARGIN`
+      (default 0.02)，α/β 保持真實 cost 值 (0.5/2.0) 避免 overfit
+    - ⚠️ **不可用 target_positions/fp_sol 當 baseline**（= oracle，hidden test 沒）；
+      `solve()` 只收 preplaced 位置 + fixed shape，free block GT 不給（無 leak）
+  - 🔑 **結論：селection 已盡，破 3.00 要靠 placer 架構 (目標 5) 或更好 profile**
   - 次路徑：repair-style 後處理（見目標 4）、placer 架構（見目標 5）
-- **目標 2**：驗證 ±2% 變異
-  - 已部分驗證：同機 8-prof 3.0554 ≈ doc 3.0625（差 0.2%，可重現）
-  - 仍建議跑 3 次記 mean ± std，因 7-prof 曾見 3.1082–3.1724 (5.8% spread)
+- **目標 2**：驗證 ±2% 變異 — **已查明根因**
+  - 同機觀察 8-prof: 3.0554 / 3.1288 / 3.1040（同 code 跨 3 run，spread 2.4%）
+  - **根因：C++ rng seed 固定 (42) 但 SA 是 wall-clock 限時 (8s) 非 iteration 限**
+    → 平行 8-10 subprocess 競爭 CPU，每 run 8s 內跑的 iteration 數不同 → 結果飄
+  - 含意：**單一 live run 無法量測 < 2-3% 的改動**，要用離線固定輸出 A/B
+    （proxy_search 模式）。或改 SA 為 iteration-limited 讓它 deterministic
+    （未做，屬 placer 改動）
 
 ### 中期（4–6 個迭代）
 - **目標 3**：Total Score < 2.80（需突破 placer 架構）
@@ -437,7 +454,11 @@ FloorSet/
 ├── optimizer_claude.cpp    ← 主程式 (C++)，含 GNN-hint 比較邏輯
 ├── optimizer_claude.py     ← Python wrapper，含 GNN inference (v1 FloorplanNet)
 ├── optimizer_claude.exe    ← 編譯輸出
-├── optimizer_portfolio.py  ← 🆕 4-profile 並行 wrapper, contest-shape proxy (當前最佳)
+├── optimizer_portfolio.py  ← 8-profile 並行 wrapper, contest-shape proxy + near-tie
+│                              min-viol tie-break (當前最佳, default 8 profile)
+├── proxy_analysis.py       ← 🆕 OFFLINE: 跑全 profile 算每個真實 cost → proxy_raw.json
+│                              (用 GT baseline, 只供離線分析, 不入 live selector)
+├── proxy_search.py         ← 🆕 OFFLINE: 掃 proxy 公式對 proxy_raw.json 真實 cost 評分
 ├── optimizer_oracle_perm.py ← oracle BL 上限實驗腳本 (raw/bl/exe 三 mode)
 ├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised)
 ├── floorplan_gnn_checkpoint.pth ← v1 訓練中 checkpoint
@@ -612,12 +633,20 @@ full training：
    - **結論：profile 數飽和在 8，瓶頸轉移到 proxy selector 準度**
    - 已 revert default 回 8；env-var 基建 + low_viol/high_viol 定義保留，
      可經 `ICCAD_PORTFOLIO_PROFILES` 在改良 proxy 後重測
-7. ❌ **shape prediction ML**（已試, 2026-05-31, **失敗**）
+7. ✅ **proxy near-tie tie-break**（已試, 2026-06-02, **小贏並 ship**）
+   - 建 `proxy_analysis.py` + `proxy_search.py` 量測 oracle 天花板與掃公式
+   - **Oracle-selector 天花板 = ~3.03**（同 run proxy 3.1288 vs oracle 3.0335,
+     gap 3.0%）→ **完美選擇也破不了 3.00，selection 路線已盡**
+   - 有效 lever 僅 near-tie min-viol tie-break (margin 0.02)：離線固定輸出
+     A/B 3.1288 → **3.0979 (-1.0%)**。已實作 `_pick_best`，
+     env `ICCAD_PROXY_TIE_MARGIN`。area_c/hpwl_c/α/β 皆非 lever
+   - ⚠️ live single-run 量不到（±2-3% 限時噪音 > 1% 改動，見目標 2 根因）
+8. ❌ **shape prediction ML**（已試, 2026-05-31, **失敗**）
    - oracle 實驗：oracle shape only 3.42 (改善 0.3%)、shape+perm 3.37
    - 結論：即使給完美 shape，pipeline 上限就是 ~3.4
    - Shape 不是 lever，跟 perm ML 一樣被 placer 架構 cap 住
-8. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
-9. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
+9. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
+10. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
 
 ### 失敗紀錄（避免重蹈）
 

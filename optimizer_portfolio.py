@@ -79,6 +79,16 @@ _PROXY_ALPHA = 0.5
 _PROXY_BETA  = 2.0
 _AREA_OVERHEAD = 1.035  # estimated bbox area / sum_block_area baseline
 
+# Near-tie tie-break (2026-06-02): when two profiles' proxies are within this
+# relative margin, the proxy cannot reliably distinguish them — its HPWL/area
+# baselines are *estimates* (best-in-pool / 1.035·ΣA), unreliable at sub-% gaps,
+# whereas v_rel is computed exactly. So among near-ties, pick the lowest v_rel.
+# Offline proxy_search.py over a 100-case true-cost dump: 3.1288 -> 3.0979
+# (-1.0%); robust basin 0.02-0.03. See proxy_analysis.py / proxy_search.py.
+# Oracle-selector ceiling for the 8-profile set is ~3.03 (3.0% below this proxy),
+# so selection tuning helps but cannot alone break 3.00 — that needs the placer.
+_PROXY_TIE_MARGIN = float(os.environ.get("ICCAD_PROXY_TIE_MARGIN", "0.02"))
+
 # Per-case debug log: appended one JSON line per solve() with all profile metrics
 # + chosen winner. Enabled when ICCAD_PORTFOLIO_DEBUG_LOG points to a path.
 _DEBUG_LOG_PATH = os.environ.get("ICCAD_PORTFOLIO_DEBUG_LOG", "")
@@ -304,16 +314,25 @@ def _pick_best(profile_results, block_count, area_targets, b2b, p2b, pins, const
     sum_block_area = float(sum(float(area_targets[i]) for i in range(block_count)))
     est_area = _AREA_OVERHEAD * sum_block_area if sum_block_area > 0 else 1.0
 
-    best_profile, best_proxy = None, float("inf")
+    proxies = {}
     debug = {}
     for profile, (h, a, v) in metrics.items():
         area_gap = max(0.0, (a - est_area) / est_area) if est_area > 0 else 0.0
         hpwl_rel = max(0.0, (h - best_hpwl) / best_hpwl) if best_hpwl > 0 else 0.0
         proxy = (1.0 + _PROXY_ALPHA * (area_gap + hpwl_rel)) * math.exp(_PROXY_BETA * v)
+        proxies[profile] = proxy
         debug[profile] = (proxy, h, a, v)
-        if proxy < best_proxy:
-            best_proxy = proxy
-            best_profile = profile
+
+    # Pick the min-proxy profile, but on near-ties (within _PROXY_TIE_MARGIN)
+    # defer to the exactly-computed violation signal: the proxy's HPWL/area
+    # baselines are estimated and unreliable at sub-% margins, while v_rel is
+    # exact. metrics[p] = (hpwl, area, v_rel).
+    lo = min(proxies.values())
+    if _PROXY_TIE_MARGIN > 0:
+        near = [p for p, pr in proxies.items() if pr <= lo * (1.0 + _PROXY_TIE_MARGIN)]
+    else:
+        near = [p for p, pr in proxies.items() if pr <= lo]
+    best_profile = min(near, key=lambda p: (metrics[p][2], proxies[p]))
 
     best_positions = profile_results[best_profile][0]
     return best_profile, best_positions, debug
