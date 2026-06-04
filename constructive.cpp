@@ -30,6 +30,9 @@ struct Block {
 struct XYWH { double x, y, w, h; };
 
 static int N;
+static double BP_W = 30000.0;   // boundary-miss penalty in greedy item scoring
+static double WIRE_MULT = 1.0;  // extra scale on the incremental-HPWL term (env)
+static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
 static vector<double> area_targets;
 static vector<Edge>   b2b_edges, p2b_edges;
 static vector<pair<double,double>> pins;
@@ -91,6 +94,35 @@ static bool rect_overlap(double x1,double y1,double w1,double h1,
     return true;
 }
 
+// ─── MIB shape unification (port of teammate _apply_safe_mib_dimensions) ───────
+// Members of a MIB group must share one (w,h) or each distinct shape costs a
+// violation. We only unify when it keeps every soft block within the 1% area
+// hard-constraint, so feasibility is preserved.
+static void apply_safe_mib_dims() {
+    map<int,vector<int>> groups;
+    for (int i=0;i<N;i++){ int g=blocks[i].mib; if (g>0) groups[g].push_back(i); }
+    for (auto& kv:groups){
+        auto& mem=kv.second; if (mem.size()<=1) continue;
+        // prefer a fixed/preplaced master when its shape fits every movable area
+        int master=-1;
+        for (int i:mem) if (blocks[i].is_fixed||blocks[i].is_preplaced){ master=i; break; }
+        if (master>=0){
+            double mw=dims[master].first, mh=dims[master].second, ma=mw*mh; bool ok=true;
+            for (int i:mem){ if (blocks[i].is_fixed||blocks[i].is_preplaced) continue;
+                double ta=blocks[i].area; if (ta<=0||fabs(ma-ta)/ta>0.01){ ok=false; break; } }
+            if (ok){ for (int i:mem) if (!blocks[i].is_fixed&&!blocks[i].is_preplaced) dims[i]={mw,mh}; continue; }
+        }
+        // otherwise unify movable members to a square iff their areas are mutually ≤1%
+        vector<int> mov; for (int i:mem) if (!blocks[i].is_fixed&&!blocks[i].is_preplaced) mov.push_back(i);
+        if (mov.size()<=1) continue;
+        double sa=0; bool bad=false; for (int i:mov){ if (blocks[i].area<=0){bad=true;break;} sa+=blocks[i].area; }
+        if (bad) continue;
+        double avg=sa/mov.size(); bool okall=true;
+        for (int i:mov) if (fabs(avg-blocks[i].area)/blocks[i].area>0.01){ okall=false; break; }
+        if (okall){ double side=sqrt(avg); for (int i:mov) dims[i]={side,side}; }
+    }
+}
+
 // ─── anchors ──────────────────────────────────────────────────────────────────
 static void estimate_anchors() {
     anchors.assign(N, {0,0,0});
@@ -118,9 +150,37 @@ static void finalize_item(Item& it) {
     int bs=0; for (int b: it.blocks) bs+=block_boundary_score(b);
     it.bscore=bs;
 }
-// produce a compact connected layout for a movable cluster's members
+// fragments / boundary-exposure of a cluster's internal layout (offsets in item
+// frame). These are soft-constraint signals we rank ahead of compactness, since
+// vrel sits inside the cost's exp() multiplier (teammate _make_compact_group_item).
+static int item_fragment_count(const Item& it){
+    int n=it.blocks.size(); if (n<=1) return 0;
+    vector<int> par(n); for(int i=0;i<n;i++)par[i]=i;
+    function<int(int)> find=[&](int a){ while(par[a]!=a){par[a]=par[par[a]];a=par[a];} return a; };
+    for (int i=0;i<n;i++) for (int j=i+1;j<n;j++){
+        double ax=it.offs[i].first, ay=it.offs[i].second, aw=dims[it.blocks[i]].first, ah=dims[it.blocks[i]].second;
+        double bx=it.offs[j].first, by=it.offs[j].second, bw=dims[it.blocks[j]].first, bh=dims[it.blocks[j]].second;
+        bool tx=(fabs(ax+aw-bx)<=1e-3||fabs(bx+bw-ax)<=1e-3)&&(ay<by+bh-TOL&&by<ay+ah-TOL);
+        bool ty=(fabs(ay+ah-by)<=1e-3||fabs(by+bh-ay)<=1e-3)&&(ax<bx+bw-TOL&&bx<ax+aw-TOL);
+        if (tx||ty) par[find(i)]=find(j);
+    }
+    set<int> r; for(int i=0;i<n;i++) r.insert(find(i)); return (int)r.size()-1;
+}
+static int item_boundary_bad(const Item& it){
+    int bad=0;
+    for (size_t k=0;k<it.blocks.size();k++){ int code=blocks[it.blocks[k]].boundary; if(!code) continue;
+        double ox=it.offs[k].first, oy=it.offs[k].second, bw=dims[it.blocks[k]].first, bh=dims[it.blocks[k]].second;
+        if ((code&B_LEFT)  && fabs(ox-0.0)>TOL)        bad++;
+        if ((code&B_RIGHT) && fabs((ox+bw)-it.w)>TOL)  bad++;
+        if ((code&B_BOTTOM)&& fabs(oy-0.0)>TOL)        bad++;
+        if ((code&B_TOP)   && fabs((oy+bh)-it.h)>TOL)  bad++;
+    }
+    return bad;
+}
+// produce a compact CONNECTED layout for a movable cluster's members. We rank
+// candidates by (fragments, boundary_bad, area, aspect) so a non-fragmenting /
+// boundary-exposing layout beats a smaller but fragmented one.
 static Item make_group_item(const vector<int>& members) {
-    // candidate layouts: horizontal row, vertical column, sqrt-balanced shelf.
     auto build_shelf = [&](const vector<int>& order, double target_w)->Item{
         Item it; it.blocks=order; it.offs.resize(order.size());
         double cx=0, cy=0, rowh=0;
@@ -131,25 +191,49 @@ static Item make_group_item(const vector<int>& members) {
         }
         finalize_item(it); return it;
     };
-    // order members boundary-first then big-first (helps boundary exposure)
-    vector<int> order=members;
-    sort(order.begin(),order.end(),[](int a,int b){
+    // balance members by width into two touching rows (teammate _layout_group_two_rows)
+    auto build_two_rows = [&](const vector<int>& order)->Item{
+        vector<int> r1,r2; double w1=0,w2=0;
+        for (int b:order){ if (w1<=w2){ r1.push_back(b); w1+=dims[b].first; } else { r2.push_back(b); w2+=dims[b].first; } }
+        double r1h=0; for(int b:r1) r1h=max(r1h,dims[b].second);
+        Item it; it.blocks=order; it.offs.resize(order.size());
+        map<int,pair<double,double>> off; double x=0; for(int b:r1){ off[b]={x,0}; x+=dims[b].first; }
+        x=0; for(int b:r2){ off[b]={x,r1h}; x+=dims[b].first; }
+        for (size_t k=0;k<order.size();k++) it.offs[k]=off[order[k]];
+        finalize_item(it); return it;
+    };
+    vector<int> boundary_first=members;
+    sort(boundary_first.begin(),boundary_first.end(),[](int a,int b){
         int ba=block_boundary_score(a), bb=block_boundary_score(b);
         if (ba!=bb) return ba>bb;
         return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
     });
+    vector<int> by_w=members, by_h=members;
+    sort(by_w.begin(),by_w.end(),[](int a,int b){ return dims[a].first>dims[b].first; });
+    sort(by_h.begin(),by_h.end(),[](int a,int b){ return dims[a].second>dims[b].second; });
     double tot=0; for(int b:members) tot+=dims[b].first*dims[b].second;
     double base=sqrt(max(tot,1.0));
     vector<Item> cands;
-    cands.push_back(build_shelf(order, 1e18));        // horizontal row
-    cands.push_back(build_shelf(order, 1e-9));        // vertical column
-    cands.push_back(build_shelf(order, base));        // square-ish shelf
-    cands.push_back(build_shelf(order, base*1.4));    // wide-ish shelf
-    Item best=cands[0]; double bestkey=1e300;
+    for (auto& order:{boundary_first, by_w, by_h}){
+        cands.push_back(build_shelf(order, 1e18));     // horizontal row
+        cands.push_back(build_shelf(order, 1e-9));     // vertical column
+        cands.push_back(build_shelf(order, base));     // square-ish shelf
+        cands.push_back(build_shelf(order, base*1.4)); // wide-ish shelf
+        if (order.size()>=3) cands.push_back(build_two_rows(order));
+    }
+    Item best; bool have=false;
+    int bfrag=0, bbad=0; double barea=0, baspect=0;   // best key so far
     for (auto& c: cands){
+        int f=item_fragment_count(c), bd=item_boundary_bad(c);
         double area=c.w*c.h, aspect=fabs(c.w-c.h);
-        double key=area*1000.0+aspect;   // compact first, then square-ish
-        if (key<bestkey){ bestkey=key; best=c; }
+        bool take=!have;
+        if (!take){                                    // lexicographic min
+            if (f!=bfrag)                 take = f<bfrag;
+            else if (bd!=bbad)            take = bd<bbad;
+            else if (fabs(area-barea)>TOL)take = area<barea;
+            else                          take = aspect<baspect;
+        }
+        if (take){ bfrag=f; bbad=bd; barea=area; baspect=aspect; best=c; have=true; }
     }
     return best;
 }
@@ -261,7 +345,10 @@ static double item_boundary_penalty(const Item& it, double ox, double oy, double
 static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<XYWH>& out){
     out=pos; vector<XYWH> rects; bbox_reset();
     vector<char> done(N,0);
-    double ww=(N>=116)?0.075:(N>=100?0.035:0.025);
+    // Wire weight calibrated high: bbox-area minimisation alone scatters connected
+    // blocks; the baseline we reconstruct is wire-driven. Swept optimum ~2000-3000
+    // (broad basin, area_gap stays flat) → bake the old 0.025-0.075 base ×2000.
+    double ww=(N>=116)?150.0:(N>=100?70.0:50.0);
     for (int i=0;i<N;i++) if (placed[i]){
         if (pos[i].x<-TOL||pos[i].y<-TOL||pos[i].x+pos[i].w>fw+TOL||pos[i].y+pos[i].h>fh+TOL) return false;
         for (const XYWH&r:rects) if (rect_overlap(pos[i].x,pos[i].y,pos[i].w,pos[i].h,r.x,r.y,r.w,r.h)) return false;
@@ -298,7 +385,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         wire+=pn.second*(fabs(mcx-pins[pn.first].first)+fabs(mcy-pins[pn.first].second));
                 }
             }
-            double score=area+0.20*ad+ww*wire+30000.0*bp+1e-3*y+1e-4*x;
+            double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
             if (score<best){ best=score; bx=x; by=y; found=true; }
         }
         if (!found) return false;
@@ -478,6 +565,7 @@ static void solve() {
         else if (blocks[i].is_fixed){ double w=blocks[i].tw,h=blocks[i].th; if(w<=0||h<=0){double s=sqrt(blocks[i].area);w=h=s;} dims[i]={w,h}; }
         else dims[i]=default_soft_dim(blocks[i].area, blocks[i].boundary);
     }
+    apply_safe_mib_dims();
     estimate_anchors();
 
     b2b_adj.assign(N,{}); p2b_adj.assign(N,{});
@@ -552,6 +640,9 @@ int main() {
     for (int i=0;i<N;i++){ int fx,pp,mib,cl,bnd; scanf("%d %d %d %d %d",&fx,&pp,&mib,&cl,&bnd);
         blocks[i].is_fixed=fx!=0; blocks[i].is_preplaced=pp!=0; blocks[i].mib=mib; blocks[i].cluster=cl; blocks[i].boundary=bnd; }
     for (int i=0;i<N;i++) scanf("%lf %lf %lf %lf",&blocks[i].tx,&blocks[i].ty,&blocks[i].tw,&blocks[i].th);
+    if (const char* e=getenv("ICCAD_BP_WEIGHT")) { double v=atof(e); if (v>0) BP_W=v; }
+    if (const char* e=getenv("ICCAD_WIRE_MULT")) { double v=atof(e); if (v>0) WIRE_MULT=v; }
+    if (const char* e=getenv("ICCAD_ANCHOR_W"))  { double v=atof(e); if (v>=0) ANCHOR_W=v; }
     solve();
     return 0;
 }
