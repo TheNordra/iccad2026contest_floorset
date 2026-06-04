@@ -116,7 +116,42 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🎉 最佳已驗證版本：Total Score = **3.0625** (Portfolio 8-profile, 2026-06-01)
+### 🏆 最佳已驗證版本：Total Score = **2.2515** (Constructive placer, 2026-06-04)
+
+**範式達成：目標 5（換掉 SA+skyline-BL placer）完成。** `constructive.cpp` +
+`optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
+C++ 重寫（B 路線）。**單跑就 2.2515，比 8-profile portfolio (3.0625) 好 26%，
+且只要 ~0.12s/case（SA 是 8s/profile×8）。** 100/100 feasible。確定性（無
+randomness，無 wall-clock 限時 → run-to-run 完全一致，可精確 A/B）。
+
+決定性證據：把組員 `my_optimizer.py` 直接餵我們的 evaluator → **1.7429** 在我們
+驗證集（重現他們的 1.76）。我們 SA+BL 即使 oracle perm 也只到 3.27（已證天花板）。
+**2× gap = placer 架構**，不是 perm/shape/selection。所以重寫 placer。
+
+架構（五階段，~0.12s/case）：
+1. **boundary-aspect dims**：LEFT/RIGHT-only aspect 2.50、TOP/BOTTOM-only 0.40
+   （增加 edge capacity）
+2. MIB 形狀統一（M1 暫略，靠相同 area+code 自然一致）
+3. **cluster → 複合 item**（4 種內部 layout：水平/垂直/方形 shelf/寬 shelf，挑最緊湊）
+4. **定框 greedy packing**：試 4-5 個 outline frame（面積小優先），每 frame 對每個
+   item 生 boundary-aware 候選位置、評分（`bbox_area + 0.20·anchor + ww·wire +
+   30000·boundary_miss + BL`）、挑最佳；layout_score (`area + hpwl + 150000·bv +
+   6500·gf`) 挑最佳 frame
+5. 3 個 repair nudge（boundary/group/edge-escape）— 目前在我們 layout 上多為 no-op
+
+**演進（deterministic A/B）**：M1 singles 3.62 → M2 cluster 複合 item **2.3456**
+（violations 折半: vrel 0.42→0.215）→ M3 +incremental wire **2.2515**
+（hpwl 0.92→0.88）。
+
+**剩餘 gap to 組員 v5 (1.74)**：vrel 0.215 vs 0.084（最大，exp 乘數）、hpwl 0.877
+vs 0.76、area 0.356 vs 0.31。下一步見「給下一個 session」的 constructive 段。
+
+⚠️ 學到：**「試更多 frame」會退步**（all-frames 2.42）— layout_score 的 150000·bv
+權重在大候選池中 overshoot（挑了低 violation 但 area 爆掉的 outline）。4-5 frame 最佳。
+
+---
+
+### 舊最佳：Total Score = **3.0625** (Portfolio 8-profile, 2026-06-01)
 
 `optimizer_portfolio.py` — **8** profile 並行（gnn / connectivity / area_desc /
 area_asc / pin_centroid / degree_desc / degree_asc / **high_boundary**）每個
@@ -271,6 +306,10 @@ violations、或 tournament SA）。
 | 2026-06-02 portfolio (10 profile：+low_viol/high_viol, W_VIOL ×0.5/×2.0) | 3.0859 ← **退步 +1.0%, 已 revert**（同機 clean A/B: 8-prof 3.0554 vs 10-prof 3.0859）|
 | 2026-06-02 proxy near-tie min-viol tie-break (margin 0.02) | **離線固定輸出 A/B 3.1288 → 3.0979 (-1.0%)**, 已 ship；live run 3.1040（被 ±2-3% 限時噪音蓋過）|
 | 2026-06-02 oracle-selector 天花板 (8-profile) | 3.0335 ← **完美選擇也破不了 3.00**，selection 已盡 |
+| **2026-06-04 constructive placer M1 (singles)** | 3.62 ← 架構可行但缺 cluster/wire |
+| **2026-06-04 constructive M2 (cluster 複合 item)** | 2.3456 ← **-35% vs M1, 破 portfolio 3.05** |
+| **2026-06-04 constructive M3 (+nudges +incremental wire)** | **2.2515** ← **新最佳, -26% vs portfolio, 0.12s/case** |
+| 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
 | 2026-05-26 v2 supervised MSE on fp_sol (2000 sample, < 3h) | **失敗** — pos_mse 震盪、unsup_cost 47M，.pth 已棄 |
@@ -454,8 +493,11 @@ FloorSet/
 ├── optimizer_claude.cpp    ← 主程式 (C++)，含 GNN-hint 比較邏輯
 ├── optimizer_claude.py     ← Python wrapper，含 GNN inference (v1 FloorplanNet)
 ├── optimizer_claude.exe    ← 編譯輸出
-├── optimizer_portfolio.py  ← 8-profile 並行 wrapper, contest-shape proxy + near-tie
-│                              min-viol tie-break (當前最佳, default 8 profile)
+├── constructive.cpp        ← 🏆 建構式定框 floorplanner (C++, B 路線重寫組員架構)
+│                              當前最佳 2.2515, ~0.12s/case, deterministic
+├── optimizer_constructive.py ← constructive.exe 的 wrapper (reuse _serialize_input)
+├── dbg_constructive.py     ← constructive 單 case debug (serialize + run + bbox/bv/gf)
+├── optimizer_portfolio.py  ← 8-profile SA 並行 wrapper (舊最佳 3.0625, 已被 constructive 取代)
 ├── proxy_analysis.py       ← 🆕 OFFLINE: 跑全 profile 算每個真實 cost → proxy_raw.json
 │                              (用 GT baseline, 只供離線分析, 不入 live selector)
 ├── proxy_search.py         ← 🆕 OFFLINE: 掃 proxy 公式對 proxy_raw.json 真實 cost 評分
@@ -576,6 +618,38 @@ full training：
 ---
 
 ## 給下一個 session 的優先建議
+
+### 🏆 最高優先：精進 constructive placer（2026-06-04，當前 2.2515 → 目標 1.74）
+
+`constructive.cpp` 已是新主力（取代 SA portfolio）。剩餘 gap to 組員 v5 (1.74)
+按 ROI 排序（cost = (1+0.5(hpwl+area))·exp(2·vrel)，vrel 有 exp 乘數最關鍵）：
+
+1. **vrel 0.215 → 0.084（最高 ROI，exp 乘數）**。根因：boundary block 在
+   construction 時對齊 **frame 邊**，但最終 bbox < frame → 沒貼到 bbox 邊 → violation。
+   3 個 nudge 在我們 layout 上是 no-op（邊被佔滿/blocks 是 cluster/corner）。
+   方向：(a) pack 後做 **compaction**（往原點壓，讓 bbox≈frame，邊界 block 自然貼邊）；
+   (b) **anchored cluster**（preplaced+movable）目前 movable 當複合 item 沒貼 preplaced
+   → 港組員的 first-pass（movable 逐個貼 preplaced 牆，penalty 7000 if not touching，
+   見 my_optimizer.py `_pack_in_frame` 638-689）；(c) cluster 內部 layout 把 boundary
+   member 放在複合 item 的對應外緣（組員 `_group_boundary_exposure_badness`）
+2. **hpwl 0.877 → 0.76**：wire weight 上調 / 把 anchor 改成 placement 過程中增量
+   重估（目前 anchor 只來自 preplaced+pin）
+3. **area 0.356 → 0.31**：港組員完整 6 種 cluster 內部 layout + (fragment, boundary,
+   area, aspect) 排序（my_optimizer.py 348-575）；frame scale 對小 n 加細
+4. **MIB 統一**（可能微小，組員 MIB violation≈0）：port `_apply_safe_mib_dimensions`
+5. 之後 → **constructive 變體 portfolio**（不同 aspect/scale profile）+ proxy selector
+   （組員 v6/v7 用這個從 1.76 → 1.62）。我們 0.12s/case，可平行跑很多變體
+
+> ⚠️ **試過會退步**：max_trials 試「所有 frame」→ 2.42（layout_score 150000·bv
+> overshoot）。4-5 個 tight frame 最佳。
+>
+> ✅ 工具：`dbg_constructive.py <ids>` 看單 case bbox/bv/gf；constructive 是
+> deterministic，A/B 完全乾淨（不像 SA 有 ±2-3% 限時噪音）。
+> 組員完整參考碼在 `C:\Users\Nordra\Downloads\teammate_iccad_study\`（git clone，
+> 非本 repo；`iccad2026contest/my_optimizer.py` 是 v5 主檔，`codex_experiment_log.md`
+> 是演進紀錄）。
+
+### （舊）給下一個 session 的優先建議
 
 > ⚠️ **2026-05-26 更新**：以下舊建議（boundary / bbox / slack）都是 optimization
 > 思維。範式已轉移到 reconstruction，請先看本文件頂部「🚨 範式轉移」段落，
