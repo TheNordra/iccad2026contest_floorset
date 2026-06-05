@@ -116,49 +116,52 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.8218** (Constructive placer M4, 2026-06-04)
+### 🏆 最佳已驗證版本：Total Score = **1.7045** (Constructive placer M5, 2026-06-05)
 
-**範式達成：目標 5（換掉 SA+skyline-BL placer）完成，且逼近組員 legit 1.74。**
-`constructive.cpp` + `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式
-定框 floorplanner 的 C++ 重寫（B 路線）。**單跑 1.8218，比 8-profile portfolio
-(3.0625) 好 41%，只要 ~0.12s/case。** 100/100 feasible。確定性（無 randomness、
-無 wall-clock 限時 → run-to-run 完全一致，可精確 A/B；官方 eval 與
-`analyze_constructive.py` 完全吻合）。
+**範式達成 + 反超組員 legit v5。** `constructive.cpp` + `optimizer_constructive.py`
+是組員 `my_optimizer.py` 建構式定框 floorplanner 的 C++ 重寫（B 路線）。**單跑
+1.7045，比 8-profile portfolio (3.0625) 好 44%，只要 ~0.16s/case。** 100/100
+feasible。確定性（無 randomness、無 wall-clock 限時 → run-to-run 完全一致，可精確
+A/B；官方 eval 與 `analyze_constructive.py` 完全吻合）。
 
-**距組員 v5 (1.74) 僅 1.047× — 只差 4.7%。**（組員 `my_optimizer.py` 餵我們
-evaluator = 1.7429）
+**已超越組員 v5：1.7045 vs 1.7429 = 0.978×（好 2.2%）。**（組員 `my_optimizer.py`
+餵我們 evaluator = 1.7429。組員 v6/v7 portfolio ~1.62 仍領先 → 見「下一步」）
 
-架構（五階段，~0.12s/case）：
+架構（五階段，~0.16s/case）：
 1. **boundary-aspect dims**：LEFT/RIGHT-only aspect 2.50、TOP/BOTTOM-only 0.40
 2. **MIB 形狀統一**（M4，`apply_safe_mib_dims`）：MIB group 有 fixed/preplaced
    master 且面積相容→全用 master 形狀；否則 movable 面積互相 ≤1%→全設 `sqrt(avg)`
    方形。保 1% area 硬約束 → feasibility 不變。**vMb 145→0**
-3. **cluster → 複合 item**（M4 升級）：3 種 ordering（boundary-first / by_width /
-   by_height）× 5 種 layout（h-row / v-col / 方形 shelf / 寬 shelf / two-rows），
-   選擇 key = **`(fragments, boundary_bad, area, aspect)`** 字典序 — fragment 與
-   boundary exposure 排在 area **前面**（這是 -9.4% 的關鍵，舊版只看 area*1000+aspect）
-4. **定框 greedy packing**：試 4-5 個 outline frame（面積小優先），每 frame 對每個
-   item 生 boundary-aware 候選位置、評分（`bbox_area + 0.10·anchor +
-   ww·WIRE·wire + BP_W·boundary_miss + BL`），挑最佳；layout_score 挑最佳 frame
+3. **cluster 建構**：
+   - 純 movable cluster → **複合 item**（3 ordering × 5 layout：h-row/v-col/方形
+     shelf/寬 shelf/two-rows），選擇 key = `(fragments, boundary_bad, area, aspect)`
+     字典序 — fragment/boundary 排 area **前面**（M4，-9.4%）
+   - **mixed cluster（preplaced+movable）→ anchored**（M5）：movable 不進複合 item，
+     而在 pack_in_frame **first-pass** 逐個貼 preplaced「牆」(`adjacent_candidates_
+     for_block` 八向 abutment + boundary-exact)，不接觸 cluster 加 7000 penalty 保連通；
+     失敗者退回 single。**vBd 359→307、vCl 260→208，-6.4%**
+4. **定框 greedy packing**：試 4-5 個 outline frame（面積小優先），每 item 生
+   boundary-aware 候選、評分（`bbox_area + 0.10·anchor + ww·WIRE·wire +
+   BP_W·boundary_miss + BL`），挑最佳；layout_score 挑最佳 frame
    - **ww base ×2000**（M4，原 0.025-0.075 → 50/70/150）：bbox-area 最小化會散開
      連線，baseline 是 wire-driven。swept 最佳 ~2000-3000（**平坦盆地**非尖峰 →
-     泛化安全；HPWL 本就是 cost 一半）。**hpwl 0.46→0.33 區間，area 持平**
+     泛化安全；HPWL 本就是 cost 一半）
    - env 旋鈕：`ICCAD_BP_WEIGHT`(預設 30000) / `ICCAD_WIRE_MULT`(×base, 預設1) /
      `ICCAD_ANCHOR_W`(預設 0.10)
 5. 3 個 repair nudge（boundary/group/edge-escape）— 在我們 layout 上多為 no-op
 
 **演進（deterministic A/B）**：M1 singles 3.62 → M2 cluster 複合 2.3456 →
-M3 +incremental wire 2.2515 → **M4: +MIB 統一 2.1673 → +cluster layout key
-1.9638 → +wire ×2000 1.8218**（本 session 三步 -19.1%）。
+M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 →
++wire ×2000 1.8218 → **M5: +anchored cluster 1.7045**（本 session 共 -24.3%）。
 
-**剩餘 gap to 組員 v5 (1.74, ~4.7%)**：vBd 仍是最大違反塊（sum 359，主要為
-**cluster boundary member**：item 在中間沒貼 bbox 邊 / boundary member 沒在 item
-正確內緣 / 個別滑出會 fragment 換 vBd 淨零）+ **少數 preplaced boundary block 無解**
-（位置固定，bbox 邊到不了它）。area_gap ~0.28。下一步見「給下一個 session」。
+**剩餘 gap to 組員 v6/v7 portfolio (~1.62)**：vBd 仍是最大違反塊（sum 307，
+**少數 preplaced boundary block 無解** = 位置固定、bbox 邊到不了它 + cluster
+boundary member）。area_gap ~0.28。下一步見「給下一個 session」（constructive 變體
+portfolio + proxy selector 是組員從 1.76→1.62 的路）。
 
-**⚠️ 已驗證 BP_WEIGHT 不是 lever**：30000→1M 完全無變化（1.9638 不動）→ boundary
-violation 不是「penalty 太低被 area 蓋過」，而是「無可行 bp=0 位置」或「frame 邊
-≠ bbox 邊」。compaction/penalty 路線對 cluster boundary 無效。
+**⚠️ 已驗證 BP_WEIGHT 不是 lever**：30000→1M 完全無變化 → boundary violation 不是
+「penalty 太低被 area 蓋過」，而是「無可行 bp=0 位置」或「frame 邊 ≠ bbox 邊」。
+compaction/penalty 路線對 cluster boundary 無效。
 
 ⚠️ 學到：**「試更多 frame」會退步**（all-frames 2.42）— layout_score 的 150000·bv
 權重在大候選池中 overshoot（挑了低 violation 但 area 爆掉的 outline）。4-5 frame 最佳。
@@ -325,7 +328,8 @@ violations、或 tournament SA）。
 | **2026-06-04 constructive M3 (+nudges +incremental wire)** | **2.2515** ← -26% vs portfolio, 0.12s/case |
 | 2026-06-04 constructive M4a (+MIB 統一, vMb 145→0) | 2.1673 ← -3.7% |
 | 2026-06-04 constructive M4b (+cluster layout key: frag/boundary 排 area 前) | 1.9638 ← -9.4%, vBd 528→357 |
-| **2026-06-04 constructive M4c (+wire weight ×2000, anchor 0.1)** | **1.8218** ← **新最佳, -7.2%, 距組員 1.74 僅 4.7%** |
+| 2026-06-04 constructive M4c (+wire weight ×2000, anchor 0.1) | 1.8218 ← -7.2%, 距組員 1.74 僅 4.7% |
+| **2026-06-05 constructive M5 (+anchored cluster first-pass)** | **1.7045** ← **新最佳, -6.4%, 反超組員 v5 (1.7429)** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -511,7 +515,7 @@ FloorSet/
 ├── optimizer_claude.py     ← Python wrapper，含 GNN inference (v1 FloorplanNet)
 ├── optimizer_claude.exe    ← 編譯輸出
 ├── constructive.cpp        ← 🏆 建構式定框 floorplanner (C++, B 路線重寫組員架構)
-│                              當前最佳 1.8218, ~0.12s/case, deterministic
+│                              當前最佳 1.7045, ~0.16s/case, deterministic
 ├── optimizer_constructive.py ← constructive.exe 的 wrapper (reuse _serialize_input)
 ├── dbg_constructive.py     ← constructive 單 case debug (serialize + run + bbox/bv/gf)
 ├── analyze_constructive.py ← 🆕 per-case violation breakdown，重算 vBd/vCl/vMb + 權重排序
@@ -632,33 +636,30 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：精進 constructive placer（2026-06-04，當前 **1.8218** → 目標 1.74）
+### 🏆 最高優先：精進 constructive placer（2026-06-05，當前 **1.7045** → 目標 ~1.62）
 
-`constructive.cpp` 已是新主力。本 session 完成 M4 三步 -19.1%（見上方狀態段）。
+`constructive.cpp` 已是新主力，**已反超組員 v5 (1.7429)**。本 session 完成 M4+M5
+共 -24.3%（見上方狀態段）。下一個對標是組員 v6/v7 portfolio (~1.62)。
 
-**✅ 已完成（M4, 2026-06-04）**：
+**✅ 已完成（M4–M5）**：
 - ~~MIB 統一~~ → `apply_safe_mib_dims`，vMb 145→0，-3.7%
-- ~~cluster 內部 layout 把 boundary member 放外緣~~ → 選擇 key 改 `(fragments,
-  boundary_bad, area, aspect)` + 3 ordering × 5 layout，vBd 528→357，-9.4%
-- ~~wire weight 上調~~ → base ww ×2000，hpwl 大降，-7.2%（swept 平坦盆地 2000-3000）
+- ~~cluster layout key~~ → `(fragments, boundary_bad, area, aspect)`，vBd 528→357，-9.4%
+- ~~wire weight 上調~~ → base ww ×2000，hpwl 大降，-7.2%（平坦盆地 2000-3000）
+- ~~anchored cluster first-pass~~ → mixed cluster 的 movable 貼 preplaced 牆，
+  vBd 359→307 vCl 260→208，**-6.4%**
 
-**剩餘 gap to 1.74（~4.7%），按 ROI**：
-1. **vBd（sum 359，最大違反塊）** — 已查明結構（用 `dbg_boundary.py` 確認）：
-   - 主要是 **cluster boundary member**：cluster item 被 greedy 擺在中間沒貼 bbox 邊。
-     **⚠️ BP_WEIGHT 30000→1M 無效（已驗證）** → 不是 penalty 太低，是「無可行 bp=0
-     位置（邊被佔）」或「frame 邊 ≠ bbox 邊」。個別把 member 滑出去會 fragment
-     （vBd-1 換 vCl+1 淨零）。方向：(a) **anchored cluster** first-pass（movable 逐個
-     貼 preplaced 牆，penalty 7000，my_optimizer.py `_pack_in_frame` 638-689）——
-     我們完全沒做，mixed preplaced+movable cluster 現在當純 movable 複合 item；
-     (b) 讓 cluster item 的 boundary-exact 候選更可行（先放 boundary cluster 再放其他）
-   - **少數 preplaced boundary block 根本無解**（位置固定、nudge 跳過、bbox 邊到不了
-     它）→ 除非整體 bbox 收到貼它，否則永久違反。可能要在 frame 選擇時偏好「不超出
-     preplaced boundary block 外緣」的 outline
-2. **area_gap ~0.28**：港組員完整 6 種 cluster layout（我們 5 種，缺 grid /
-   top_aligned / right_aligned）；frame scale 對小 n 加細
-3. 之後 → **constructive 變體 portfolio**（不同 wire/aspect/scale profile via 現有
-   env 旋鈕）+ proxy selector（組員 v6/v7 靠這個 1.76→1.62）。我們 0.12s/case，
-   可平行跑很多變體，且 env 旋鈕已就緒
+**剩餘 gap to ~1.62，按 ROI**：
+1. **constructive 變體 portfolio + proxy selector（最高 ROI）** — 組員從 1.76→1.62
+   就是靠這個。我們 0.16s/case，可平行跑很多 profile（不同 `ICCAD_WIRE_MULT` /
+   `ICCAD_ANCHOR_W` / aspect / frame-scale），用 contest-shape proxy 挑最佳。env
+   旋鈕已就緒。⚠️ proxy selector 是準度瓶頸（舊 SA portfolio 經驗：near-tie 易選錯，
+   見「失敗紀錄」），但 deterministic constructive 沒有 SA 的限時噪音 → 乾淨很多
+2. **vBd（sum 307，仍是最大違反塊）**：
+   - **少數 preplaced boundary block 無解**（位置固定、nudge 跳過、bbox 邊到不了它）
+     → frame 選擇時偏好「不超出 preplaced boundary block 外緣」的 outline
+   - 殘留 cluster boundary member（個別滑出會 fragment 換 vBd 淨零）
+3. **area_gap ~0.28**：補完整 6 種 cluster layout（缺 grid / top_aligned /
+   right_aligned）；frame scale 對小 n 加細
 
 > ⚠️ **試過會退步**：max_trials 試「所有 frame」→ 2.42；BP_WEIGHT 拉高無效；
 >    wire ×50000 反彈到 1.93（area 完全被忽略 bbox 爆）。

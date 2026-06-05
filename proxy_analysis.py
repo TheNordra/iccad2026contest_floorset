@@ -36,7 +36,10 @@ sys.path.insert(0, str(_DIR))
 from iccad2026_evaluate import (
     ContestEvaluator, evaluate_solution, compute_cost, compute_total_score,
 )
-import optimizer_portfolio as pf
+# NOTE: build_opt_target_pos (below) is the only live export — it is imported by
+# analyze_constructive.py / dbg_constructive.py / dbg_boundary.py. The offline
+# proxy-ceiling analysis in run_all_profiles()/main() depended on the now-deleted
+# optimizer_portfolio module, so that import is lazy and those paths are dead.
 
 
 def build_opt_target_pos(target_pos, constraints, block_count):
@@ -60,6 +63,7 @@ def build_opt_target_pos(target_pos, constraints, block_count):
 
 def run_all_profiles(profiles, n, area_t, b2b, p2b, pins, constraints, opt_tp):
     """Run every profile's C++ subprocess in parallel; return {profile: positions}."""
+    import optimizer_portfolio as pf  # dead: module removed in cleanup
     out = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(profiles)) as ex:
         futs = {
@@ -80,6 +84,7 @@ def main():
     ap.add_argument("--out", default=str(_DIR / "proxy_raw.json"))
     args = ap.parse_args()
 
+    import optimizer_portfolio as pf  # dead: module removed in cleanup
     pf._ensure_compiled()
     profiles = list(pf._DEFAULT_PROFILES)
     if "gnn" in profiles and not pf._gnn_available():

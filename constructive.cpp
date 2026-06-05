@@ -48,6 +48,12 @@ static vector<Anchor> anchors;
 static vector<vector<pair<int,double>>> b2b_adj;  // block -> [(neighbor block, w)]
 static vector<vector<pair<int,double>>> p2b_adj;  // block -> [(pin index, w)]
 
+// A cluster that mixes preplaced (fixed-position) and movable members. Its
+// movable members are first attached to the preplaced "walls" so the group stays
+// connected, instead of floating off as an independent compound item.
+struct AnchoredCluster { vector<int> preplaced, movable; };
+static vector<AnchoredCluster> anchored_clusters;
+
 // An item is one or more blocks placed together. offs[k] = offset of blocks[k]
 // from the item origin. Singles have one block at offset (0,0).
 struct Item {
@@ -341,6 +347,54 @@ static double item_boundary_penalty(const Item& it, double ox, double oy, double
     return pen;
 }
 
+// candidate origins for a single block placed adjacent to existing cluster rects
+// (teammate _adjacent_candidates_for_block): 8 abutment slots per rect + exact
+// frame-edge slots if the block carries a boundary constraint.
+static vector<pair<double,double>> adjacent_candidates_for_block(
+        double w,double h,const vector<XYWH>& cluster_rects,double fw,double fh,int code){
+    double xmax=max(0.0,fw-w), ymax=max(0.0,fh-h);
+    vector<pair<double,double>> cands;
+    for (const XYWH& r:cluster_rects){
+        cands.push_back({r.x+r.w, r.y});
+        cands.push_back({r.x+r.w, max(0.0, r.y+r.h-h)});
+        cands.push_back({r.x-w, r.y});
+        cands.push_back({r.x-w, max(0.0, r.y+r.h-h)});
+        cands.push_back({r.x, r.y+r.h});
+        cands.push_back({max(0.0, r.x+r.w-w), r.y+r.h});
+        cands.push_back({r.x, r.y-h});
+        cands.push_back({max(0.0, r.x+r.w-w), r.y-h});
+    }
+    vector<double> xs, ys;
+    if (code&B_LEFT)   xs.push_back(0.0);
+    if (code&B_RIGHT)  xs.push_back(fw-w);
+    if (code&B_BOTTOM) ys.push_back(0.0);
+    if (code&B_TOP)    ys.push_back(fh-h);
+    if (!xs.empty()||!ys.empty()){
+        if (xs.empty()){ for(auto&c:cands) xs.push_back(c.first); xs.push_back(0.0); xs.push_back(fw-w); }
+        if (ys.empty()){ for(auto&c:cands) ys.push_back(c.second); ys.push_back(0.0); ys.push_back(fh-h); }
+        vector<double> xss=xs, yss=ys;
+        for (double x:xss) for (double y:yss) cands.push_back({x,y});
+    }
+    set<pair<long long,long long>> seen; vector<pair<double,double>> out;
+    for (auto&c:cands){
+        double x=min(max(0.0,c.first),xmax), y=min(max(0.0,c.second),ymax);
+        auto key=make_pair((long long)llround(x*1e6),(long long)llround(y*1e6));
+        if (seen.insert(key).second) out.push_back({x,y});
+    }
+    sort(out.begin(),out.end(),[](const pair<double,double>&A,const pair<double,double>&B){
+        if (fabs(A.second-B.second)>TOL) return A.second<B.second; return A.first<B.first;
+    });
+    return out;
+}
+static bool rect_touches_any(double x,double y,double w,double h,const vector<XYWH>& rects){
+    for (const XYWH& r:rects){
+        bool tx=(fabs(x+w-r.x)<=1e-3||fabs(r.x+r.w-x)<=1e-3)&&(y<r.y+r.h-TOL&&r.y<y+h-TOL);
+        bool ty=(fabs(y+h-r.y)<=1e-3||fabs(r.y+r.h-y)<=1e-3)&&(x<r.x+r.w-TOL&&r.x<x+w-TOL);
+        if (tx||ty) return true;
+    }
+    return false;
+}
+
 // greedy pack of items into frame
 static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<XYWH>& out){
     out=pos; vector<XYWH> rects; bbox_reset();
@@ -354,7 +408,56 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         for (const XYWH&r:rects) if (rect_overlap(pos[i].x,pos[i].y,pos[i].w,pos[i].h,r.x,r.y,r.w,r.h)) return false;
         rects.push_back(pos[i]); bbox_add(pos[i].x,pos[i].y,pos[i].w,pos[i].h); done[i]=1;
     }
+    // First-pass: attach anchored-cluster movable members to their preplaced walls
+    // (teammate _pack_in_frame 637-689). Placed members are skipped by the singles
+    // loop below; any that don't fit here fall back to that loop.
+    for (const AnchoredCluster& ac:anchored_clusters){
+        vector<XYWH> cluster_rects;
+        for (int b:ac.preplaced) if (done[b]) cluster_rects.push_back(out[b]);
+        vector<int> mov=ac.movable;
+        sort(mov.begin(),mov.end(),[](int a,int b){
+            int ba=block_boundary_score(a), bb=block_boundary_score(b);
+            if (ba!=bb) return ba>bb;
+            return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
+        });
+        for (int b:mov){
+            if (done[b]) continue;
+            double bw=dims[b].first, bh=dims[b].second;
+            auto cands=adjacent_candidates_for_block(bw,bh,cluster_rects,fw,fh,blocks[b].boundary);
+            double best=1e300, bx=0, by=0; bool found=false;
+            for (auto&c:cands){
+                double x=c.first, y=c.second;
+                if (x<-TOL||y<-TOL||x+bw>fw+TOL||y+bh>fh+TOL) continue;
+                bool ov=false;
+                for (const XYWH&r:rects) if (rect_overlap(x,y,bw,bh,r.x,r.y,r.w,r.h)){ ov=true; break; }
+                if (ov) continue;
+                double cx=x+bw/2, cy=y+bh/2;
+                double ad=anchors[b].w>0?fabs(cx-anchors[b].x)+fabs(cy-anchors[b].y):0.0;
+                int bp=boundary_penalty_est(b,x,y,bw,bh,fw,fh);
+                double area=bbox_area_with(x,y,bw,bh), wire=0.0;
+                if (bp==0){
+                    for (auto& nb:b2b_adj[b]) if (done[nb.first]){
+                        double ncx=out[nb.first].x+out[nb.first].w/2, ncy=out[nb.first].y+out[nb.first].h/2;
+                        wire+=nb.second*(fabs(cx-ncx)+fabs(cy-ncy));
+                    }
+                    for (auto& pn:p2b_adj[b])
+                        wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
+                }
+                double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
+                if (!rect_touches_any(x,y,bw,bh,cluster_rects)) score+=7000.0; // keep group connected
+                if (score<best){ best=score; bx=x; by=y; found=true; }
+            }
+            if (found){
+                out[b]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh});
+                bbox_add(bx,by,bw,bh); done[b]=1; cluster_rects.push_back({bx,by,bw,bh});
+            }
+        }
+    }
     for (const Item& it:items){
+        bool all_done=true; for (int b:it.blocks) if(!done[b]){ all_done=false; break; }
+        if (all_done) continue;                       // already placed in first-pass
+        bool any_done=false; for (int b:it.blocks) if(done[b]){ any_done=true; break; }
+        if (any_done) continue;                       // partial: leave to other items/frames
         auto cands=item_candidates(it,fw,fh,rects);
         double best=1e300, bx=0, by=0; bool found=false;
         for (auto&c:cands){
@@ -574,17 +677,27 @@ static void solve() {
     for (auto& e:p2b_edges){ if(e.w<=0||e.j<0||e.j>=N||e.i<0||e.i>=(int)pins.size()) continue;
         p2b_adj[e.j].push_back({e.i,e.w}); }
 
-    // build items: movable clusters -> compound; rest -> singles
+    // build items: pure-movable clusters -> compound item; mixed clusters
+    // (preplaced + movable) -> anchored (movable attach to preplaced walls in
+    // pack_in_frame's first-pass, and also appear as singles as a fallback);
+    // everything else -> singles.
     map<int,vector<int>> cluster_map;
-    for (int i=0;i<N;i++) if (!blocks[i].is_preplaced && blocks[i].cluster>0)
+    for (int i=0;i<N;i++) if (blocks[i].cluster>0)
         cluster_map[blocks[i].cluster].push_back(i);
+    anchored_clusters.clear();
     vector<char> used(N,0);
     vector<Item> items;
     for (auto& kv:cluster_map){
-        if (kv.second.size()<2) continue;
-        Item it=make_group_item(kv.second);
+        vector<int> mov, pre;
+        for (int b:kv.second){ if (blocks[b].is_preplaced) pre.push_back(b); else mov.push_back(b); }
+        if (!pre.empty() && !mov.empty()){
+            anchored_clusters.push_back({pre, mov});   // handled in pack_in_frame
+            continue;
+        }
+        if (mov.size()<2) continue;
+        Item it=make_group_item(mov);
         set_item_anchor(it); items.push_back(it);
-        for (int b:kv.second) used[b]=1;
+        for (int b:mov) used[b]=1;
     }
     for (int i=0;i<N;i++){
         if (blocks[i].is_preplaced||used[i]) continue;
