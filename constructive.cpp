@@ -16,6 +16,7 @@
 #include <set>
 #include <cstdlib>
 #include <functional>
+#include <string>
 using namespace std;
 
 static const int B_LEFT = 1, B_RIGHT = 2, B_TOP = 4, B_BOTTOM = 8;
@@ -35,6 +36,8 @@ static double WIRE_MULT = 1.0;  // extra scale on the incremental-HPWL term (env
 static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
 static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
+static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
+static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static vector<double> area_targets;
 static vector<Edge>   b2b_edges, p2b_edges;
 static vector<pair<double,double>> pins;
@@ -266,9 +269,11 @@ static vector<pair<double,double>> frame_candidates() {
         if (placed[i]){ pre_w=max(pre_w,pos[i].x+pos[i].w); pre_h=max(pre_h,pos[i].y+pos[i].h); }
     }
     double base=sqrt(max(total,1.0));
-    vector<double> aspects={1.0,1.35,0.75,1.8,0.55};
-    vector<double> scales=(N>=60&&N<80)?vector<double>{1.00,1.03,1.05,1.15,1.35,1.65,2.10}
-                                       :vector<double>{1.05,1.15,1.35,1.65,2.10};
+    vector<double> aspects = FRAME_ASPECTS.empty() ? vector<double>{1.0,1.35,0.75,1.8,0.55}
+                                                   : FRAME_ASPECTS;
+    vector<double> scales = !FRAME_SCALES.empty() ? FRAME_SCALES
+        : (N>=60&&N<80)?vector<double>{1.00,1.03,1.05,1.15,1.35,1.65,2.10}
+                       :vector<double>{1.05,1.15,1.35,1.65,2.10};
     set<pair<long long,long long>> seen; vector<pair<double,double>> frames;
     for (double s:scales) for (double a:aspects){
         double w=base*s*sqrt(a), h=base*s/sqrt(a);
@@ -777,6 +782,17 @@ int main() {
     if (const char* e=getenv("ICCAD_ANCHOR_W"))  { double v=atof(e); if (v>=0) ANCHOR_W=v; }
     if (const char* e=getenv("ICCAD_LR_ASPECT"))  { double v=atof(e); if (v>0) LR_ASPECT=v; }
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
+    auto parse_list=[](const char* name, vector<double>& out){
+        const char* e=getenv(name); if(!e||!*e) return;
+        string s=e; size_t i=0;
+        while (i<=s.size()){
+            size_t j=s.find(',',i); if (j==string::npos) j=s.size();
+            if (j>i){ try{ double v=stod(s.substr(i,j-i)); if (v>0) out.push_back(v); }catch(...){} }
+            i=j+1;
+        }
+    };
+    parse_list("ICCAD_FRAME_ASPECTS", FRAME_ASPECTS);
+    parse_list("ICCAD_FRAME_SCALES",  FRAME_SCALES);
     solve();
     return 0;
 }

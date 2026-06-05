@@ -23,7 +23,7 @@ from optimizer_claude import _serialize_input, _parse_output
 from proxy_analysis import build_opt_target_pos
 
 PROFILES = {
-    # current shipped 7
+    # shipped 11
     "base":        {},
     "wire_hi":     {"ICCAD_WIRE_MULT": "2.0"},
     "anc_lo":      {"ICCAD_ANCHOR_W": "0.04"},
@@ -31,12 +31,15 @@ PROFILES = {
     "aspect_hi":   {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286"},
     "aspect_xhi":  {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},
     "asp_wire":    {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},
-    # candidate additions (does the oracle ceiling drop?)
     "aspect_v7":   {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},
     "aspect_v10":  {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},
     "asp7_wire":   {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},
-    "wire_xhi":    {"ICCAD_WIRE_MULT": "5.0"},
     "asp5_anclo":  {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04"},
+    # NEW frame-outline diversity axis (does the oracle ceiling drop?)
+    "frame_wide":  {"ICCAD_FRAME_ASPECTS": "1.5,2.0,2.5,3.0"},
+    "frame_tall":  {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"},
+    "frame_tight": {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20"},
+    "frame_wwire": {"ICCAD_FRAME_ASPECTS": "1.5,2.0,2.5,3.0", "ICCAD_WIRE_MULT": "2.0"},
 }
 PNAMES = list(PROFILES)
 
@@ -101,12 +104,14 @@ for p in sorted(PNAMES, key=lambda p: -wins[p]):
     print(f"  {p:11s} {100*wins[p]/totw:5.1f}%")
 
 # marginal value: oracle + live-proxy(shapely vrel) for growing subsets
-S7 = ["base","wire_hi","anc_lo","area_lean","aspect_hi","aspect_xhi","asp_wire"]
+S11 = ["base","wire_hi","anc_lo","area_lean","aspect_hi","aspect_xhi","asp_wire",
+       "aspect_v7","aspect_v10","asp7_wire","asp5_anclo"]
 SUBSETS = {
-    "S7 (shipped)":      S7,
-    "S7+v7":             S7 + ["aspect_v7"],
-    "S7+v7+v10":         S7 + ["aspect_v7","aspect_v10"],
-    "S7+v7+v10+asp7w":   S7 + ["aspect_v7","aspect_v10","asp7_wire"],
+    "S11 (shipped)":     S11,
+    "S11+wide":          S11 + ["frame_wide"],
+    "S11+tall":          S11 + ["frame_tall"],
+    "S11+tight":         S11 + ["frame_tight"],
+    "S11+wwire":         S11 + ["frame_wwire"],
     "ALL":               PNAMES,
 }
 print("\n=== subset:  oracle  /  proxy(shapely vrel, RH=1) ===")
