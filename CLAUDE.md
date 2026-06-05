@@ -116,18 +116,33 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.7045** (Constructive placer M5, 2026-06-05)
+### 🏆 最佳已驗證版本：Total Score = **1.6060** (Constructive portfolio M6, 2026-06-05)
 
-**範式達成 + 反超組員 legit v5。** `constructive.cpp` + `optimizer_constructive.py`
-是組員 `my_optimizer.py` 建構式定框 floorplanner 的 C++ 重寫（B 路線）。**單跑
-1.7045，比 8-profile portfolio (3.0625) 好 44%，只要 ~0.16s/case。** 100/100
-feasible。確定性（無 randomness、無 wall-clock 限時 → run-to-run 完全一致，可精確
-A/B；官方 eval 與 `analyze_constructive.py` 完全吻合）。
+**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62）。** `constructive.cpp` +
+`optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
+C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~0.43s/case。
+確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 與離線預測
+完全吻合 1.6060 = 1.6060）。
 
-**已超越組員 v5：1.7045 vs 1.7429 = 0.978×（好 2.2%）。**（組員 `my_optimizer.py`
-餵我們 evaluator = 1.7429。組員 v6/v7 portfolio ~1.62 仍領先 → 見「下一步」）
+**對標**：組員 v5 = 1.7429（好 7.9%）、組員 v6/v7 portfolio ~1.62（**反超**）。
 
-架構（五階段，~0.16s/case）：
+**M6 portfolio 層**（`optimizer_constructive.py`）：平行跑 **7 個 deterministic
+profile**（env 旋鈕變體：base / wire_hi / anc_lo / area_lean / aspect_hi(3.5) /
+aspect_xhi(5.0) / asp_wire），用 **baseline-free proxy** 選最佳。
+- proxy = `(area/Â + hpwl/hmin)·exp(2·vrel)`，Â=1.035·ΣblockArea，hmin=該 case 各
+  profile 最小 hpwl（推導自 cost=0.5(area/A+hpwl/H)·exp(2·vrel)，vrel 精確、area
+  baseline 可估、hpwl baseline 用 per-case 尺度）
+- ⚠️ **vrel 必須用 shapely 算**（比照 harness）：C++ `count_group_fragments`
+  用 1e-3 tol 把 MARGIN 間隙當接觸，與 shapely 在 **34/100 案不一致** → 若用 C++
+  vrel 選擇，退到 1.6388。wrapper 內 `_proxy_metrics` 用 shapely 重算 → 命中 1.6060
+- **oracle 天花板 = 1.6057，proxy 抓到 1.6060（幾乎滿分）**：deterministic 無 SA
+  限時噪音是關鍵（舊 SA portfolio proxy 只抓到天花板的一半）
+- aspect 變體是最強分歧軸（高 LR aspect 降 vBd、升 hpwl → 在 violation-heavy case 贏）
+- `ICCAD_CONSTRUCTIVE_SINGLE=1` 可退回單 base profile（1.7045）
+
+---
+
+**單一 profile 架構（每 profile 五階段，~0.16s/case；M1–M5）**：
 1. **boundary-aspect dims**：LEFT/RIGHT-only aspect 2.50、TOP/BOTTOM-only 0.40
 2. **MIB 形狀統一**（M4，`apply_safe_mib_dims`）：MIB group 有 fixed/preplaced
    master 且面積相容→全用 master 形狀；否則 movable 面積互相 ≤1%→全設 `sqrt(avg)`
@@ -152,12 +167,13 @@ A/B；官方 eval 與 `analyze_constructive.py` 完全吻合）。
 
 **演進（deterministic A/B）**：M1 singles 3.62 → M2 cluster 複合 2.3456 →
 M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 →
-+wire ×2000 1.8218 → **M5: +anchored cluster 1.7045**（本 session 共 -24.3%）。
++wire ×2000 1.8218 → M5: +anchored cluster 1.7045 → **M6: +7-profile portfolio
+1.6060**（本 session 共 **-28.7%**）。
 
-**剩餘 gap to 組員 v6/v7 portfolio (~1.62)**：vBd 仍是最大違反塊（sum 307，
-**少數 preplaced boundary block 無解** = 位置固定、bbox 邊到不了它 + cluster
-boundary member）。area_gap ~0.28。下一步見「給下一個 session」（constructive 變體
-portfolio + proxy selector 是組員從 1.76→1.62 的路）。
+**下一步（→ 壓低 oracle 天花板 1.6057）**：portfolio proxy 已幾乎滿分（抓到天花板
+99.9%），再進步要**降低天花板本身** = 更好/更分歧的 profile，或更強的單一 placer。
+單一 base 殘留 vBd（少數 preplaced boundary block 位置固定無解）+ area_gap ~0.28。
+詳見「給下一個 session」。
 
 **⚠️ 已驗證 BP_WEIGHT 不是 lever**：30000→1M 完全無變化 → boundary violation 不是
 「penalty 太低被 area 蓋過」，而是「無可行 bp=0 位置」或「frame 邊 ≠ bbox 邊」。
@@ -329,7 +345,8 @@ violations、或 tournament SA）。
 | 2026-06-04 constructive M4a (+MIB 統一, vMb 145→0) | 2.1673 ← -3.7% |
 | 2026-06-04 constructive M4b (+cluster layout key: frag/boundary 排 area 前) | 1.9638 ← -9.4%, vBd 528→357 |
 | 2026-06-04 constructive M4c (+wire weight ×2000, anchor 0.1) | 1.8218 ← -7.2%, 距組員 1.74 僅 4.7% |
-| **2026-06-05 constructive M5 (+anchored cluster first-pass)** | **1.7045** ← **新最佳, -6.4%, 反超組員 v5 (1.7429)** |
+| 2026-06-05 constructive M5 (+anchored cluster first-pass) | 1.7045 ← -6.4%, 反超組員 v5 (1.7429) |
+| **2026-06-05 constructive M6 (+7-profile portfolio + baseline-free proxy)** | **1.6060** ← **新最佳, -5.8%, 反超組員 v6/v7 (~1.62); oracle 天花板 1.6057** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -515,8 +532,12 @@ FloorSet/
 ├── optimizer_claude.py     ← Python wrapper，含 GNN inference (v1 FloorplanNet)
 ├── optimizer_claude.exe    ← 編譯輸出
 ├── constructive.cpp        ← 🏆 建構式定框 floorplanner (C++, B 路線重寫組員架構)
-│                              當前最佳 1.7045, ~0.16s/case, deterministic
-├── optimizer_constructive.py ← constructive.exe 的 wrapper (reuse _serialize_input)
+│                              單 profile ~0.16s/case, deterministic; env 旋鈕 +
+│                              METRICS stderr 輸出 (現由 wrapper 用 shapely 重算取代)
+├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 7 profile + baseline-free
+│                              proxy 選擇 (當前最佳 1.6060, ~0.43s/case)
+├── portfolio_ceiling.py    ← 🆕 OFFLINE: 跑多 profile 算 oracle 天花板 + proxy 公式
+│                              搜尋 (確認 proxy≈oracle; harness vs C++ vrel 比對)
 ├── dbg_constructive.py     ← constructive 單 case debug (serialize + run + bbox/bv/gf)
 ├── analyze_constructive.py ← 🆕 per-case violation breakdown，重算 vBd/vCl/vMb + 權重排序
 │                              (與官方 eval 完全吻合，~30s，乾淨 A/B 工具)
@@ -636,38 +657,40 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：精進 constructive placer（2026-06-05，當前 **1.7045** → 目標 ~1.62）
+### 🏆 最高優先：壓低 oracle 天花板（2026-06-05，當前 **1.6060**，天花板 1.6057）
 
-`constructive.cpp` 已是新主力，**已反超組員 v5 (1.7429)**。本 session 完成 M4+M5
-共 -24.3%（見上方狀態段）。下一個對標是組員 v6/v7 portfolio (~1.62)。
+`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。本
+session 完成 M4–M6 共 -28.7%（見上方狀態段）。
 
-**✅ 已完成（M4–M5）**：
-- ~~MIB 統一~~ → `apply_safe_mib_dims`，vMb 145→0，-3.7%
-- ~~cluster layout key~~ → `(fragments, boundary_bad, area, aspect)`，vBd 528→357，-9.4%
-- ~~wire weight 上調~~ → base ww ×2000，hpwl 大降，-7.2%（平坦盆地 2000-3000）
-- ~~anchored cluster first-pass~~ → mixed cluster 的 movable 貼 preplaced 牆，
-  vBd 359→307 vCl 260→208，**-6.4%**
+**✅ 已完成（M4–M6）**：
+- ~~MIB 統一~~ → vMb 145→0，-3.7%
+- ~~cluster layout key (frag/boundary 排 area 前)~~ → vBd 528→357，-9.4%
+- ~~wire weight ×2000~~ → hpwl 大降，-7.2%
+- ~~anchored cluster first-pass~~ → vBd 359→307 vCl 260→208，-6.4%
+- ~~7-profile portfolio + baseline-free proxy~~ → 1.7045→1.6060，-5.8%
 
-**剩餘 gap to ~1.62，按 ROI**：
-1. **constructive 變體 portfolio + proxy selector（最高 ROI）** — 組員從 1.76→1.62
-   就是靠這個。我們 0.16s/case，可平行跑很多 profile（不同 `ICCAD_WIRE_MULT` /
-   `ICCAD_ANCHOR_W` / aspect / frame-scale），用 contest-shape proxy 挑最佳。env
-   旋鈕已就緒。⚠️ proxy selector 是準度瓶頸（舊 SA portfolio 經驗：near-tie 易選錯，
-   見「失敗紀錄」），但 deterministic constructive 沒有 SA 的限時噪音 → 乾淨很多
-2. **vBd（sum 307，仍是最大違反塊）**：
-   - **少數 preplaced boundary block 無解**（位置固定、nudge 跳過、bbox 邊到不了它）
-     → frame 選擇時偏好「不超出 preplaced boundary block 外緣」的 outline
-   - 殘留 cluster boundary member（個別滑出會 fragment 換 vBd 淨零）
-3. **area_gap ~0.28**：補完整 6 種 cluster layout（缺 grid / top_aligned /
-   right_aligned）；frame scale 對小 n 加細
+**關鍵現況：proxy 已抓到天花板 99.9%（1.6060 vs oracle 1.6057）。** 純擴 profile /
+調 proxy 已無空間 → **要進步必須降低天花板本身**，按 ROI：
+1. **更分歧的 profile（降天花板，最高 ROI）**：7 profile 的 oracle=1.6057。加結構性
+   差異更大的 profile 會降天花板（aspect 是已知最強軸）。可加：frame aspect/scale 變體
+   （需把 `frame_candidates` 的 aspects/scales 開成 env 旋鈕）、cluster ordering 變體、
+   不同 boundary penalty 結構。**流程**：在 `portfolio_ceiling.py` 加 profile → 看
+   oracle 降多少 → 降得動才加進 wrapper `_PROFILES`（proxy 幾乎滿分，天花板降多少幾乎全拿）
+2. **強化單一 placer（同時降所有 profile + 天花板）**：
+   - **vBd**：少數 preplaced boundary block 位置固定無解 → frame 選擇偏好不超出其外緣
+   - **area_gap ~0.28**：補 grid/top_aligned/right_aligned cluster layout；小 n frame scale 加細
+3. ⚠️ runtime 0.43s/case（7 profile 平行 + shapely vrel）。加很多 profile 要注意核心數
 
 > ⚠️ **試過會退步**：max_trials 試「所有 frame」→ 2.42；BP_WEIGHT 拉高無效；
->    wire ×50000 反彈到 1.93（area 完全被忽略 bbox 爆）。
-> ✅ 工具：`analyze_constructive.py`（per-case vBd/vCl/vMb + 權重排序，與官方吻合，
->    ~30s）；`dbg_boundary.py <ids>`（分類 boundary 違反）；`dbg_constructive.py`。
->    constructive deterministic，A/B 乾淨。env 旋鈕：`ICCAD_BP_WEIGHT` /
->    `ICCAD_WIRE_MULT` / `ICCAD_ANCHOR_W`（subprocess 繼承，PowerShell 設 $env: 即可）。
->    組員參考碼在 `C:\Users\Nordra\Downloads\teammate_iccad_study\iccad2026contest\my_optimizer.py`。
+>    wire ×50000 反彈 1.93；proxy near-tie min-vrel tiebreak 反而更差（proxy 夠準）。
+> ⚠️ **proxy 必須用 shapely vrel**（wrapper `_proxy_metrics`），不能用 C++ METRICS
+>    的 vrel（union-find 1e-3 tol，與 shapely 差 34/100 案 → 退到 1.6388）。
+> ✅ 工具：`portfolio_ceiling.py`（oracle 天花板 + proxy 搜尋，~5min）；
+>    `analyze_constructive.py`（單 profile per-case breakdown，~30s）；
+>    `dbg_boundary.py <ids>`；`dbg_constructive.py`。env 旋鈕：`ICCAD_WIRE_MULT` /
+>    `ICCAD_ANCHOR_W` / `ICCAD_LR_ASPECT` / `ICCAD_TB_ASPECT` / `ICCAD_BP_WEIGHT`；
+>    `ICCAD_CONSTRUCTIVE_SINGLE=1` 退回單 base。analyze/dbg 直跑 exe（不經 wrapper）→
+>    量單一 profile。組員參考碼在 `C:\Users\Nordra\Downloads\teammate_iccad_study\`。
 
 ### （舊）給下一個 session 的優先建議
 

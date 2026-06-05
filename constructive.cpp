@@ -33,6 +33,8 @@ static int N;
 static double BP_W = 30000.0;   // boundary-miss penalty in greedy item scoring
 static double WIRE_MULT = 1.0;  // extra scale on the incremental-HPWL term (env)
 static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
+static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
+static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
 static vector<double> area_targets;
 static vector<Edge>   b2b_edges, p2b_edges;
 static vector<pair<double,double>> pins;
@@ -68,8 +70,8 @@ struct Item {
 static double soft_ratio(int code) {
     bool lr = (code & (B_LEFT | B_RIGHT)) != 0;
     bool tb = (code & (B_TOP | B_BOTTOM)) != 0;
-    if (lr && !tb) return 2.50;
-    if (tb && !lr) return 0.40;
+    if (lr && !tb) return LR_ASPECT;
+    if (tb && !lr) return TB_ASPECT;
     return 1.0;
 }
 static pair<double,double> default_soft_dim(double area, int code) {
@@ -735,6 +737,23 @@ static void solve() {
         fprintf(stderr,"[dbg] N=%d frames=%d ok=%d shelf=%d bv=%d gf=%d\n",
                 N,(int)frames.size(),trials,have_best?0:1,
                 count_boundary_violations(best),count_group_fragments(best));
+    // Baseline-free proxy metrics for the portfolio selector (read from stderr).
+    {
+        double xmin=1e18,ymin=1e18,xmax=-1e18,ymax=-1e18;
+        for (auto&q:best){xmin=min(xmin,q.x);ymin=min(ymin,q.y);xmax=max(xmax,q.x+q.w);ymax=max(ymax,q.y+q.h);}
+        double area=(xmax-xmin)*(ymax-ymin), hpwl=approx_hpwl(best);
+        int vbd=count_boundary_violations(best), vcl=count_group_fragments(best);
+        map<int,set<pair<long long,long long>>> shp; int nsoft=0;
+        map<int,int> clc;
+        for (int i=0;i<N;i++){
+            if (blocks[i].boundary) nsoft++;
+            if (blocks[i].mib>0) shp[blocks[i].mib].insert({llround(dims[i].first*1e4),llround(dims[i].second*1e4)});
+            if (blocks[i].cluster>0) clc[blocks[i].cluster]++;
+        }
+        int vmb=0; for (auto&kv:shp){ nsoft+=max(0,(int)kv.second.size()-1); vmb+=max(0,(int)kv.second.size()-1); }
+        for (auto&kv:clc) nsoft+=max(0,kv.second-1);
+        fprintf(stderr,"METRICS %.6f %.6f %d %d %d %d\n",area,hpwl,vbd,vcl,vmb,nsoft);
+    }
     printf("%d\n",N);
     for (int i=0;i<N;i++) printf("%.10f %.10f %.10f %.10f\n",best[i].x,best[i].y,best[i].w,best[i].h);
 }
@@ -756,6 +775,8 @@ int main() {
     if (const char* e=getenv("ICCAD_BP_WEIGHT")) { double v=atof(e); if (v>0) BP_W=v; }
     if (const char* e=getenv("ICCAD_WIRE_MULT")) { double v=atof(e); if (v>0) WIRE_MULT=v; }
     if (const char* e=getenv("ICCAD_ANCHOR_W"))  { double v=atof(e); if (v>=0) ANCHOR_W=v; }
+    if (const char* e=getenv("ICCAD_LR_ASPECT"))  { double v=atof(e); if (v>0) LR_ASPECT=v; }
+    if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
     solve();
     return 0;
 }
