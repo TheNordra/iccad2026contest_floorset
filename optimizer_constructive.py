@@ -47,8 +47,11 @@ except Exception:
 
 _BIN = Path(os.environ.get("ICCAD_CONSTRUCTIVE_BIN", str(_DIR / "constructive.exe")))
 
-# Profiles validated by portfolio_ceiling.py (oracle 1.6057, proxy RH=1.0 1.6060).
-# Aspect variants are the key diversity axis (low vBd on violation-heavy cases).
+# Profiles validated by portfolio_ceiling.py. Aspect is the key diversity axis
+# (high LR aspect -> low vBd on violation-heavy cases). Adding profiles is
+# downside-protected: the proxy picks per-case, so a never-best profile costs
+# only runtime. Oracle 1.5839 / proxy 1.5840 with this 11-profile set
+# (vs 7-profile 1.6057/1.6060). wire_xhi dropped (0.9% win, ~0 oracle gain).
 _PROFILES: List[Dict[str, str]] = [
     {},                                                                       # base
     {"ICCAD_WIRE_MULT": "2.0"},                                               # wire_hi
@@ -57,6 +60,10 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286"},                   # aspect_hi
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},                    # aspect_xhi
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
+    {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},                   # aspect_v7
+    {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},                   # aspect_v10
+    {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},  # asp7_wire
+    {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04"},   # asp5_anclo
 ]
 _RH = 1.0  # relative weight of the hpwl term in the proxy (swept optimum)
 
