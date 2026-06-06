@@ -5,6 +5,13 @@
 // M2 (this file): cluster blocks become compound "items" with an internal layout
 //     and are placed as a unit, so grouping violations collapse. The M1 diagnosis
 //     showed hpwl/area already match the teammate's v5; the whole gap was vrel.
+// M9: two-pass wire refinement (the dominant cost gap is HPWL). The greedy wire
+//     term only sees already-placed neighbors, so the first blocks are placed
+//     blind to HPWL. After a full pass we re-pack the same frame REFINE_ITERS
+//     times, each pass adding wire pull toward not-yet-placed neighbors at their
+//     previous-pass positions (force-directed coordinate descent), keeping the
+//     best by layout_score per frame. Single base 1.7045->1.658, portfolio
+//     1.5659->1.5375. Deterministic; ICCAD_NO_REFINE / ICCAD_REFINE_ITERS knobs.
 //
 // Input/Output format identical to optimizer_claude.cpp.
 // Build: g++ -O3 -std=c++17 -o constructive.exe constructive.cpp
@@ -46,6 +53,17 @@ static vector<Block>  blocks;
 static vector<pair<double,double>> dims;   // (w,h) per block
 static vector<XYWH> pos;                    // working positions
 static vector<char> placed;
+
+// Two-pass refinement: the greedy wire term only sees already-placed neighbors,
+// so the first-placed blocks are positioned nearly blind to HPWL (the dominant
+// cost gap). After a full pass we re-pack the same frame with the wire term also
+// pulling toward not-yet-placed neighbors at their previous-pass positions
+// (force-directed). prev_pos holds those guide positions; use_prev enables it.
+static vector<XYWH> prev_pos;
+static bool use_prev = false;
+static bool REFINE = true;   // ICCAD_NO_REFINE=1 disables refinement
+static int REFINE_ITERS = 12; // refinement passes per frame (ICCAD_REFINE_ITERS);
+                              // single-base plateaus ~1.655 over 12-24, 0.68s/case
 
 struct Anchor { double x, y, w; };
 static vector<Anchor> anchors;
@@ -443,8 +461,11 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                 int bp=boundary_penalty_est(b,x,y,bw,bh,fw,fh);
                 double area=bbox_area_with(x,y,bw,bh), wire=0.0;
                 if (bp==0){
-                    for (auto& nb:b2b_adj[b]) if (done[nb.first]){
-                        double ncx=out[nb.first].x+out[nb.first].w/2, ncy=out[nb.first].y+out[nb.first].h/2;
+                    for (auto& nb:b2b_adj[b]){
+                        double ncx,ncy;
+                        if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
+                        else if (use_prev){ ncx=prev_pos[nb.first].x+prev_pos[nb.first].w/2; ncy=prev_pos[nb.first].y+prev_pos[nb.first].h/2; }
+                        else continue;
                         wire+=nb.second*(fabs(cx-ncx)+fabs(cy-ncy));
                     }
                     for (auto& pn:p2b_adj[b])
@@ -487,8 +508,11 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                 for (size_t k=0;k<it.blocks.size();k++){
                     int b=it.blocks[k];
                     double mcx=x+it.offs[k].first+dims[b].first/2, mcy=y+it.offs[k].second+dims[b].second/2;
-                    for (auto& nb:b2b_adj[b]) if (done[nb.first]){
-                        double ncx=out[nb.first].x+out[nb.first].w/2, ncy=out[nb.first].y+out[nb.first].h/2;
+                    for (auto& nb:b2b_adj[b]){
+                        double ncx,ncy;
+                        if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
+                        else if (use_prev){ ncx=prev_pos[nb.first].x+prev_pos[nb.first].w/2; ncy=prev_pos[nb.first].y+prev_pos[nb.first].h/2; }
+                        else continue;
                         wire+=nb.second*(fabs(mcx-ncx)+fabs(mcy-ncy));
                     }
                     for (auto& pn:p2b_adj[b])
@@ -724,16 +748,36 @@ static void solve() {
     // A few tight frames win: trying all overshoots layout_score's 150000*bv weight
     // (picks low-violation but area-bloated outlines). 4/5 measured best (deterministic).
     int max_trials=(N>=60)?4:5;
+    auto run_frame=[&](double fw,double fh,bool prev,const vector<XYWH>& pv,vector<XYWH>& out)->bool{
+        use_prev=prev; if (prev) prev_pos=pv;
+        bool ok=pack_in_frame(fw,fh,items,out);
+        use_prev=false;
+        if (!ok) return false;
+        final_boundary_nudge(out);
+        final_group_boundary_nudge(out);
+        final_single_edge_escape(out);
+        return true;
+    };
     vector<XYWH> best; bool have_best=false; double best_score=1e300; int trials=0;
     for (auto& f:frames){
-        vector<XYWH> cand;
-        if (!pack_in_frame(f.first,f.second,items,cand)) continue;
+        vector<XYWH> c1, dummy;
+        if (!run_frame(f.first,f.second,false,dummy,c1)) continue;
         trials++;
-        final_boundary_nudge(cand);
-        final_group_boundary_nudge(cand);
-        final_single_edge_escape(cand);
-        double sc=layout_score(cand);
-        if (!have_best||sc<best_score){ best_score=sc; best=cand; have_best=true; }
+        double sc=layout_score(c1);
+        // refinement passes: re-pack with full-neighbor wire pulling toward the
+        // previous layout (coordinate descent). Keep the best by layout_score per
+        // frame (downside-protected); advance the guide each iteration to converge.
+        if (REFINE){
+            vector<XYWH> guide=c1;
+            for (int r=0;r<REFINE_ITERS;r++){
+                vector<XYWH> c2;
+                if (!run_frame(f.first,f.second,true,guide,c2)) break;
+                double sc2=layout_score(c2);
+                if (sc2<sc){ sc=sc2; c1=c2; }
+                guide.swap(c2);
+            }
+        }
+        if (!have_best||sc<best_score){ best_score=sc; best=c1; have_best=true; }
         if (trials>=max_trials) break;
     }
     if (!have_best) best=shelf_fallback(order);
@@ -782,6 +826,8 @@ int main() {
     if (const char* e=getenv("ICCAD_ANCHOR_W"))  { double v=atof(e); if (v>=0) ANCHOR_W=v; }
     if (const char* e=getenv("ICCAD_LR_ASPECT"))  { double v=atof(e); if (v>0) LR_ASPECT=v; }
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
+    if (getenv("ICCAD_NO_REFINE")) REFINE=false;
+    if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;

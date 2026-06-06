@@ -116,13 +116,35 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.5659** (Constructive portfolio M8, 2026-06-05)
+### 🏆 最佳已驗證版本：Total Score = **1.5362** (Constructive portfolio M9 + frame_fine, 2026-06-06)
 
 **反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62）。** `constructive.cpp` +
 `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
-C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~0.71s/case。
-確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 與離線預測
-完全吻合 1.5659 = 1.5659）。
+C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~1.46s/case（14
+profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.5362）。
+
+**M9（本 session，2026-06-06，強化單一 placer）= two-pass wire refinement。** 主因：
+最大 cost 缺口是 **HPWL gap（hgap ~0.4-0.6）**，而 greedy 的 wire 項只看「已放」鄰居 →
+最早放的 block 幾乎是盲放（anchor 只來自 preplaced）。對策：每個 frame 先正常 pack 一次，
+再用上一輪位置當「guide」重 pack `REFINE_ITERS=12` 次，每次 wire 項額外拉向「尚未放」鄰居
+的 guide 位置（force-directed coordinate descent），逐輪推進 guide 收斂，per-frame 取
+layout_score 最佳（下檔保護、確定性）。單 base 1.7045→1.658（-2.7%，vBd 307→287），
+portfolio **1.5659→1.5375（-1.8%）**；proxy selector 未退化（live 緊跟 ceiling）。
+env: `ICCAD_NO_REFINE=1` 關閉、`ICCAD_REFINE_ITERS=N`（單 base 12-24 已平緩 ~1.655）。
+本地 runtime 對分數中性（eval 強制 RuntimeFactor=1.0），故 2× runtime 安全。
+⚠️ 試過無效：`layout_score` 的 hpwl 權重（HW_MULT 3/8 完全不動選擇 → area 項主導）。
+
+**M9 後 area 分析（`dbg_area.py`，重要結論）**：refinement 攻完 HPWL 後，最大殘留是
+**area_gap ~0.266**。分解發現它**幾乎全是可移除 dead space**：原圖 density（bbox/ΣblockA）
+= **1.035**（緊），我們 = **1.311**（~27% void）。且 dOurs 大量卡在 **1.323 = 1.15²** →
+packer 一直退回 s=1.15 frame，因為 s=1.05 tight frame **pack 不下**（greedy 留 void）。
+- 試 finer frame scales（單 base agap 0.266→**0.196**）→ 但 vBd 287→**316**（tighter pack
+  把 boundary block 擠離邊）→ 單 base score 反退 1.6914。**area↔violation tradeoff**。
+- 故加成 **frame_fine** profile（scales 1.04-1.16 + 大 backstop，下檔保護）→ portfolio
+  1.5375→**1.5362（僅 -0.08%）**。**結論：frame 路線的 area 已枯竭** — tighter outline 必
+  加 violation，被 `layout_score` 的 150000·bv 擋掉。adaptive-shrink 會撞同一面牆，**未做**。
+- ⇒ 再壓 area 需**能保 boundary 接觸的 compaction**（pack 更密但不增 vBd），屬 placer 架構
+  改動（中期）。或攻 agap outlier（case 79 agap 0.706、99 0.392，退到大 frame 的個案）。
 
 **對標**：組員 v5 = 1.7429（好 10.2%）、組員 v6/v7 portfolio ~1.62（**反超 ~3.4%**）。
 
@@ -173,14 +195,16 @@ aspect_xhi(5.0) / asp_wire / aspect_v7(7.0) / aspect_v10(10.0) / asp7_wire / asp
 **演進（deterministic A/B）**：M1 singles 3.62 → M2 cluster 複合 2.3456 →
 M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 →
 +wire ×2000 1.8218 → M5: +anchored cluster 1.7045 → M6: +7-profile portfolio
-1.6060 → M7: +4 aspect profile (11-prof) 1.5842 → **M8: +frame_tall/tight (13-prof)
-1.5659**（本 session 共 **-30.5%**）。
+1.6060 → M7: +4 aspect profile (11-prof) 1.5842 → M8: +frame_tall/tight (13-prof)
+1.5659 → **M9: +two-pass wire refinement 1.5375**（本 session 起 **-30.5%**；M9 此
+session **-1.8%**）。
 
-**下一步（→ 壓低 oracle 天花板 1.5659）**：portfolio proxy 完美抓到天花板，再進步要
-**降低天花板本身**。profile 分歧軸已挖深（aspect + frame）→ 邊際遞減。下一步轉**強化
-單一 placer**（同時降所有 profile + 天花板）：vBd（少數 preplaced boundary block 位置
-固定無解 → frame 選擇偏好不超出其外緣）、area_gap ~0.28（補 cluster layout / 細化
-frame scale）。或試剩餘 profile 軸（cluster ordering）。詳見「給下一個 session」。
+**下一步（→ 繼續壓低天花板，當前 1.5375）**：M9 已攻下 HPWL gap（hgap）。剩餘最大
+**uniform** 缺口是 **area_gap ~0.28**（refinement 只動 HPWL，未動 area；agap 各 case
+幾乎不變）。area_gap 推測偏結構性（boundary block 散在周界撐開 bbox），試法：post-pack
+compaction（只滑 free 內部 block，guard boundary/cluster）、更細 frame scale、補 cluster
+layout（top/right_aligned、grid）。次大殘留：少數硬 case（89 hgap 0.751 + vBd 7、85
+vBd 10）多為 preplaced boundary 撐壞 outline → frame 偏好不超出 preplaced 外緣。
 
 **⚠️ 已驗證 BP_WEIGHT 不是 lever**：30000→1M 完全無變化 → boundary violation 不是
 「penalty 太低被 area 蓋過」，而是「無可行 bp=0 位置」或「frame 邊 ≠ bbox 邊」。
@@ -355,7 +379,9 @@ violations、或 tournament SA）。
 | 2026-06-05 constructive M5 (+anchored cluster first-pass) | 1.7045 ← -6.4%, 反超組員 v5 (1.7429) |
 | 2026-06-05 constructive M6 (+7-profile portfolio + baseline-free proxy) | 1.6060 ← -5.8%, 反超組員 v6/v7 (~1.62); oracle 天花板 1.6057 |
 | 2026-06-05 constructive M7 (+4 aspect profile → 11-prof) | 1.5842 ← -1.4%, oracle 天花板 1.5839 (proxy 抓滿) |
-| **2026-06-05 constructive M8 (+frame_tall/tight → 13-prof)** | **1.5659** ← **新最佳, -1.2%, frame outline 新分歧軸; oracle 1.5659** |
+| 2026-06-05 constructive M8 (+frame_tall/tight → 13-prof) | 1.5659 ← -1.2%, frame outline 新分歧軸; oracle 1.5659 |
+| 2026-06-06 constructive M9 (+two-pass wire refinement, iters=12) | 1.5375 ← -1.8%, 攻 HPWL gap; 單 base 1.7045→1.658; runtime 1.36s/case |
+| **2026-06-06 +frame_fine profile (14-prof, tighter outline 給 area-dominated case)** | **1.5362** ← **新最佳, -0.08% (marginal); area frame 路線枯竭, 見 area 分析** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -551,6 +577,8 @@ FloorSet/
 ├── analyze_constructive.py ← 🆕 per-case violation breakdown，重算 vBd/vCl/vMb + 權重排序
 │                              (與官方 eval 完全吻合，~30s，乾淨 A/B 工具)
 ├── dbg_boundary.py         ← 🆕 分類 boundary 違反 (single/cluster/preplaced + blocked/free)
+├── dbg_area.py             ← 🆕 area_gap 分解: density(bbox/ΣA) ours vs baseline + 每 dim 比
+│                              (查出 area 是 dead space 1.31 vs 1.035, 非 aspect mismatch)
 ├── proxy_analysis.py       ← OFFLINE 工具: build_opt_target_pos 等，被 dbg/analyze import
 │                              (proxy selector 路線已結案，但 helper 仍被分析腳本依賴)
 ├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised；僅舊 SA+GNN 路線用)
@@ -662,29 +690,34 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：強化單一 placer（2026-06-05，當前 **1.5659**，天花板 1.5659）
+### 🏆 最高優先：強化單一 placer（2026-06-06，當前 **1.5375**，天花板 ~1.5375）
 
-`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。本
-session 完成 M4–M8 共 -30.5%（見上方狀態段）。
+`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M8
+共 -30.5%；M9（本 session）two-pass wire refinement 再 **-1.8%**（見上方狀態段）。
 
-**✅ 已完成（M4–M8）**：
+**✅ 已完成（M4–M9 + frame_fine）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
 - ~~7→11→13 profile portfolio + baseline-free proxy~~ → 1.7045→1.6060→1.5842→1.5659
+- ~~M9 two-pass wire refinement（攻 HPWL gap）~~ → 單 base 1.658、portfolio 1.5375
+- ~~frame_fine profile（tighter outline）~~ → 1.5375→**1.5362**（marginal -0.08%）
 
-**關鍵現況：proxy 完美抓滿天花板（1.5659 = oracle）。profile 分歧軸（aspect + frame）
-已挖深，邊際遞減。** 進步重心轉向**強化單一 placer**（同時降所有 profile + 天花板），
-按 ROI：
-1. **vBd（最大殘留違反塊）**：
-   - **少數 preplaced boundary block 位置固定無解** = bbox 邊到不了它 → frame 選擇/
-     packing 偏好「不超出 preplaced boundary block 外緣」的 outline（用 `dbg_boundary.py`
-     確認佔比）
-   - 殘留 cluster boundary member（個別滑出會 fragment 換 vBd 淨零）
-2. **area_gap ~0.28**：補完整 cluster layout（grid / top_aligned / right_aligned，組員
-   `my_optimizer.py` 461-571）；frame scale 對小 n 加細
-3. **次要：剩餘 profile 軸**（邊際遞減但下檔保護）：cluster ordering 變體、
-   boundary penalty 結構變體。流程同前（`portfolio_ceiling.py` 量 oracle+win share）
-4. ⚠️ runtime 已 0.71s/case（13 profile 平行 + shapely vrel）。12 核接近滿載 →
-   再加 profile 邊際成本高；單 placer 改進無此問題（所有 profile 同步受惠）
+**關鍵現況：M9 攻完 HPWL gap，frame_fine 試完 area。剩 area_gap ~0.266 = 純 dead space
+（density 1.31 vs 原圖 1.035），但 frame 路線已枯竭（tighter outline 必加 vBd，見上方 area
+分析）。** 下一步續**強化單一 placer**，按 ROI（皆需 placer 架構改動，邊際漸難）：
+1. **boundary-接觸保持的 compaction（攻 area，新 #1，最難最值錢）**：pack 後把 block 往內
+   滑除 void、但保 boundary block 對邊接觸 + cluster 連通（這樣 density 降而 vBd 不增）。
+   這是唯一能破 1.31 density 牆又不被 150000·bv 擋的路。屬中期架構改動。
+2. **agap outlier 個案**（case 79 agap 0.706、99 0.392 等退到 s≥1.35 大 frame）：找為何
+   tighter frame pack 不下（多半某大 block/cluster 卡住）→ 針對性處理，比 uniform 壓更省。
+3. **vBd 硬 case**（89 hgap 0.751+vBd 7、85 vBd 10）：多為 **preplaced boundary block
+   撐壞 outline**（位置固定，bbox 邊到不了它）→ frame 選擇偏好「不超出 preplaced 外緣」。
+   refinement 幫助有限（結構約束 > wire 拉力）。用 `dbg_boundary.py` 確認佔比。
+4. **次要**：剩餘 profile 軸（cluster ordering 變體）；掃 `ICCAD_REFINE_ITERS`（12-24 平緩，
+   >12 邊際 <0.2%）。⚠️ 已驗證**不是 lever**：`layout_score` hpwl 權重（HW_MULT 3/8 不動
+   選擇）、frame scale 細化（frame_fine 僅 -0.08%）。
+5. ⚠️ runtime 1.46s/case（14 profile，M9 約 2× 因每 frame 多跑 12 refine pass）。**本地 eval
+   強制 RuntimeFactor=1.0 → runtime 對分數中性**；官方 leaderboard 算 cross-submission
+   median，1.46s 對 floorplanner 仍快。單 placer 改進所有 profile 同步受惠。
 
 > ⚠️ **試過會退步**：max_trials 試「所有 frame」→ 2.42；BP_WEIGHT 拉高無效；
 >    wire ×50000 反彈 1.93；proxy near-tie min-vrel tiebreak 反而更差（proxy 夠準）。

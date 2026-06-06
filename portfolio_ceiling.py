@@ -39,6 +39,7 @@ PROFILES = {
     "frame_wide":  {"ICCAD_FRAME_ASPECTS": "1.5,2.0,2.5,3.0"},
     "frame_tall":  {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"},
     "frame_tight": {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20"},
+    "frame_fine":  {"ICCAD_FRAME_SCALES": "1.04,1.07,1.10,1.13,1.16,1.35,1.65,2.10"},
     "frame_wwire": {"ICCAD_FRAME_ASPECTS": "1.5,2.0,2.5,3.0", "ICCAD_WIRE_MULT": "2.0"},
 }
 PNAMES = list(PROFILES)

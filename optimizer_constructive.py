@@ -16,8 +16,9 @@ oracle ceiling almost exactly (1.6060 vs 1.6057) because constructive is
 deterministic — no SA timing noise. Profiles vary boundary aspect (the highest-
 leverage diversity axis) plus wire/anchor weights via env knobs.
 
-Single best profile ~1.695; portfolio ~1.606. Set ICCAD_CONSTRUCTIVE_SINGLE=1 to
-run only the base profile. ICCAD_CONSTRUCTIVE_BIN overrides the binary path.
+Single base profile ~1.658; portfolio ~1.536 (C++ M9 two-pass wire refinement +
+14th frame_fine profile). Set ICCAD_CONSTRUCTIVE_SINGLE=1 to run only the base
+profile. ICCAD_CONSTRUCTIVE_BIN overrides the binary path.
 """
 import concurrent.futures
 import math
@@ -51,8 +52,10 @@ _BIN = Path(os.environ.get("ICCAD_CONSTRUCTIVE_BIN", str(_DIR / "constructive.ex
 # block boundary-aspect (high LR -> low vBd on violation-heavy cases) and frame
 # outline shape (frame_tall wins 13% of weight). Adding profiles is downside-
 # protected: the proxy picks per-case, so a never-best profile costs only runtime.
-# Oracle 1.5659 / proxy 1.5659 with this 13-profile set. Dropped as useless:
-# wire_xhi, frame_wide, frame_wwire (each <1% win share, ~0 oracle gain).
+# Portfolio ~1.5362 with this 14-profile set: C++ M9 wire refinement (1.5659->
+# 1.5375) + frame_fine (tighter outline scales for area-dominated cases, a further
+# marginal -0.08%; the frame-based area lever is near-exhausted -- see dbg_area.py
+# and CLAUDE.md). Dropped as useless: wire_xhi, frame_wide, frame_wwire.
 _PROFILES: List[Dict[str, str]] = [
     {},                                                                       # base
     {"ICCAD_WIRE_MULT": "2.0"},                                               # wire_hi
@@ -67,6 +70,7 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04"},   # asp5_anclo
     {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"},                             # frame_tall (13% win)
     {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20"},                            # frame_tight
+    {"ICCAD_FRAME_SCALES": "1.04,1.07,1.10,1.13,1.16,1.35,1.65,2.10"},        # frame_fine
 ]
 _RH = 1.0  # relative weight of the hpwl term in the proxy (swept optimum)
 
