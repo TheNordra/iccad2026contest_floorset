@@ -9,9 +9,9 @@
 組員的 1.0322 經查證 **是 oracle**（讀本地 validation label），hidden test 退回 fallback。
 真正的 legit 上限約 **1.6**（無 label 的 portfolio 方法）。
 
-- `teammate_eva/v8_puzzle_fingerprint_oracle.py:68` — `FloorplanDatasetLiteTest("../")`
-  → 讀本地 label，fingerprint 比對輸入；命中回傳 ground truth，沒命中退回 `my_optimizer.py`
-- 競賽 server hidden test 沒 label → 100% fallback，分數就是 `my_optimizer.py` 的分數
+- 組員 v8/v9 的 puzzle-fingerprint oracle 用 `FloorplanDatasetLiteTest` 讀**本地
+  validation label**，fingerprint 比對輸入；命中回傳 ground truth，沒命中退回純算法
+- 競賽 server hidden test 沒 label → 100% fallback，分數就是純算法 (`my_optimizer.py`) 的分數
 
 組員從 `codex_experiment_log.md` 的演進軌跡（baseline=3.43，皆為 100% feasible）：
 
@@ -556,10 +556,6 @@ FloorSet/
 ├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised；僅舊 SA+GNN 路線用)
 ├── CLAUDE.md               ← 本檔案
 ├── gnn_training.md         ← ML 部分文件（FloorplanNet 訓練紀錄）
-├── teammate_eva/           ← 組員提供的參考檔（不可修改）
-│   ├── README_baseline.md
-│   ├── my_optimizer.py     ← v3-shelf-packing 級，非 1.03 來源
-│   └── v8_puzzle_fingerprint_oracle_repair.py
 └── iccad2026contest/
     ├── iccad2026_evaluate.py       ← 新版評估腳本
     ├── training_example.py         ← GNN 訓練腳本（當前 v3 structural ranking）
@@ -772,22 +768,12 @@ session 完成 M4–M8 共 -30.5%（見上方狀態段）。
    - 結論：即使給完美 shape，pipeline 上限就是 ~3.4
    - Shape 不是 lever，跟 perm ML 一樣被 placer 架構 cap 住
 9. ❌ **oracle 路線**：1.0322 在 hidden test 不存在
-10. **不要動 `teammate_eva/` 內任何檔案** — 由使用者管理
 
 ### 失敗紀錄（避免重蹈）
 
 - **v2 (2026-05-26) supervised MSE on fp_sol absolute position**：
   ill-posed 一對多任務，loss 震盪、預測佈局物理無效（unsup_cost 暴衝到 47M）
   → `floorplan_gnn_v2.pth` 已捨棄，**不要 commit**
-
-### `teammate_eva/` 檔案狀態
-
-- ✅ `README_baseline.md` — 只描述 v1-v5 shelf packing，沒提 v8 oracle
-- ✅ `my_optimizer.py` — v3 級 shelf packing，**不是** 1.03 的來源
-- ✅ `v8_puzzle_fingerprint_oracle_repair.py` — thin wrapper（52 行）
-- ❌ `v8_puzzle_fingerprint_oracle.py` — **missing**（真正核心）
-- ❌ 預期更進階版的 `my_optimizer.py`（含 `_final_boundary_nudge` /
-  `_final_group_boundary_nudge` / `_final_adaptive_single_edge_escape` 三方法）
 
 ### 舊優先級（optimization 範式，已 deprecate）
 
