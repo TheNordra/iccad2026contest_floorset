@@ -678,6 +678,120 @@ static double layout_score(const vector<XYWH>& p){
     return area+hw*hpwl+150000.0*bv+6500.0*gf;
 }
 
+// ─── compaction (squeeze void out of a packed layout) ─────────────────────────
+// The greedy packer fills its outline frame but leaves ~27% internal void
+// (density 1.31 vs the baseline's 1.035); the frame-scale lever is exhausted, so
+// the only remaining area lever is post-pack compaction. These directional packs
+// slide every non-preplaced block toward one face as far as it can go without
+// overlap, preserving the left-right / down-up order of every space-conflicting
+// pair (so the result is provably overlap-free) and pinning preplaced blocks.
+// Packing toward a face also pulls scattered cluster members into abutment, so it
+// often REDUCES grouping fragments too. Boundary edge-contact is restored
+// afterwards by the existing final_*_nudge passes, and the whole thing is
+// downside-protected: compact_layout returns the best candidate by layout_score
+// (which includes the original), so a pack that worsens area/hpwl/violations is
+// simply not selected. ICCAD_NO_COMPACT=1 disables it.
+static bool COMPACT = true;
+static vector<XYWH> pack_x(const vector<XYWH>& in, int dir, double anchor){
+    int n=in.size(); vector<XYWH> out=in; vector<char> placed(n,0);
+    vector<int> ord(n); for(int i=0;i<n;i++) ord[i]=i;
+    if (dir<0) sort(ord.begin(),ord.end(),[&](int a,int b){return in[a].x<in[b].x;});
+    else       sort(ord.begin(),ord.end(),[&](int a,int b){return in[a].x+in[a].w>in[b].x+in[b].w;});
+    for (int idx=0;idx<n;idx++){ int i=ord[idx];
+        if (blocks[i].is_preplaced){ placed[i]=1; continue; }   // out[i]=in[i]
+        if (dir<0){
+            double lb=anchor;
+            for (int j=0;j<n;j++) if (placed[j] &&
+                out[j].y<in[i].y+in[i].h-TOL && in[i].y<out[j].y+out[j].h-TOL)
+                lb=max(lb,out[j].x+out[j].w);
+            out[i].x=min(in[i].x,lb);
+        } else {
+            double ub=anchor;
+            for (int j=0;j<n;j++) if (placed[j] &&
+                out[j].y<in[i].y+in[i].h-TOL && in[i].y<out[j].y+out[j].h-TOL)
+                ub=min(ub,out[j].x);
+            out[i].x=max(in[i].x,ub-in[i].w);
+        }
+        placed[i]=1;
+    }
+    return out;
+}
+static vector<XYWH> pack_y(const vector<XYWH>& in, int dir, double anchor){
+    int n=in.size(); vector<XYWH> out=in; vector<char> placed(n,0);
+    vector<int> ord(n); for(int i=0;i<n;i++) ord[i]=i;
+    if (dir<0) sort(ord.begin(),ord.end(),[&](int a,int b){return in[a].y<in[b].y;});
+    else       sort(ord.begin(),ord.end(),[&](int a,int b){return in[a].y+in[a].h>in[b].y+in[b].h;});
+    for (int idx=0;idx<n;idx++){ int i=ord[idx];
+        if (blocks[i].is_preplaced){ placed[i]=1; continue; }
+        if (dir<0){
+            double lb=anchor;
+            for (int j=0;j<n;j++) if (placed[j] &&
+                out[j].x<in[i].x+in[i].w-TOL && in[i].x<out[j].x+out[j].w-TOL)
+                lb=max(lb,out[j].y+out[j].h);
+            out[i].y=min(in[i].y,lb);
+        } else {
+            double ub=anchor;
+            for (int j=0;j<n;j++) if (placed[j] &&
+                out[j].x<in[i].x+in[i].w-TOL && in[i].x<out[j].x+out[j].w-TOL)
+                ub=min(ub,out[j].y);
+            out[i].y=max(in[i].y,ub-in[i].h);
+        }
+        placed[i]=1;
+    }
+    return out;
+}
+// N_soft (max possible soft violations) = #boundary blocks + Σ(cluster-1) +
+// Σ(mib distinct shapes-1). Constant during compaction (positions don't change
+// shapes), so computed once for the candidate-selection proxy.
+static double compute_nsoft(){
+    int nsoft=0; map<int,int> clsz; map<int,set<pair<long long,long long>>> mibsh;
+    for (int i=0;i<N;i++){
+        if (blocks[i].boundary) nsoft++;
+        if (blocks[i].cluster>0) clsz[blocks[i].cluster]++;
+        if (blocks[i].mib>0) mibsh[blocks[i].mib].insert({llround(dims[i].first*1e4),llround(dims[i].second*1e4)});
+    }
+    for (auto&kv:clsz)  nsoft+=max(0,kv.second-1);
+    for (auto&kv:mibsh) nsoft+=max(0,(int)kv.second.size()-1);
+    return max(nsoft,1);
+}
+static vector<XYWH> compact_layout(const vector<XYWH>& base){
+    if (!COMPACT) return base;
+    double xmin=1e18,ymin=1e18,xmax=-1e18,ymax=-1e18;
+    for (auto&q:base){xmin=min(xmin,q.x);ymin=min(ymin,q.y);xmax=max(xmax,q.x+q.w);ymax=max(ymax,q.y+q.h);}
+    // Select with a proxy of the TRUE cost, not layout_score: layout_score weights
+    // boundary 150000 but grouping only 6500, so it loves a pack that trades a
+    // boundary miss for a cluster fragment — yet the real cost normalises
+    // (bv+gf+vmb)/nsoft inside exp(), so that trade is neutral (or a loss once it
+    // also lifts hpwl). csc = (area + hw*hpwl)*exp(2*(bv+gf)/nsoft) weights bv and
+    // gf equally and keeps the original whenever no pack truly wins.
+    double nsoft=compute_nsoft(), hw=(N>=116)?0.12:0.06;
+    auto csc=[&](const vector<XYWH>& p)->double{
+        double x0=1e18,y0=1e18,x1=-1e18,y1=-1e18;
+        for (auto&q:p){x0=min(x0,q.x);y0=min(y0,q.y);x1=max(x1,q.x+q.w);y1=max(y1,q.y+q.h);}
+        double area=(x1-x0)*(y1-y0), hpwl=approx_hpwl(p);
+        int bv=count_boundary_violations(p), gf=count_group_fragments(p);
+        return (area+hw*hpwl)*exp(2.0*(bv+gf)/nsoft);
+    };
+    // Only the single-block boundary nudge here (final_group_boundary_nudge would
+    // re-introduce the bv-for-area trade the proxy is trying to avoid).
+    auto finish=[&](vector<XYWH> L)->vector<XYWH>{ final_boundary_nudge(L); return L; };
+    auto xL=pack_x(base,-1,xmin), xR=pack_x(base,1,xmax);
+    auto yD=pack_y(base,-1,ymin), yU=pack_y(base,1,ymax);
+    vector<XYWH> best=base; double bsc=csc(base);
+    auto consider=[&](vector<XYWH> c){ double sc=csc(c); if (sc<bsc){bsc=sc;best=c;} };
+    consider(finish(xL)); consider(finish(xR));
+    consider(finish(yD)); consider(finish(yU));
+    for (const vector<XYWH>* xx:{&xL,&xR}){          // X then Y
+        consider(finish(pack_y(*xx,-1,ymin)));
+        consider(finish(pack_y(*xx,1,ymax)));
+    }
+    for (const vector<XYWH>* yy:{&yD,&yU}){          // Y then X
+        consider(finish(pack_x(*yy,-1,xmin)));
+        consider(finish(pack_x(*yy,1,xmax)));
+    }
+    return best;
+}
+
 // ─── fallback ─────────────────────────────────────────────────────────────────
 static vector<XYWH> shelf_fallback(const vector<int>& order){
     vector<XYWH> p=pos; double x0=0;
@@ -781,6 +895,13 @@ static void solve() {
         if (trials>=max_trials) break;
     }
     if (!have_best) best=shelf_fallback(order);
+    // Compaction squeezes void out of the SELECTED layout (downside-protected:
+    // returns the original if no directional pack beats it by layout_score).
+    // Applied to the single chosen frame, not per-frame: feeding the imperfect
+    // layout_score proxy every frame's compacted variant lets it overfit and pick
+    // a low-proxy / high-true-cost outline (same failure mode as trying too many
+    // frames). Compacting only the winner matched the validated prototype.
+    if (COMPACT) best=compact_layout(best);
 
     if (getenv("CONSTRUCTIVE_DEBUG"))
         fprintf(stderr,"[dbg] N=%d frames=%d ok=%d shelf=%d bv=%d gf=%d\n",
@@ -804,7 +925,12 @@ static void solve() {
         fprintf(stderr,"METRICS %.6f %.6f %d %d %d %d\n",area,hpwl,vbd,vcl,vmb,nsoft);
     }
     printf("%d\n",N);
-    for (int i=0;i<N;i++) printf("%.10f %.10f %.10f %.10f\n",best[i].x,best[i].y,best[i].w,best[i].h);
+    // %.17g (not %.10f): compaction creates EXACT abutments (block A right edge ==
+    // block B left edge). %.10f rounding can shift a coordinate ~1e-10, opening a
+    // sub-nm gap that shapely (exact) treats as a cluster fragment — a spurious
+    // grouping violation worth ~9% cost on dense cases. %.17g round-trips doubles
+    // bit-exactly, so abutments survive C++ -> Python -> harness scoring.
+    for (int i=0;i<N;i++) printf("%.17g %.17g %.17g %.17g\n",best[i].x,best[i].y,best[i].w,best[i].h);
 }
 
 // ─── I/O ──────────────────────────────────────────────────────────────────────
@@ -827,6 +953,7 @@ int main() {
     if (const char* e=getenv("ICCAD_LR_ASPECT"))  { double v=atof(e); if (v>0) LR_ASPECT=v; }
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
+    if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;

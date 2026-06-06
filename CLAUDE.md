@@ -116,12 +116,38 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.5362** (Constructive portfolio M9 + frame_fine, 2026-06-06)
+### 🏆 最佳已驗證版本：Total Score = **1.4528** (Constructive portfolio M10: 精度修正 + compaction, 2026-06-06)
 
-**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62）。** `constructive.cpp` +
+**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -10%）。** `constructive.cpp` +
 `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
-C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~1.46s/case（14
-profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.5362）。
+C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~1.63s/case（14
+profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.4528）。
+
+**M10（本 session，2026-06-06，攻 area_gap dead space）= 兩件事，皆驗證有效：**
+
+1. **🔑 輸出精度修正 `%.10f`→`%.17g`（最大單一 lever，-6.3% 單 base）。** placer 的
+   cluster compound-item（及 compaction packs）造**精確 abutment**（A 右緣 == B 左緣，
+   gap=0）。`%.10f` 捨入可移座標 ~1e-10，開出 sub-nm 縫；C++ union-find（1e-3 tol）看不到，
+   但 **shapely（精確）當成 cluster fragment** → 虛假 grouping violation → cost 灌水。改
+   `%.17g`（IEEE double 完美 round-trip）→ 縫消失。**這是既有 pipeline 一直在漏的分**
+   （~144 個虛假 fragment / 100 案）。單 base **1.658→1.5532**。⚠️ 任何 C++ 吐給 shapely
+   評分的幾何都要 %.17g；查不明 grouping violation 先疑精度再疑 packing。
+2. **boundary 接觸保持的 compaction（再 -1.3% 單 base → 1.5335）。** `compact_layout()`：
+   四個 order-preserving 方向 pack（左/右/下/上，**可證無重疊**、preplaced 釘死、保序），
+   re-snap 單 boundary block，取最佳候選。pack 向某面也把散開的 cluster 成員拉成 abutment
+   → **連帶降 grouping fragment**（vBd 287→272、vCl 74→61）。對選最佳的單一 frame 套用一次
+   （非 per-frame：餵 layout_score 每個 frame 的 compacted 變體會 overfit proxy）。
+   ⚠️ **選候選用 true-cost proxy `csc=(area+hw·hpwl)·exp(2·(bv+gf)/nsoft)`，不可用
+   layout_score**：後者 boundary 權 150000、grouping 僅 6500（23×），會愛上「拿 boundary
+   miss 換 cluster fragment」的 pack，但真 cost 把 (bv+gf+vmb)/nsoft 丟進 exp() → 該交易中
+   性（且常抬 hpwl 反虧）。csc 等權 bv/gf 並除以 nsoft，case 99 因此正確保留原圖。
+   env: `ICCAD_NO_COMPACT=1` 關閉。工具：`dbg_compact.py`（Python 原型，對 evaluate_solution
+   真值；**選擇 proxy 與輸出精度必須對齊 C++**否則高估）、`dbg_compact_cmp.py`（單案 Py vs
+   C++ 對照，當初靠它抓出精度 bug）。
+
+**綜合**：單 base 1.658→**1.5335（-7.5%）**；portfolio **1.5362→1.4528（-5.4%）**。
+
+**M9（前一 session）= two-pass wire refinement。** 主因：
 
 **M9（本 session，2026-06-06，強化單一 placer）= two-pass wire refinement。** 主因：
 最大 cost 缺口是 **HPWL gap（hgap ~0.4-0.6）**，而 greedy 的 wire 項只看「已放」鄰居 →
@@ -143,10 +169,11 @@ packer 一直退回 s=1.15 frame，因為 s=1.05 tight frame **pack 不下**（g
 - 故加成 **frame_fine** profile（scales 1.04-1.16 + 大 backstop，下檔保護）→ portfolio
   1.5375→**1.5362（僅 -0.08%）**。**結論：frame 路線的 area 已枯竭** — tighter outline 必
   加 violation，被 `layout_score` 的 150000·bv 擋掉。adaptive-shrink 會撞同一面牆，**未做**。
-- ⇒ 再壓 area 需**能保 boundary 接觸的 compaction**（pack 更密但不增 vBd），屬 placer 架構
-  改動（中期）。或攻 agap outlier（case 79 agap 0.706、99 0.392，退到大 frame 的個案）。
+- ⇒ ✅ **M10 已做：boundary 接觸保持的 compaction**（pack 更密但不增 vBd，見上方 M10）。
+  外加意外發現的**精度 bug**（虛假 fragment）才是最大 lever。**area_gap 仍是下個目標的主軸**
+  （compaction 後 vCl 已大降，但 area dead space 只部分回收 — 見「下一步」）。
 
-**對標**：組員 v5 = 1.7429（好 10.2%）、組員 v6/v7 portfolio ~1.62（**反超 ~3.4%**）。
+**對標**：組員 v5 = 1.7429（好 16.6%）、組員 v6/v7 portfolio ~1.62（**反超 ~10%**）。
 
 **M6–M8 portfolio 層**（`optimizer_constructive.py`）：平行跑 **13 個 deterministic
 profile**，用 **baseline-free proxy** 選最佳。profile 是 env 旋鈕變體，**兩大分歧軸**：
@@ -196,15 +223,21 @@ aspect_xhi(5.0) / asp_wire / aspect_v7(7.0) / aspect_v10(10.0) / asp7_wire / asp
 M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 →
 +wire ×2000 1.8218 → M5: +anchored cluster 1.7045 → M6: +7-profile portfolio
 1.6060 → M7: +4 aspect profile (11-prof) 1.5842 → M8: +frame_tall/tight (13-prof)
-1.5659 → **M9: +two-pass wire refinement 1.5375**（本 session 起 **-30.5%**；M9 此
-session **-1.8%**）。
+1.5659 → M9: +two-pass wire refinement 1.5375 → **M10: 精度修正 + compaction 1.4528**
+（M10 portfolio **-5.4%**；M4 起累計 **-34%**）。
 
-**下一步（→ 繼續壓低天花板，當前 1.5375）**：M9 已攻下 HPWL gap（hgap）。剩餘最大
-**uniform** 缺口是 **area_gap ~0.28**（refinement 只動 HPWL，未動 area；agap 各 case
-幾乎不變）。area_gap 推測偏結構性（boundary block 散在周界撐開 bbox），試法：post-pack
-compaction（只滑 free 內部 block，guard boundary/cluster）、更細 frame scale、補 cluster
-layout（top/right_aligned、grid）。次大殘留：少數硬 case（89 hgap 0.751 + vBd 7、85
-vBd 10）多為 preplaced boundary 撐壞 outline → frame 偏好不超出 preplaced 外緣。
+**下一步（→ 繼續壓低天花板，當前 1.4528）**：M10 修掉精度漏分 + 初步 compaction。
+compaction 只跑 4 個 axis-aligned 方向 pack（單次），**area dead space 只部分回收**
+（density 仍 >1.1）。續壓 area 的試法（按 ROI）：
+1. **迭代 compaction**：pack_x→pack_y→pack_x… 多輪（Y-pack 後 X 可能再開 slack）。csc
+   下檔保護，安全。可能再擠 1-2%。**最低風險、先試這個。**
+2. **cluster-rigid pack**：把整個 cluster 當剛體一起滑（而非逐 block），可更激進 pack 而
+   不 fragment（現在逐 block pack 靠 csc 拒絕 fragment 的候選，較保守）。
+3. **更多 pack 起點/順序**：先 pack over-spread 軸（dbg_area 顯示多數 case 寬度過寬
+   w/wb 1.3-1.7、高度準），或 pack 向 connectivity 重心。
+4. **agap outlier 個案**（79 agap 0.706、99 退大 frame）：tighter frame pack 不下，
+   compaction 後可重估這些 case 是否該選更小 frame。
+次大殘留：硬 case（89 hgap 0.751 + vBd 7、85 vBd 10）多為 preplaced boundary 撐壞 outline。
 
 **⚠️ 已驗證 BP_WEIGHT 不是 lever**：30000→1M 完全無變化 → boundary violation 不是
 「penalty 太低被 area 蓋過」，而是「無可行 bp=0 位置」或「frame 邊 ≠ bbox 邊」。
@@ -381,7 +414,9 @@ violations、或 tournament SA）。
 | 2026-06-05 constructive M7 (+4 aspect profile → 11-prof) | 1.5842 ← -1.4%, oracle 天花板 1.5839 (proxy 抓滿) |
 | 2026-06-05 constructive M8 (+frame_tall/tight → 13-prof) | 1.5659 ← -1.2%, frame outline 新分歧軸; oracle 1.5659 |
 | 2026-06-06 constructive M9 (+two-pass wire refinement, iters=12) | 1.5375 ← -1.8%, 攻 HPWL gap; 單 base 1.7045→1.658; runtime 1.36s/case |
-| **2026-06-06 +frame_fine profile (14-prof, tighter outline 給 area-dominated case)** | **1.5362** ← **新最佳, -0.08% (marginal); area frame 路線枯竭, 見 area 分析** |
+| 2026-06-06 +frame_fine profile (14-prof, tighter outline 給 area-dominated case) | 1.5362 ← -0.08% (marginal); area frame 路線枯竭, 見 area 分析 |
+| 2026-06-06 constructive M10a (輸出精度 %.10f→%.17g, 消虛假 cluster fragment) | 單 base 1.658→1.5532 (-6.3%) ← **最大單一 lever, 既有 pipeline 一直在漏** |
+| **2026-06-06 constructive M10b (+boundary 保持 compaction, csc 選擇)** | **1.4528** ← **新最佳, portfolio -5.4%; 單 base 1.5532→1.5335; 100/100 feasible** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -579,6 +614,9 @@ FloorSet/
 ├── dbg_boundary.py         ← 🆕 分類 boundary 違反 (single/cluster/preplaced + blocked/free)
 ├── dbg_area.py             ← 🆕 area_gap 分解: density(bbox/ΣA) ours vs baseline + 每 dim 比
 │                              (查出 area 是 dead space 1.31 vs 1.035, 非 aspect mismatch)
+├── dbg_compact.py          ← 🆕 M10 compaction Python 原型: 方向 pack + csc 選擇, 對
+│                              evaluate_solution 真值算 Total Score (orig vs compacted)
+├── dbg_compact_cmp.py      ← 🆕 單案 Py-原型 vs C++-binary compaction 對照 (抓出 %.10f 精度 bug)
 ├── proxy_analysis.py       ← OFFLINE 工具: build_opt_target_pos 等，被 dbg/analyze import
 │                              (proxy selector 路線已結案，但 helper 仍被分析腳本依賴)
 ├── floorplan_gnn.pth       ← v1 權重 (FloorplanNet, 128 hidden, unsupervised；僅舊 SA+GNN 路線用)
@@ -695,18 +733,19 @@ full training：
 `optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M8
 共 -30.5%；M9（本 session）two-pass wire refinement 再 **-1.8%**（見上方狀態段）。
 
-**✅ 已完成（M4–M9 + frame_fine）**：
+**✅ 已完成（M4–M10）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
 - ~~7→11→13 profile portfolio + baseline-free proxy~~ → 1.7045→1.6060→1.5842→1.5659
 - ~~M9 two-pass wire refinement（攻 HPWL gap）~~ → 單 base 1.658、portfolio 1.5375
-- ~~frame_fine profile（tighter outline）~~ → 1.5375→**1.5362**（marginal -0.08%）
+- ~~frame_fine profile（tighter outline）~~ → 1.5375→1.5362（marginal -0.08%）
+- ~~M10a 輸出精度 %.10f→%.17g（消虛假 fragment）~~ → 單 base 1.658→**1.5532（-6.3%）**
+- ~~M10b boundary 保持 compaction + csc 選擇~~ → 單 base→1.5335；**portfolio 1.5362→1.4528（-5.4%）**
 
-**關鍵現況：M9 攻完 HPWL gap，frame_fine 試完 area。剩 area_gap ~0.266 = 純 dead space
-（density 1.31 vs 原圖 1.035），但 frame 路線已枯竭（tighter outline 必加 vBd，見上方 area
-分析）。** 下一步續**強化單一 placer**，按 ROI（皆需 placer 架構改動，邊際漸難）：
-1. **boundary-接觸保持的 compaction（攻 area，新 #1，最難最值錢）**：pack 後把 block 往內
-   滑除 void、但保 boundary block 對邊接觸 + cluster 連通（這樣 density 降而 vBd 不增）。
-   這是唯一能破 1.31 density 牆又不被 150000·bv 擋的路。屬中期架構改動。
+**關鍵現況：M10 修掉精度漏分 + 初步 compaction（單次 4 方向 pack）。area dead space
+只部分回收（density 仍 >1.1），仍是最大 uniform 缺口。** 下一步續**強化單一 placer**，按 ROI：
+0. **迭代 compaction（新 #1，最低風險）**：pack_x→pack_y→pack_x… 多輪，csc 下檔保護。先試。
+1. ~~boundary-接觸保持的 compaction~~ ✅ M10b 已做（單次方向 pack）。可升級為 cluster-rigid
+   pack（整 cluster 當剛體滑，比逐 block 更激進不 fragment）或迭代（見 0）。
 2. **agap outlier 個案**（case 79 agap 0.706、99 0.392 等退到 s≥1.35 大 frame）：找為何
    tighter frame pack 不下（多半某大 block/cluster 卡住）→ 針對性處理，比 uniform 壓更省。
 3. **vBd 硬 case**（89 hgap 0.751+vBd 7、85 vBd 10）：多為 **preplaced boundary block
@@ -726,7 +765,8 @@ full training：
 > ✅ 工具：`portfolio_ceiling.py`（oracle 天花板 + proxy 搜尋，~5min）；
 >    `analyze_constructive.py`（單 profile per-case breakdown，~30s）；
 >    `dbg_boundary.py <ids>`；`dbg_constructive.py`。env 旋鈕：`ICCAD_WIRE_MULT` /
->    `ICCAD_ANCHOR_W` / `ICCAD_LR_ASPECT` / `ICCAD_TB_ASPECT` / `ICCAD_BP_WEIGHT`；
+>    `ICCAD_ANCHOR_W` / `ICCAD_LR_ASPECT` / `ICCAD_TB_ASPECT` / `ICCAD_BP_WEIGHT` /
+>    `ICCAD_NO_COMPACT=1`（關 M10 compaction）/ `ICCAD_NO_REFINE=1`；
 >    `ICCAD_CONSTRUCTIVE_SINGLE=1` 退回單 base。analyze/dbg 直跑 exe（不經 wrapper）→
 >    量單一 profile。組員參考碼在 `C:\Users\Nordra\Downloads\teammate_iccad_study\`。
 
