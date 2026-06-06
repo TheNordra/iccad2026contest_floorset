@@ -9,13 +9,26 @@
 > 不知道這個競賽是 reconstruction 而非 optimization，看 ML 紀錄會看不懂為什麼
 > 一直在換 loss。
 
+> ## ⏰ 現況更新（2026-06-06）：本檔案是**歷史紀錄**，ML 非當前主力
+>
+> 本檔案凍結在 **2026-05-31 的 SA+GNN 狀態（Total Score 3.3258）**。之後主力換成
+> **constructive placer**（`constructive.cpp`，非 SA、非 ML），經 M1–M10 已到
+> **1.4528**（見 CLAUDE.md），**反超組員 legit ~1.62**。因此：
+> - 下方「BL packer 是天花板 3.27」「ML 路線都被 cap 在 3.2-3.4」的結論**是對舊
+>   SA+skyline placer 說的**，不適用 constructive placer。
+> - constructive placer 的 **oracle-perm 上限從未重測** → ML ranking 是否值得，
+>   需先對 constructive 重跑 oracle 實驗（見 CLAUDE.md 目標 8）才知道。
+> - 本環境**禁止跑訓練**；ML 若要復活，先做 oracle 上限實驗再決定。
+
 ---
 
 ## 🚨 範式轉移摘要 (2026-05-26, 含 2026-05-27 修正)
 
 組員的 **Total Score = 1.0322** 經查證是 **oracle**（讀本地 validation label），
 hidden test 不適用。組員真正 legit 的最佳是 ~1.6（v6/v7 portfolio）或
-~1.76（v5 單一純算法）。我們 SA + GNN 在 3.3258，與 legit 差 2×。
+~1.76（v5 單一純算法）。
+> 📅 當時（此段寫於範式轉移）我們 SA + GNN 在 3.3258，與 legit 差 2×。**現已不同**：
+> constructive placer 到 1.4528，**反超 legit ~1.62**。下文 ML 紀錄維持當時語境。
 
 關鍵發現（修正後仍成立）：
 - Cost 公式 `Cost = (1+α·gap)·exp(β·V_soft)`，理論最低 = 1.0
@@ -326,6 +339,12 @@ python iccad2026contest/training_example.py --num-samples 2000 --fresh --aspect-
 ---
 
 ## 🚀 未來方向
+
+> ⏰ **2026-06-06 更新**：路線 D（純算法）**已實現並成為主力** —
+> `constructive.cpp` 是組員建構式架構的 C++ 重寫 + 我們的 portfolio/compaction，
+> 已到 1.4528。以下 ML 路線現在都是「**錦上添花 / 待 constructive 卡住才考慮**」，
+> 且任何 ML 復活前必須先對 **constructive placer** 重測 oracle-perm 上限
+> （舊 3.27 上限是 SA placer 的，不適用）。
 
 ### 路線 C-1: 加深架構（低風險）
 - `n_gcn_layers` 4 → 6 或 8

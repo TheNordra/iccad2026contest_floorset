@@ -428,153 +428,139 @@ violations、或 tournament SA）。
 
 ---
 
-## 這個階段想解決的問題
+## 這個階段想解決的問題（constructive M10 後，當前 1.4528）
 
-### A. Boundary violations 仍是主要瓶頸（最高 leverage）
-- Top case 仍有 11-22 個 boundary violations
-- 這些 block 無法被 `boundary_snap` 移動，原因是 **slack = 0**（周圍 block 阻擋）
-- `cluster_boundary_snap` 只能處理 cluster 內的 boundary blocks
-- 推測剩餘違反主要是 **非 cluster 的 boundary block 被非 boundary block 卡住**
+> 舊 SA 範式的瓶頸（slack=0 boundary、SA 收斂、bbox shrinking）已隨架構換成
+> constructive placer 而作廢。以下是**當前** placer 的瓶頸，依 leverage 排序。
 
-### B. HPWL gap 在 top cases 仍偏高
-- 即使 SA 8s 還是無法收斂到接近 best HPWL
-- post-processing 受 slack 限制，無法做大幅修正
+### A. area_gap dead space 仍是最大 uniform 缺口（最高 leverage）
+- M10 compaction（單次 4 方向 pack）後 density 仍 >1.1（原圖 1.035）→ 還有 void 可擠
+- compaction 逐 block pack，靠 csc 拒絕 fragment 的候選 → 較保守，未榨乾
+- 試法：迭代 compaction（pack_x→pack_y→pack_x…）、cluster-rigid pack、更聰明的
+  pack 起點（先壓 over-spread 軸；多數 case w/wb 1.3-1.7 但 h/hb≈1，見 `dbg_area.py`）
 
-### C. Area gap 也偏高（0.5-0.8）
-- bbox 中沒有任何機制把內部 block 拉向中心（壓縮 bbox）
+### B. agap outlier 個案
+- case 79 (agap 0.706)、99 等：tighter frame pack 不下 → 退到大/寬 frame
+- compaction 後可**重估** frame 選擇（大 frame 易 pack + compaction 擠掉 void
+  → 可能勝過原本選的 tight frame）
 
-### D. 未測試的實驗（待跑）
-- ~~`W_BOUNDARY = 100`~~ ✅ 已完成，已成為 `high_boundary` profile
-- 還有 4 cores 空，可加更多 portfolio profile
+### C. 硬 case：preplaced boundary block 撐壞 outline
+- case 89 (hgap 0.751 + vBd 7)、85 (vBd 10)：preplaced 位置固定，bbox 邊到不了它
+- 結構約束 > wire/compaction 拉力 → frame 選擇宜偏好「不超出 preplaced 外緣」
+
+### D. proxy selector / profile 多樣性
+- 14-profile baseline-free proxy 已近 oracle 天花板（M8 時 proxy=oracle=1.5659）
+- M10 後 proxy 需用 **shapely vrel**（wrapper `_proxy_metrics`），%.17g 後 shapely 與
+  C++ 內部更一致 → 選擇更準。加 profile 仍下檔保護（無用只花 runtime）
 
 ---
 
 ## 預期目標
 
-> ⚠️ 範式轉移後，optimization 思維的舊目標（boundary count、slack 處理）
-> 重要性降低。當前路線是 portfolio scaling + placer 架構演進。
+> 基準線：constructive portfolio **1.4528**（M10）。對標：組員 legit portfolio
+> ~1.62（**已反超 ~10%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
+> fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
 
 ### 已達成
-- ~~目標 1: boundary violations 中位數 ≤ 10~~（仍未達，但靠 high_boundary 局部改善）
-- ✅ 目標 2: Total Score < 3.20（**3.0625 達成**）
-- ✅ 目標 3: W_BOUNDARY = 100 實驗（**成功，已整合**）
-- ✅ 目標 6: Total Score < 3.10（**3.0625 達成**）
+- ✅ Total Score < 3.00 / < 2.00 / < 1.60（constructive 路線一路下殺，當前 1.4528）
+- ✅ **反超組員所有 legit 版本**（v5 1.7429、v6/v7 portfolio ~1.62）
+- ✅ baseline-free proxy ≈ oracle 天花板（無 label leak，hidden test 可用）
+- ✅ M10 精度修正（消虛假 fragment）+ boundary 保持 compaction（攻 area_gap）
 
-### 短期（1–3 個迭代）
-- **目標 1**：Total Score < 3.00（從 3.0625 再降 2%）
-  - ❌ ~~portfolio 擴充 v3（W_VIOL 變體）~~ **已試 2026-06-02, 失敗**：
-    加 low_viol(×0.5)/high_viol(×2.0) → 10 profile，同機 clean A/B
-    8-prof 3.0554 vs 10-prof 3.0859（**退步 +1.0%**）。新 profile 雖拿下
-    19/100 case，但 contest-shape proxy 在 <1.5% margin 的 case 選錯
-    （挑了 true-cost 較差的）。**profile 數已飽和在 8。**
-  - ✅ **proxy selector 改良（已試 2026-06-02, 小贏並 ship）**
-    - 建工具：`proxy_analysis.py`（跑全 8 profile，用 harness 自己的
-      `evaluate_solution` 算每個 profile 的**真實 cost**，dump 出真實-cost JSON）
-      + 離線掃 proxy 公式評分腳本（後兩者 code/dump 已刪，僅留結論）
-    - 🔑 **Oracle-selector 天花板 = ~3.03**（8-profile 集合, 同 run proxy 3.1288
-      vs oracle 3.0335, gap 3.0%）→ **完美選擇也破不了 3.00**。proxy tuning
-      ROI 上限就是這 3.0%，且實際抓不到全部
-    - 診斷：area baseline 1.035 已正確（A/ΣA median 1.03）；HPWL baseline
-      無穩定常數（H/best_h range [0.43,0.94]）→ hpwl_c / area_c 都不是 lever
-    - **唯一有效 lever：near-tie → min-violation tie-break**（margin 0.02）：
-      離線固定輸出 A/B 3.1288 → **3.0979 (-1.0%)**。原理：proxy 的 HPWL/area
-      baseline 是估計值，sub-% margin 不可信，但 v_rel 是精確算出的 → near-tie
-      時 defer 給 v_rel。已實作於 `_pick_best`，env `ICCAD_PROXY_TIE_MARGIN`
-      (default 0.02)，α/β 保持真實 cost 值 (0.5/2.0) 避免 overfit
-    - ⚠️ **不可用 target_positions/fp_sol 當 baseline**（= oracle，hidden test 沒）；
-      `solve()` 只收 preplaced 位置 + fixed shape，free block GT 不給（無 leak）
-  - 🔑 **結論：селection 已盡，破 3.00 要靠 placer 架構 (目標 5) 或更好 profile**
-  - 次路徑：repair-style 後處理（見目標 4）、placer 架構（見目標 5）
-- **目標 2**：驗證 ±2% 變異 — **已查明根因**
-  - 同機觀察 8-prof: 3.0554 / 3.1288 / 3.1040（同 code 跨 3 run，spread 2.4%）
-  - **根因：C++ rng seed 固定 (42) 但 SA 是 wall-clock 限時 (8s) 非 iteration 限**
-    → 平行 8-10 subprocess 競爭 CPU，每 run 8s 內跑的 iteration 數不同 → 結果飄
-  - 含意：**單一 live run 無法量測 < 2-3% 的改動**，要用離線固定輸出 A/B
-    （fixed-output 模式）。或改 SA 為 iteration-limited 讓它 deterministic
-    （未做，屬 placer 改動）
+### 短期（1–3 個迭代，續攻 area_gap）
+- **目標 1**：Total Score < 1.43 — **迭代 compaction**（pack_x→pack_y→pack_x… 多輪，
+  csc 下檔保護，最低風險）。density 仍 >1.1 → 有空間。
+- **目標 2**：cluster-rigid pack（整 cluster 當剛體滑，比逐 block 更激進不 fragment）
+  + 更聰明 pack 起點（先壓 over-spread 軸 / connectivity 重心）
+- **目標 3**：agap outlier（79/99）compaction 後重估 frame 選擇 → 針對性回收
 
 ### 中期（4–6 個迭代）
-- **目標 3**：Total Score < 2.80（需突破 placer 架構）
-- **目標 4**：實作 repair-style 後處理（針對性修 violation，
-  類似組員 v5 後的 boundary nudge / single-edge escape）
-- **目標 5**：探索 shelf packing 或 B*-tree 取代當前 skyline BL packer
-  （組員 v5/v6 用 shelf 達 1.76/1.62）
+- **目標 4**：Total Score < 1.35 — 需 placer 結構升級（compaction 進化到極限後）
+- **目標 5**：硬 case（preplaced boundary 撐壞 outline）的 frame 偏好策略
+- **目標 6**：profile 軸擴充（cluster ordering 變體），proxy 已近 oracle → 下檔保護
 
-### 長期
-- **目標 6**：縮小到 legit teammate 1.6 範圍（當前 3.06 / 1.6 = 1.9× gap）
-- **目標 7**：把 SA 角色從「找解」改成「微調 ML 輸出」
-
-### 長期
-- **目標 7**：替換 BL packer 為 Sequence Pair / B*-Tree
-- **目標 8**：把 violation handling 從「penalty」改為「constraint repair after each move」
+### 長期（逼近重建上限 ~1.1）
+- **目標 7**：從「optimization（找好解）」轉向「reconstruction（還原原圖）」——
+  真正的天花板在 ~1.03-1.11，需用 connectivity + constraints 反推 baseline 佈局，
+  而非只壓 area/hpwl/violation。見頂部「🚨 範式轉移」段落。
+- **目標 8**：把 supervised ML（structural ranking）整合成 placer 的 perm/起點 hint
+  （但須先確認 placer 不再是天花板 — 舊 oracle-perm 實驗顯示 SA placer 是；
+  constructive placer 的 oracle-perm 上限**未重測**，值得一試）
 
 ---
 
 ## 未來發展方向
 
-### 1. 解決 slack=0 boundary 違反
-- **Chain push**: 若 boundary block A 想往 LEFT 但被 B 擋住，嘗試把 B 也往 LEFT 推，再推 A
-- **Swap**: 若 A (B_LEFT) 在 x=2，B (no constraint) 在 x=0，swap 之
-- **整列重排**: 把 boundary-required block 強制塞入 leftmost 列
+> 全部以 constructive placer（`constructive.cpp`）為基礎。舊 SA 方向（slack push、
+> W_BOUNDARY ramp、SA restart、skyline incremental）已作廢。
 
-### 2. SA 中強化 boundary handling
-- 已嘗試：W_BOUNDARY 從 10 → 100（待驗證）
-- 可試：W_BOUNDARY 隨 SA 進度 ramp up（早期 10、後期 200）
-- 可試：boundary 違反在 calc_violation 中改為 squared/exp 函數，懲罰大違反
+### 1. compaction 進化（攻 area_gap，當前最高 ROI）
+- **迭代**：`compact_layout` 現只跑單輪 4 方向 pack。pack_y 後 X 軸可能再開 slack →
+  迴圈 pack_x→pack_y→pack_x… 到收斂。csc 下檔保護，安全。先試這個。
+- **cluster-rigid**：逐 block pack 會 fragment cluster（靠 csc 拒絕，較保守）。改成把
+  整個 cluster 當剛體一起滑，可更激進 pack 而不破 grouping。
+- **起點/順序**：先 pack over-spread 軸（`dbg_area.py` 顯示多數 case 寬度過寬）；
+  或 pack 向 connectivity 重心以同時壓 hpwl。
 
-### 3. Bbox shrinking
-- 後處理：找 bbox 邊緣的非 boundary block，往內推（slack-guided）
-- 重新計算 bbox，迭代
+### 2. frame 選擇與 compaction 協同
+- compaction 後重估 frame：大 frame 易 pack + compaction 擠 void，可能勝過原本選的
+  tight frame（特別是 agap outlier 79/99）。可在 solve() frame loop 內對每 frame
+  compaction 後再比 csc（注意 overfit 風險，見「per-frame 退步」教訓）。
 
-### 4. SA 演進
-- **Restart with perturbation**: 偵測 stagnation 時對 best_pos 局部擾動
-- **Move 機率自適應**: acceptance rate-driven adjustment
-- 已試過但失敗：multi-restart（兩段 4s 不足）、cluster move 加倍
+### 3. 硬 case 處理（preplaced boundary 撐壞 outline）
+- case 89/85：frame 偏好「不超出 preplaced 外緣」，或對這類 case 特化 outline。
+- 用 `dbg_boundary.py` 分類違反（single/cluster/preplaced × blocked/free）。
 
-### 5. 結構化 violation 修復
-- 利用 `viol_breakdown.py`（已建立）監控 vBd/vCl/vMb 變化
-- 對 cluster 違反：BFS 找最大 component，剩餘 component 做 group 移動（已部分實作於 cluster_snap）
-- 對 boundary 違反：考慮 ROW-level 重排，把 LEFT 需求的 block 整列移到 leftmost
+### 4. profile 軸擴充（下檔保護，低風險）
+- 新分歧軸：cluster ordering 變體、compaction 方向偏好。proxy 已近 oracle →
+  無用 profile 只是不被選、不傷分（只花 runtime）。
 
-### 6. 效能優化（若 TIME_LIMIT 需提升）
-- `calc_violation` 目前 O(N² + Σ cluster_size²)，可加 spatial index
-- `skyline_decode` 每個 SA move 重新呼叫，可改 incremental
-- post-processing 的 `proxy_cost` guard 可只重算受影響子集
-- 當前每個 case 8s 中，post-processing 約 ~0.5s（含 calc_violation 多次呼叫）
+### 5. 重建方向（逼近 ~1.1 上限，研究型）
+- 當前仍是 optimization（壓 area/hpwl/violation）。真天花板需 **reconstruction**：
+  用 b2b/p2b connectivity + constraints 反推「原圖怎麼擺」。
+- 重測 **constructive placer 的 oracle-perm 上限**（舊上限實驗是對 SA placer 做的，
+  結論 3.27 是 SA 的天花板；constructive 可能不同）→ 決定 ML ranking 值不值得。
 
-### 7. Cluster preplaced 改進
-- `pack_cluster_anchored` 函式存在但已不被呼叫（歷史測試擴大 area）
-- 在新評分下可重新評估：cluster anchored 在 area_gap 較不重要時可能有用
+### 6. 精度 / 數值（已部分做）
+- ✅ 輸出 %.17g（M10，消虛假 fragment）。
+- 注意：任何新加的、會被 shapely 評分的幾何輸出都要保持精確 abutment + %.17g。
 
 ---
 
 ## 環境
 
-- **主程式**: `optimizer_claude.cpp` (C++) + `optimizer_claude.py` (Python wrapper)
+- **主程式**: `constructive.cpp` (C++ placer) + `optimizer_constructive.py` (portfolio wrapper)
+  - 舊 SA：`optimizer_claude.cpp` / `.py` 仍在，僅作 constructive 失敗時的 fallback
 - **Conda env**: `C:\Users\Nordra\.conda\envs\iccadv\python.exe`
 - **Compiler**: `C:\msys64\ucrt64\bin\g++.exe`
 
 ### 編譯
 ```powershell
 cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet"
-& "C:\msys64\ucrt64\bin\g++.exe" -O3 -std=c++17 -o optimizer_claude.exe optimizer_claude.cpp 2>&1
+& "C:\msys64\ucrt64\bin\g++.exe" -O3 -std=c++17 -o constructive.exe constructive.cpp
+# 注意：Bash 工具寫 .exe 會失敗，用 PowerShell 編譯
 ```
 
-### 評估（13-15 分鐘）
+### 評估（官方 portfolio，~3 分鐘；constructive 確定性、快）
 ```powershell
 cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
-& "C:\Users\Nordra\.conda\envs\iccadv\python.exe" iccad2026_evaluate.py --evaluate ../optimizer_claude.py 2>&1 | Select-Object -Last 12
+& "C:\Users\Nordra\.conda\envs\iccadv\python.exe" iccad2026_evaluate.py --evaluate ../optimizer_constructive.py 2>&1 | Select-Object -Last 12
 ```
 
-### 單 case 測試
+### 快速 A/B（單 profile，~70 秒，乾淨確定性）
 ```powershell
-& "C:\Users\Nordra\.conda\envs\iccadv\python.exe" iccad2026_evaluate.py --evaluate ../optimizer_claude.py --test-id 99
+# analyze_constructive.py 直跑 constructive.exe（base profile），重算 vBd/vCl/vMb + Total Score
+cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet"
+& "C:\Users\Nordra\.conda\envs\iccadv\python.exe" analyze_constructive.py 2>&1 | Select-Object -First 12
+# 關 compaction：$env:ICCAD_NO_COMPACT="1"；退單 base profile：見 ICCAD_CONSTRUCTIVE_SINGLE
 ```
 
-### 分析
+### 分析工具
 ```powershell
-& "C:\Users\Nordra\.conda\envs\iccadv\python.exe" analyze_results.py
-& "C:\Users\Nordra\.conda\envs\iccadv\python.exe" viol_breakdown.py    # 已修好，顯示 vBd/vCl/vMb
+& "...python.exe" dbg_area.py            # area_gap 分解 (density ours vs baseline)
+& "...python.exe" dbg_compact.py         # compaction 原型 (orig vs compacted Total Score)
+& "...python.exe" dbg_compact_cmp.py 99  # 單案 Py-原型 vs C++-binary 對照
+& "...python.exe" dbg_boundary.py 99 95  # boundary 違反分類
 ```
 
 ---
@@ -582,15 +568,15 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 ## 已知 Bug / 注意事項
 
 - **PowerShell 用分號或 `if ($?) {...}` 連接指令，不能用 `&&`**
-- **評估需要 13–15 分鐘（100 個 case × 8 秒）**
-- **`analyze_violations.py` 無法執行**（lite_dataset_test 缺失）；
-  改用 `viol_breakdown.py`（已建立）
-- **`viol_breakdown.py` 的 hpwl_gap/area_gap 為 -0.9～-1.0 範圍**，
-  這是因為使用 `metrics[0]`/`metrics[1]` 當 baseline，
-  但官方 baseline 不同；數字不可直接對比
-- **`pack_cluster_anchored` 函式仍在程式碼但已不被呼叫**
-- **GNN 推論需要 `torch`**：若 conda env 缺 torch，python wrapper 會跳過 GNN
-  並印 stderr 警告（不會 crash）
+- **Bash 工具寫 .exe 會失敗（sandbox）** → 編譯用 PowerShell
+- **constructive portfolio eval ~3 分鐘**（確定性、快）；舊 SA eval 才需 13-15 分鐘
+- **constructive 輸出必須 `%.17g`**（非 %.10f）→ 否則 abutment 被捨入成虛假 shapely
+  fragment（M10 修正）。新增任何被 shapely 評分的幾何輸出都要遵守
+- **proxy 選擇必須用 shapely vrel**（wrapper `_proxy_metrics`），不可用 C++ METRICS 的
+  vrel（union-find 1e-3 tol，與 shapely 在 ~34/100 案不一致）
+- **以下為舊 SA 路線（`optimizer_claude`）遺留，僅 fallback 時相關**：
+  `analyze_violations.py` 不可執行（用 `viol_breakdown.py`）；`pack_cluster_anchored`
+  在程式碼但不被呼叫；GNN 推論需 torch（缺則跳過，不 crash）
 
 ---
 
@@ -598,14 +584,14 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 
 ```
 FloorSet/
-├── optimizer_claude.cpp    ← 主程式 (C++)，含 GNN-hint 比較邏輯
-├── optimizer_claude.py     ← Python wrapper，含 GNN inference (v1 FloorplanNet)
-├── optimizer_claude.exe    ← 編譯輸出
-├── constructive.cpp        ← 🏆 建構式定框 floorplanner (C++, B 路線重寫組員架構)
-│                              單 profile ~0.16s/case, deterministic; env 旋鈕 +
-│                              METRICS stderr 輸出 (現由 wrapper 用 shapely 重算取代)
-├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 13 profile + baseline-free
-│                              proxy 選擇 (當前最佳 1.5659, ~0.71s/case)
+├── optimizer_claude.cpp    ← 舊 SA placer (C++)，含 GNN-hint；僅 constructive fallback
+├── optimizer_claude.py     ← 舊 SA wrapper + GNN inference；提供 _serialize_input/_parse_output
+├── optimizer_claude.exe    ← 舊 SA 編譯輸出
+├── constructive.cpp        ← 🏆 主程式: 建構式定框 floorplanner (C++, B 路線重寫組員架構)
+│                              + M9 two-pass wire refinement + M10 %.17g 精度 / compaction
+│                              deterministic; env 旋鈕 (NO_COMPACT/NO_REFINE/...) + METRICS stderr
+├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 14 profile + baseline-free
+│                              shapely-proxy 選擇 (當前最佳 1.4528, ~1.63s/case)
 ├── portfolio_ceiling.py    ← 🆕 OFFLINE: 跑多 profile 算 oracle 天花板 + proxy 公式
 │                              搜尋 (確認 proxy≈oracle; harness vs C++ vrel 比對)
 ├── dbg_constructive.py     ← constructive 單 case debug (serialize + run + bbox/bv/gf)
