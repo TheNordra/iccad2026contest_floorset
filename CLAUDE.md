@@ -116,14 +116,38 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.4349** (Constructive portfolio M13: narrow frame + proxy _RH 修正, 2026-06-07)
+### 🏆 最佳已驗證版本：Total Score = **1.4253** (Constructive portfolio M14: post-placement HPWL push, 2026-06-07)
 
-**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -11.3%）。** `constructive.cpp` +
+**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -12.0%）。** `constructive.cpp` +
 `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
-C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~4.0s/case（40
-profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.4371）。
+C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~3.85s/case（44
+profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.4253）。
 
-**M10（本 session，2026-06-06，攻 area_gap dead space）= 兩件事，皆驗證有效：**
+**M14（本 session，2026-06-07，攻 hgap = 最大 cost lever）= post-placement HPWL push，
+default-on，驗證 -0.67%（1.4349→1.4253，100/100 feasible）。**
+- **診斷**：portfolio per-case gap 分解（讀 results.json 的 hpwl_gap/area_gap/
+  violations_relative，加權 e^(n/12)）→ **weighted hgap=0.412 ≫ agap=0.228 ≫ vrel=0.040**。
+  cost=`(1+0.5(hgap+agap))·exp(2vrel)` → **HPWL gap 是壓倒性主 lever**（2× area、10× viol）。
+  最高權重 case 93-99（~40% 權重）hgap 全在 0.31-0.44。
+- **根因**：placer 沒有任何 post-placement HPWL 優化。compaction 只往 frame 四面 pack（攻
+  area），反而把相連 block 拉往對面 → **抬 HPWL**。
+- **做法 `hpwl_push()`（constructive.cpp）**：compaction 後，對每個 **FREE SINGLE** block
+  （boundary==0 ∧ cluster==0 ∧ 非 preplaced）沿 connectivity 加權 **L1-median** 滑進
+  current bbox 內的 void（coordinate descent、Gauss-Seidel、PUSH_PASSES=8）。void 區間
+  `[lo,hi]` = 另一軸 overlap 的最近 block 邊界 → block 留在自己 slot，**可證不產生 overlap**。
+- **🔑 為何 default-on（不需 portfolio 下檔保護）= 構造上 downside-free**：free single 不貢獻
+  boundary/grouping violation 且滑動留在 bbox 內 → **area / bv / gf / mib 全不變，只降 hpwl**
+  （且每步只在嚴格降 hpwl 時才接受）。單 base A/B 證實：1.5306→1.5219，**vBd/vCl/vMb
+  維持 270/62/0 完全不變**。Python 原型（`dbg_hpwl_push.py`，對 evaluate_solution 真值）
+  -0.63%、**0/100 退步**；C++ 全 profile push + proxy 重選 → **1.4253（比原型 1.4259 更低**，
+  因 proxy 在 pushed 候選中重選更佳）。env: `ICCAD_NO_PUSH=1` 關閉、`ICCAD_PUSH_PASSES=N`。
+- **proxy 在 pushed set 上仍完美**：`rh_sweep.py` 確認 oracle-min（完美選擇）= **1.4253**，
+  官方 eval live 也 = 1.4253 → **proxy = oracle ceiling**（_RH=1.4 仍在平坦盆地 1.1-1.6，無需重調）。
+- runtime 影響可忽略（8 pass × N²/profile，N=120 約 5M ops/case），eval RuntimeFactor=1.0 中性。
+- ⚠️ push 後 hgap 0.412→0.404（仍是最大殘留）→ **下一步繼續攻 hgap**：把可移範圍擴到
+  cluster-rigid（整 cluster 一起滑，保持 grouping）、或 boundary block 沿邊軸滑（不破 edge-contact）。
+
+**M10（前一 session，2026-06-06，攻 area_gap dead space）= 兩件事，皆驗證有效：**
 
 1. **🔑 輸出精度修正 `%.10f`→`%.17g`（最大單一 lever，-6.3% 單 base）。** placer 的
    cluster compound-item（及 compaction packs）造**精確 abutment**（A 右緣 == B 左緣，
@@ -284,25 +308,31 @@ M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 �
 +wire ×2000 1.8218 → M5: +anchored cluster 1.7045 → M6: +7-profile portfolio
 1.6060 → M7: +4 aspect profile (11-prof) 1.5842 → M8: +frame_tall/tight (13-prof)
 1.5659 → M9: +two-pass wire refinement 1.5375 → M10: 精度修正 + compaction 1.4528
-→ M11: 迭代 compaction 1.4502 → M12: 40-profile 組合擴充 1.4371 → **M13: narrow frame +
-proxy _RH=1.4 修正 1.4349**（M13 portfolio **-0.15%**；M4 起累計 **-35.2%**）。
+→ M11: 迭代 compaction 1.4502 → M12: 40-profile 組合擴充 1.4371 → M13: narrow frame +
+proxy _RH=1.4 修正 1.4349 → **M14: post-placement HPWL push 1.4253**（M14 portfolio
+**-0.67%**；M4 起累計 **-35.6%**）。
 
-**下一步（→ 繼續壓低天花板，當前 1.4349）**：M13 修好 proxy（_RH=1.4 → proxy = oracle
-ceiling），selection 不再是瓶頸 → **加 profile 現在全額 realize**（M12 加 profile 只 realize 一半
-是因為 _RH=1.0 選不準）。M12 突破 < 1.43；M13 再 -0.15%。
+**下一步（→ 繼續壓低天花板，當前 1.4253）**：M13 修好 proxy（_RH=1.4 → proxy = oracle
+ceiling），selection 不再是瓶頸 → **加 profile 現在全額 realize**。M14 改攻 **hgap（最大 cost
+lever）**：post-placement HPWL push（-0.67%）。push 後 weighted hgap 仍 0.404（最大殘留）。
 下一個高 ROI 方向（按 ROI）：
 1. ~~**迭代 compaction**~~ ✅ M11 已做（-0.18%，收斂 1 輪）
 2. ~~**cluster-rigid pack**~~ ❌ 已試，失敗（1.5306→1.5464，revert）
 3. ~~**profile 擴充**~~ ✅ M12 已做（14→40 profile，-0.87%，< 1.43 達成）
-4. **agap outlier 個案**（79 agap 0.706、99 退大 frame）：tighter frame pack 不下，
-   診斷為何無可行位置 → 針對性處理（特定大 block/cluster 卡住）。
-5. **硬 case 89（vBd 7，preplaced boundary 撐壞 outline）**：3 個 FREE preplaced block
+4. ~~**post-placement HPWL push**~~ ✅ M14 已做（-0.67%，downside-free，default-on）
+5. **HPWL push 擴大可移範圍（接續 M14，hgap 仍最大殘留 0.404）**：目前只滑 free single。
+   擴到 (a) **cluster-rigid**（整 cluster 當剛體沿 connectivity 滑，保 grouping，downside-free）；
+   (b) **boundary block 沿邊軸滑**（LEFT/RIGHT 只動 y、TOP/BOTTOM 只動 x → 不破 edge-contact）。
+   兩者都攻 hgap 且結構上 downside-free。先用 `dbg_hpwl_push.py` 改原型驗證真值上限再寫 C++。
+6. **agap / hgap outlier 個案**（79 hgap **1.047** 是最大單案、99 退大 frame）：tighter frame
+   pack 不下，診斷為何無可行位置 → 針對性處理（特定大 block/cluster 卡住）。
+7. **硬 case 89（vBd 7，preplaced boundary 撐壞 outline）**：3 個 FREE preplaced block
    (`final_boundary_nudge` 跳過 preplaced → nudge 無效)；4 個 BLOCKED cluster 1 member
-   被其他 block 擋住。frame 偏好「不超出 preplaced 外緣」→ 加 preplaced-aligned frame
-   候選（~142 wide），讓 movable block 不超出 preplaced bbox。`dbg_boundary.py 89` 確認。
-6. **更多 pack 起點/順序**：先 pack over-spread 軸（dbg_area 顯示多數 case 寬度過寬
+   被其他 block 擋住。⚠️ preplaced-aligned frame 已試失敗（M13，greedy pack 不下 tighter
+   width）。`dbg_boundary.py 89` 確認。
+8. **更多 pack 起點/順序**：先 pack over-spread 軸（dbg_area 顯示多數 case 寬度過寬
    w/wb 1.3-1.7、高度準），或 pack 向 connectivity 重心。
-次大殘留：硬 case（89 hgap 0.751 + vBd 7、85 vBd 10）多為 preplaced boundary 撐壞 outline。
+次大殘留：硬 case（89 hgap 0.516 + vBd 7、85 hgap 0.560 vBd 6）多為 preplaced boundary 撐壞 outline。
 
 **⚠️ 已驗證 BP_WEIGHT 不是 lever**：30000→1M 完全無變化 → boundary violation 不是
 「penalty 太低被 area 蓋過」，而是「無可行 bp=0 位置」或「frame 邊 ≠ bbox 邊」。
@@ -486,8 +516,9 @@ violations、或 tournament SA）。
 | 2026-06-07 cluster-rigid compaction (整 cluster 當剛體滑) | 1.5464 ← **退步, revert**（1.5306→1.5464, vCl 62→67） |
 | 2026-06-07 constructive M12 (40-profile 組合擴充: +26 combo profiles) | 1.4371 ← -0.87% vs M11; 突破 < 1.43 目標; 100/100 feasible; 4.0s/case |
 | 2026-06-07 M13a (+4 narrow-frame profile, aspect 0.55-0.28, 攻水平 dead space) | 1.4369 ← 贏 case 98/87 真值, 但 proxy(_RH=1.0) 選不出 → 幾乎沒動 |
-| **2026-06-07 constructive M13b (proxy _RH 1.0→1.4: hmin/hbase 補償)** | **1.4349** ← **新最佳, -0.15% vs M12; proxy = oracle ceiling 1.4349; 100/100 feasible; 4.59s/case** |
+| 2026-06-07 constructive M13b (proxy _RH 1.0→1.4: hmin/hbase 補償) | 1.4349 ← -0.15% vs M12; proxy = oracle ceiling 1.4349; 100/100 feasible; 4.59s/case |
 | 2026-06-07 preplaced-aligned frame (攻 case 89) | **失敗, revert** ← greedy pack 不下 tighter width; 贏的案全被現有 profile 蓋過 (零貢獻) |
+| **2026-06-07 constructive M14 (post-placement HPWL push, free single → L1-median, default-on)** | **1.4253** ← **新最佳, -0.67% vs M13; 攻 hgap (最大 lever 0.412); downside-free (area/bv/gf/mib 不變); 單 base 1.5306→1.5219; 100/100 feasible; 3.85s/case** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -499,21 +530,24 @@ violations、或 tournament SA）。
 
 ---
 
-## 這個階段想解決的問題（constructive M13 後，當前 1.4349）
+## 這個階段想解決的問題（constructive M14 後，當前 1.4253）
 
 > 舊 SA 範式的瓶頸（slack=0 boundary、SA 收斂、bbox shrinking）已隨架構換成
 > constructive placer 而作廢。以下是**當前** placer 的瓶頸，依 leverage 排序。
+> ⚠️ **gap 分解（讀 results.json 加權）：weighted hgap 0.404 ≫ agap 0.23 ≫ vrel 0.038。
+> HPWL gap 是壓倒性主 lever**（cost=(1+0.5(hgap+agap))exp(2vrel)）。
 
-### A. area_gap dead space 仍是最大 uniform 缺口（最高 leverage）
-- M10 compaction（單次 4 方向 pack）後 density 仍 >1.1（原圖 1.035）→ 還有 void 可擠
+### A. HPWL gap 是最大 cost lever（最高 leverage，M14 起新主軸）
+- M14 post-placement HPWL push（滑 free single → L1-median）已 -0.67%，但 hgap 仍 0.404
+- **最高 ROI：擴大 push 可移範圍** — (a) cluster-rigid（整 cluster 剛體滑，保 gf）、
+  (b) boundary block 沿邊軸滑（保 bv）。兩者結構上 downside-free，可 default-on
+- case 79 hgap **1.047**（最大單案）、82 (0.636)、90 (0.554)、85 (0.516)：個案 outlier
+
+### B. area_gap dead space（次大 uniform 缺口）
+- M10/M11 compaction 後 density 仍 >1.1（原圖 1.035）→ 還有 void 可擠
 - compaction 逐 block pack，靠 csc 拒絕 fragment 的候選 → 較保守，未榨乾
-- 試法：迭代 compaction（pack_x→pack_y→pack_x…）、cluster-rigid pack、更聰明的
-  pack 起點（先壓 over-spread 軸；多數 case w/wb 1.3-1.7 但 h/hb≈1，見 `dbg_area.py`）
-
-### B. agap outlier 個案
-- case 79 (agap 0.706)、99 等：tighter frame pack 不下 → 退到大/寬 frame
-- compaction 後可**重估** frame 選擇（大 frame 易 pack + compaction 擠掉 void
-  → 可能勝過原本選的 tight frame）
+- agap outlier：case 79、99 等 tighter frame pack 不下 → 退到大/寬 frame；compaction 後可
+  **重估** frame 選擇（大 frame 易 pack + compaction 擠掉 void → 可能勝過原本選的 tight frame）
 
 ### C. 硬 case：preplaced boundary block 撐壞 outline
 - case 89 (hgap 0.751 + vBd 7)、85 (vBd 10)：preplaced 位置固定，bbox 邊到不了它
@@ -532,28 +566,31 @@ violations、或 tournament SA）。
 
 ## 預期目標
 
-> 基準線：constructive portfolio **1.4349**（M13）。對標：組員 legit portfolio
-> ~1.62（**已反超 ~13%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
+> 基準線：constructive portfolio **1.4253**（M14）。對標：組員 legit portfolio
+> ~1.62（**已反超 ~12%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
 > fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
 
 ### 已達成
-- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / **< 1.435**（constructive 路線一路下殺，當前 1.4349）
+- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / **< 1.43**（constructive 路線一路下殺，當前 1.4253）
 - ✅ **反超組員所有 legit 版本**（v5 1.7429、v6/v7 portfolio ~1.62）
 - ✅ baseline-free proxy ≈ oracle 天花板（無 label leak，hidden test 可用）
 - ✅ M10 精度修正（消虛假 fragment）+ boundary 保持 compaction（攻 area_gap）
 - ✅ M11 迭代 compaction（1.4528→1.4502）
 - ✅ M12 40-profile 組合擴充（1.4502→1.4371，< 1.43 目標達成）
-- ✅ M13 narrow-frame profile + proxy _RH=1.4（1.4371→**1.4349**，proxy = oracle ceiling）
+- ✅ M13 narrow-frame profile + proxy _RH=1.4（1.4371→1.4349，proxy = oracle ceiling）
+- ✅ M14 post-placement HPWL push（1.4349→**1.4253**，攻 hgap，downside-free default-on）
 
 ### 短期（當前目標）
 - ~~**目標 1**：Total Score < 1.43~~ ✅ M12 完成（1.4371，-0.87% vs M11）
 - ~~**目標 1b**：proxy 命中 oracle ceiling~~ ✅ M13 完成（_RH=1.4 → 1.4349 = ceiling）
-- **目標 2 (當前)**：Total Score < 1.40 — **新 layout 多樣性 / placer 結構改進**（proxy 已
-  完美 → 壓 oracle ceiling 本身才有用；selection 已盡）
-  - 案件分析：case 79 (agap 0.706 outlier)、case 89 (structural, ⚠️ preplaced-frame 已試失敗)
+- **目標 2 (當前)**：Total Score < 1.40 — M14 攻 hgap（HPWL push，-0.67% → 1.4253），
+  距 < 1.40 還差 ~1.8%。proxy 已完美 → 壓 oracle ceiling 本身才有用（selection 已盡）。
+  - **最高 ROI（接續 M14）：HPWL push 擴大可移範圍** — push 後 hgap 仍 0.404（最大殘留）。
+    free single 只是第一步；cluster-rigid + boundary-axis slide 都結構上 downside-free（見下一步 5）。
+  - 案件分析：case 79 (hgap 1.047 最大單案)、case 89 (structural, ⚠️ preplaced-frame 已試失敗)
   - 選項 A：新 profile 軸（cluster ordering 變體 / compaction 方向）— 全額 realize（proxy 完美）
   - 選項 B：compaction 策略改進（per-frame compaction 重估 frame 選擇）
-  - 選項 C：placer HPWL 改進（hgap 仍是最大 uniform 殘留，攻它降全案 oracle cost）
+  - 選項 C：placer HPWL 改進（hgap 0.404 仍是最大 uniform 殘留，攻它降全案 oracle cost）
 
 ### 中期（4–6 個迭代）
 - **目標 3**：Total Score < 1.35 — 需 placer 結構升級（壓 oracle ceiling，非 selection）
@@ -576,13 +613,18 @@ violations、或 tournament SA）。
 > 全部以 constructive placer（`constructive.cpp`）為基礎。舊 SA 方向（slack push、
 > W_BOUNDARY ramp、SA restart、skyline incremental）已作廢。
 
-### 1. compaction 進化（攻 area_gap，當前最高 ROI）
-- **迭代**：`compact_layout` 現只跑單輪 4 方向 pack。pack_y 後 X 軸可能再開 slack →
-  迴圈 pack_x→pack_y→pack_x… 到收斂。csc 下檔保護，安全。先試這個。
-- **cluster-rigid**：逐 block pack 會 fragment cluster（靠 csc 拒絕，較保守）。改成把
-  整個 cluster 當剛體一起滑，可更激進 pack 而不破 grouping。
-- **起點/順序**：先 pack over-spread 軸（`dbg_area.py` 顯示多數 case 寬度過寬）；
-  或 pack 向 connectivity 重心以同時壓 hpwl。
+### 1. HPWL push 進化（攻 hgap = 最大 cost lever，當前最高 ROI）
+- ✅ **M14 已做**：post-placement `hpwl_push()` 滑 free single → connectivity L1-median
+  進 bbox 內 void（downside-free，default-on）。-0.67%。push 後 hgap 仍 0.404（最大殘留）。
+- **下一步擴大可移範圍**（都結構上 downside-free）：
+  - **cluster-rigid**：整個 cluster 當剛體沿 connectivity 滑（成員相對位置不變 → gf 不變）。
+  - **boundary-axis slide**：LEFT/RIGHT block 只滑 y、TOP/BOTTOM 只滑 x（edge-contact 不變 → bv 不變）。
+  - 先用 `dbg_hpwl_push.py` 改原型對 evaluate_solution 真值驗證上限，再寫 C++。
+
+### 1b. compaction 進化（攻 area_gap，次高 ROI）
+- ✅ M11 迭代 pack（pack_x→pack_y→…）已做（收斂 1 輪）。
+- **cluster-rigid compaction** ❌ 已試失敗（1.5306→1.5464，revert，root cause 未確認）。
+- **起點/順序**：先 pack over-spread 軸（`dbg_area.py` 顯示多數 case 寬度過寬）。
 
 ### 2. frame 選擇與 compaction 協同
 - compaction 後重估 frame：大 frame 易 pack + compaction 擠 void，可能勝過原本選的
@@ -671,9 +713,12 @@ FloorSet/
 ├── optimizer_claude.exe    ← 舊 SA 編譯輸出
 ├── constructive.cpp        ← 🏆 主程式: 建構式定框 floorplanner (C++, B 路線重寫組員架構)
 │                              + M9 two-pass wire refinement + M10 %.17g 精度 / compaction
-│                              deterministic; env 旋鈕 (NO_COMPACT/NO_REFINE/...) + METRICS stderr
+│                              + M14 hpwl_push (post-placement HPWL 滑動, downside-free)
+│                              deterministic; env 旋鈕 (NO_COMPACT/NO_REFINE/NO_PUSH/...) + METRICS stderr
 ├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 44 profile + baseline-free
-│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.4349, ~4.6s/case)
+│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.4253, ~3.85s/case)
+├── dbg_hpwl_push.py        ← 🆕 M14 HPWL push Python 原型: 對 portfolio JSON positions 滑 free
+│                              single → L1-median, 對 evaluate_solution 真值 (orig vs pushed)
 ├── rh_sweep.py             ← 🆕 OFFLINE: 建 profile×case 真值快取(並行) + 掃 _RH/proxy 參數
 │                              (最快 proxy 調參器; M13 靠它找出 _RH=1.4 命中 oracle 1.4349)
 ├── proxy_dbg.py            ← 🆕 單案逐 profile proxy vs 真 cost (找 proxy mis-selection)
@@ -801,12 +846,12 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-07，當前 **1.4349**，proxy = oracle ceiling）
+### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-07，當前 **1.4253**，M14 HPWL push）
 
-`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M13
-累計大幅改善；當前 **44 profile portfolio 1.4349，proxy 完美命中 oracle ceiling**。
+`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M14
+累計大幅改善；當前 **44 profile portfolio 1.4253**（proxy 命中 pushed-set oracle ceiling）。
 
-**✅ 已完成（M4–M13）**：
+**✅ 已完成（M4–M14）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
 - ~~7→11→13 profile portfolio + baseline-free proxy~~ → 1.7045→1.6060→1.5842→1.5659
 - ~~M9 two-pass wire refinement（攻 HPWL gap）~~ → 單 base 1.658、portfolio 1.5375
@@ -819,20 +864,27 @@ full training：
 - ~~M13a +4 narrow-frame profile（aspect 0.55-0.28，攻水平 dead space）~~ → 1.4371→1.4369（proxy 選不出）
 - ~~M13b proxy _RH 1.0→1.4（補償 hmin/hbase）~~ → **portfolio 1.4369→1.4349，proxy = oracle ceiling**
 - ~~preplaced-aligned frame（攻 case 89）~~ ❌ 已試失敗（greedy pack 不下 tighter width）
+- ~~M14 post-placement HPWL push（free single → L1-median, default-on, downside-free）~~ →
+  **portfolio 1.4349→1.4253（-0.67%），單 base 1.5306→1.5219，攻 hgap（最大 lever）**
 
-**關鍵現況：M13 修好 proxy → proxy = oracle ceiling（44 profile 完美選擇）。selection 路線已盡，
-往後壓分要靠新 layout 多樣性 / placer 改進（降低每案最佳 cost），不是選擇。** 下一步：按 ROI：
-1. ~~proxy _RH 修正~~ ✅ M13、~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、~~preplaced-frame~~ ❌
-2. **新 profile 軸**（cluster ordering 變體 / compaction 方向偏好）：proxy 完美 → **全額 realize**
-   （不再像 M12 半 realize）。用 `profile_vs_portfolio.py` 先離線確認新 profile 贏哪些案。
-3. **placer HPWL 改進**（hgap 仍是最大 uniform 殘留）：攻它降全案 oracle cost。
-4. **agap outlier 個案**（case 79 agap 0.706 等退到 s≥1.35 大 frame）：找為何
+**關鍵現況：M14 攻 hgap（weighted 0.412，cost 最大 lever）— post-placement HPWL push。
+push 後 hgap 仍 0.404（最大殘留）→ 下一步繼續攻 hgap，擴大 push 可移範圍。** 下一步：按 ROI：
+1. ~~proxy _RH 修正~~ ✅ M13、~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、
+   ~~preplaced-frame~~ ❌、~~HPWL push (free single)~~ ✅ M14
+2. **🔑 HPWL push 擴大可移範圍（接續 M14，最高 ROI，hgap 仍最大殘留）**：目前只滑 free single
+   (boundary==0 ∧ cluster==0 ∧ 非 preplaced)。擴到 (a) **cluster-rigid**（整 cluster 當剛體沿
+   connectivity 滑，gf 不變 → downside-free）；(b) **boundary block 沿邊軸滑**（LEFT/RIGHT block
+   只動 y、TOP/BOTTOM 只動 x → bv 不變）。兩者結構上 downside-free，可 default-on。先用
+   `dbg_hpwl_push.py` 改原型對 evaluate_solution 真值驗證上限再寫 C++。
+3. **新 profile 軸**（cluster ordering 變體 / compaction 方向偏好）：proxy 準 → 全額 realize。
+   用 `profile_vs_portfolio.py` 先離線確認新 profile 贏哪些案。
+4. **agap / hgap outlier 個案**（case 79 hgap **1.047** 最大單案、退到 s≥1.35 大 frame）：找為何
    tighter frame pack 不下（多半某大 block/cluster 卡住）→ 針對性處理，比 uniform 壓更省。
-5. **vBd 硬 case**（89 hgap 0.751+vBd 7、85 vBd 10）：多為 **preplaced boundary block
-   撐壞 outline**（位置固定，bbox 邊到不了它）→ frame 選擇偏好「不超出 preplaced 外緣」。
-   refinement 幫助有限（結構約束 > wire 拉力）。用 `dbg_boundary.py` 確認佔比。
-4. **次要**：剩餘 profile 軸（cluster ordering 變體）；掃 `ICCAD_REFINE_ITERS`（12-24 平緩，
-   >12 邊際 <0.2%）。⚠️ 已驗證**不是 lever**：`layout_score` hpwl 權重（HW_MULT 3/8 不動
+5. **vBd 硬 case**（89 hgap 0.516+vBd 7、85 hgap 0.560 vBd 6）：多為 **preplaced boundary block
+   撐壞 outline**（位置固定，bbox 邊到不了它）。⚠️ frame 偏好「不超出 preplaced 外緣」已試失敗
+   （M13）。用 `dbg_boundary.py` 確認佔比。
+6. **次要**：掃 `ICCAD_REFINE_ITERS`（12-24 平緩，>12 邊際 <0.2%）、`ICCAD_PUSH_PASSES`（預設 8，
+   通常 2-3 pass 收斂）。⚠️ 已驗證**不是 lever**：`layout_score` hpwl 權重（HW_MULT 3/8 不動
    選擇）、frame scale 細化（frame_fine 僅 -0.08%）。
 5. ⚠️ runtime 1.46s/case（14 profile，M9 約 2× 因每 frame 多跑 12 refine pass）。**本地 eval
    強制 RuntimeFactor=1.0 → runtime 對分數中性**；官方 leaderboard 算 cross-submission
@@ -844,9 +896,10 @@ full training：
 >    的 vrel（union-find 1e-3 tol，與 shapely 差 34/100 案 → 退到 1.6388）。
 > ✅ 工具：`portfolio_ceiling.py`（oracle 天花板 + proxy 搜尋，~5min）；
 >    `analyze_constructive.py`（單 profile per-case breakdown，~30s）；
->    `dbg_boundary.py <ids>`；`dbg_constructive.py`。env 旋鈕：`ICCAD_WIRE_MULT` /
->    `ICCAD_ANCHOR_W` / `ICCAD_LR_ASPECT` / `ICCAD_TB_ASPECT` / `ICCAD_BP_WEIGHT` /
->    `ICCAD_NO_COMPACT=1`（關 M10 compaction）/ `ICCAD_NO_REFINE=1`；
+>    `dbg_boundary.py <ids>`；`dbg_constructive.py`；`dbg_hpwl_push.py`（M14 push 原型）。
+>    env 旋鈕：`ICCAD_WIRE_MULT` / `ICCAD_ANCHOR_W` / `ICCAD_LR_ASPECT` / `ICCAD_TB_ASPECT` /
+>    `ICCAD_BP_WEIGHT` / `ICCAD_NO_COMPACT=1`（關 M10 compaction）/ `ICCAD_NO_REFINE=1` /
+>    `ICCAD_NO_PUSH=1`（關 M14 HPWL push）/ `ICCAD_PUSH_PASSES=N`；
 >    `ICCAD_CONSTRUCTIVE_SINGLE=1` 退回單 base。analyze/dbg 直跑 exe（不經 wrapper）→
 >    量單一 profile。組員參考碼在 `C:\Users\Nordra\Downloads\teammate_iccad_study\`。
 

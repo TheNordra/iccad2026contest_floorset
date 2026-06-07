@@ -16,6 +16,11 @@
 //     continue packing from the current best until convergence: each Y-pack shifts
 //     rows so a subsequent X-pack can reclaim new slack. csc downside-protected;
 //     converges typically in 1 pass. ICCAD_COMPACT_ITERS (default 8) controls max rounds.
+// M14: post-placement HPWL push (hpwl_push). hgap is the dominant cost lever; the
+//     frame-face compaction can spread connected blocks apart. After compaction we
+//     slide every FREE SINGLE block toward its connectivity-weighted L1-median within
+//     the void inside the current bbox. Downside-free (area/bv/gf/mib unchanged), so
+//     default-on for every profile. Portfolio 1.4349 -> 1.42xx. ICCAD_NO_PUSH=1.
 //
 // Input/Output format identical to optimizer_claude.cpp.
 // Build: g++ -O3 -std=c++17 -o constructive.exe constructive.cpp
@@ -818,6 +823,82 @@ static vector<XYWH> compact_layout(const vector<XYWH>& base){
     return best;
 }
 
+// ─── post-placement HPWL slack push ───────────────────────────────────────────
+// hgap is the dominant cost lever (weighted 0.412 vs agap 0.228 vs vrel 0.040).
+// Compaction packs toward frame faces (area) and can spread connected blocks apart,
+// lifting HPWL. This slides every FREE SINGLE block (no boundary code, no cluster,
+// not preplaced) toward its connectivity-weighted L1-median within the void
+// available inside the CURRENT bbox (coordinate descent, Gauss-Seidel). Such moves
+// are downside-free by construction: free singles don't define boundary or grouping
+// violations and stay inside the bbox, so area / bv / gf / mib are all unchanged --
+// only HPWL drops (and a move is accepted only if it strictly lowers it). The void
+// interval [lo,hi] is the gap to the nearest blocks overlapping in the other axis,
+// so the block stays in its slot and no overlap is ever created. Validated in Python
+// (dbg_hpwl_push.py) at -0.63% true cost, 0/100 regressions. ICCAD_NO_PUSH=1 disables.
+static bool PUSH = true;
+static int PUSH_PASSES = 8;
+static double wmedian(vector<pair<double,double>>& t){   // weighted L1 median
+    if (t.empty()) return 0.0;
+    sort(t.begin(),t.end());
+    double total=0; for(auto&q:t) total+=q.second;
+    double acc=0; for(auto&q:t){ acc+=q.second; if (acc>=total/2.0) return q.first; }
+    return t.back().first;
+}
+static void hpwl_push(vector<XYWH>& p){
+    if (!PUSH) return;
+    double xmin=1e18,ymin=1e18,xmax=-1e18,ymax=-1e18;
+    for (auto&q:p){xmin=min(xmin,q.x);ymin=min(ymin,q.y);xmax=max(xmax,q.x+q.w);ymax=max(ymax,q.y+q.h);}
+    vector<int> freeb;
+    for (int i=0;i<N;i++)
+        if (blocks[i].boundary==0 && blocks[i].cluster==0 && !blocks[i].is_preplaced)
+            freeb.push_back(i);
+    if (freeb.empty()) return;
+    auto hwire=[&](int i,double x,double y)->double{
+        double cx=x+p[i].w/2, cy=y+p[i].h/2, h=0;
+        for (auto&nb:b2b_adj[i]){ double ncx=p[nb.first].x+p[nb.first].w/2, ncy=p[nb.first].y+p[nb.first].h/2;
+            h+=nb.second*(fabs(cx-ncx)+fabs(cy-ncy)); }
+        for (auto&pn:p2b_adj[i]) h+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
+        return h;
+    };
+    for (int pass=0; pass<PUSH_PASSES; pass++){
+        bool moved=false;
+        for (int i:freeb){
+            double w=p[i].w, h=p[i].h;
+            // x-axis: void interval to nearest blocks overlapping in y
+            double lo=xmin, hi=xmax-w;
+            for (int j=0;j<N;j++){ if (j==i) continue;
+                if (p[j].y<p[i].y+h-TOL && p[i].y<p[j].y+p[j].h-TOL){
+                    if (p[j].x+p[j].w<=p[i].x+TOL) lo=max(lo,p[j].x+p[j].w);
+                    else if (p[j].x>=p[i].x+w-TOL)  hi=min(hi,p[j].x-w);
+                }
+            }
+            vector<pair<double,double>> tx;
+            for (auto&nb:b2b_adj[i]) tx.push_back({p[nb.first].x+p[nb.first].w/2, nb.second});
+            for (auto&pn:p2b_adj[i]) tx.push_back({pins[pn.first].first, pn.second});
+            if (!tx.empty() && hi>=lo-TOL){
+                double nx=min(max(wmedian(tx)-w/2, lo), hi);
+                if (fabs(nx-p[i].x)>TOL && hwire(i,nx,p[i].y)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].x=nx; moved=true; }
+            }
+            // y-axis: void interval to nearest blocks overlapping in x (use updated p[i].x)
+            lo=ymin; hi=ymax-h;
+            for (int j=0;j<N;j++){ if (j==i) continue;
+                if (p[j].x<p[i].x+w-TOL && p[i].x<p[j].x+p[j].w-TOL){
+                    if (p[j].y+p[j].h<=p[i].y+TOL) lo=max(lo,p[j].y+p[j].h);
+                    else if (p[j].y>=p[i].y+h-TOL)  hi=min(hi,p[j].y-h);
+                }
+            }
+            vector<pair<double,double>> ty;
+            for (auto&nb:b2b_adj[i]) ty.push_back({p[nb.first].y+p[nb.first].h/2, nb.second});
+            for (auto&pn:p2b_adj[i]) ty.push_back({pins[pn.first].second, pn.second});
+            if (!ty.empty() && hi>=lo-TOL){
+                double ny=min(max(wmedian(ty)-h/2, lo), hi);
+                if (fabs(ny-p[i].y)>TOL && hwire(i,p[i].x,ny)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].y=ny; moved=true; }
+            }
+        }
+        if (!moved) break;
+    }
+}
+
 // ─── fallback ─────────────────────────────────────────────────────────────────
 static vector<XYWH> shelf_fallback(const vector<int>& order){
     vector<XYWH> p=pos; double x0=0;
@@ -939,6 +1020,10 @@ static void solve() {
     // a low-proxy / high-true-cost outline (same failure mode as trying too many
     // frames). Compacting only the winner matched the validated prototype.
     if (COMPACT) best=compact_layout(best);
+    // Post-compaction HPWL push: slide free singles toward connectivity centroids
+    // into remaining void. Downside-free (area/bv/gf/mib unchanged), attacks the
+    // dominant hgap. Must run after compaction (its frame-face packs spread wire).
+    hpwl_push(best);
 
     if (getenv("CONSTRUCTIVE_DEBUG"))
         fprintf(stderr,"[dbg] N=%d frames=%d ok=%d shelf=%d bv=%d gf=%d\n",
@@ -991,6 +1076,8 @@ int main() {
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
+    if (getenv("ICCAD_NO_PUSH")) PUSH=false;
+    if (const char* e=getenv("ICCAD_PUSH_PASSES")){ int v=atoi(e); if (v>=0) PUSH_PASSES=v; }
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
     if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }
     if (getenv("ICCAD_WIRE_FOR_ALL")) WIRE_FOR_ALL=true;
