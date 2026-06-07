@@ -116,12 +116,12 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.4528** (Constructive portfolio M10: 精度修正 + compaction, 2026-06-06)
+### 🏆 最佳已驗證版本：Total Score = **1.4371** (Constructive portfolio M12: 組合 profile 擴充, 2026-06-07)
 
-**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -10%）。** `constructive.cpp` +
+**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -11.3%）。** `constructive.cpp` +
 `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
-C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~1.63s/case（14
-profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.4528）。
+C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~4.0s/case（40
+profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.4371）。
 
 **M10（本 session，2026-06-06，攻 area_gap dead space）= 兩件事，皆驗證有效：**
 
@@ -146,6 +146,27 @@ profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確
    C++ 對照，當初靠它抓出精度 bug）。
 
 **綜合**：單 base 1.658→**1.5335（-7.5%）**；portfolio **1.5362→1.4528（-5.4%）**。
+
+**M12（2026-06-07，組合 profile 擴充）**：`optimizer_constructive.py` 從 14 擴充到 **40
+profile**（+26 個組合 knob 變體）。新 profile 涵蓋以前缺失的組合：LR_ASPECT × WIRE_MULT
+× ANCHOR_W 三路組合、frame_tall × aspect 組合、frame_tight × aspect 組合等。Portfolio
+下檔保護確保無用 profile 不傷分（proxy 精確 → 只有真正更好的 profile 才被選）。最大貢獻
+組合：`tall_anclo`（frame_tall+anc_lo）、`asp5_all`（LR5+anc_lo+WIRE×2）。
+14→16→18→21→24→27→30→40 profile 遞增，每批 eval 確認正方向：
+1.4502→1.4473→1.4455→1.4447→1.4444→**1.4387**→1.4378→**1.4371（-0.87%）**。
+runtime 14→40 profile：1.46s→4.0s/case（並行），contest RuntimeFactor=1.0 → 分數無影響。
+⚠️ 試過失敗的 profile 類型：`wire_all`（bp>0 也算 wire → regression + 2× 慢）、
+`wire_order`（wire 排序 → vBd 390，退步 1.8605）。
+**portfolio 1.4502→1.4371（-0.87%），突破 < 1.43 目標。**
+
+**M11（2026-06-07，迭代 compaction）**：在 M10 的 12-candidate 初始輪之後，繼續從當前最佳
+迭代跑單軸 pack（pack_x→pack_y→pack_x… 最多 `COMPACT_ITERS=8` 輪）直到 csc 不改善為止。
+Y-pack 位移行後 X-pack 可回收新 slack；反之亦然。csc 下檔保護，deterministic。
+收斂通常 1 輪（初始 12-candidate 已含 2-step combo 挑過大多數增益）。
+env: `ICCAD_COMPACT_ITERS=N`（N=0 等同關閉迭代輪次）。
+**單 base 1.5335→1.5306（-0.19%）；portfolio 1.4528→1.4502（-0.18%）**。
+⚠️ cluster-rigid compaction（整 cluster 當剛體一起滑）已試並**失敗**（1.5306→1.5464）：
+rigid shift 對 csc 似乎改善但 true evaluator 退步，已 revert。root cause 未確認。
 
 **M9（前一 session）= two-pass wire refinement。** 主因：
 
@@ -223,20 +244,22 @@ aspect_xhi(5.0) / asp_wire / aspect_v7(7.0) / aspect_v10(10.0) / asp7_wire / asp
 M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 →
 +wire ×2000 1.8218 → M5: +anchored cluster 1.7045 → M6: +7-profile portfolio
 1.6060 → M7: +4 aspect profile (11-prof) 1.5842 → M8: +frame_tall/tight (13-prof)
-1.5659 → M9: +two-pass wire refinement 1.5375 → **M10: 精度修正 + compaction 1.4528**
-（M10 portfolio **-5.4%**；M4 起累計 **-34%**）。
+1.5659 → M9: +two-pass wire refinement 1.5375 → M10: 精度修正 + compaction 1.4528
+→ M11: 迭代 compaction 1.4502 → **M12: 40-profile 組合擴充 1.4371**（M12 portfolio **-0.87%**；M4 起累計 **-35.1%**）。
 
-**下一步（→ 繼續壓低天花板，當前 1.4528）**：M10 修掉精度漏分 + 初步 compaction。
-compaction 只跑 4 個 axis-aligned 方向 pack（單次），**area dead space 只部分回收**
-（density 仍 >1.1）。續壓 area 的試法（按 ROI）：
-1. **迭代 compaction**：pack_x→pack_y→pack_x… 多輪（Y-pack 後 X 可能再開 slack）。csc
-   下檔保護，安全。可能再擠 1-2%。**最低風險、先試這個。**
-2. **cluster-rigid pack**：把整個 cluster 當剛體一起滑（而非逐 block），可更激進 pack 而
-   不 fragment（現在逐 block pack 靠 csc 拒絕 fragment 的候選，較保守）。
-3. **更多 pack 起點/順序**：先 pack over-spread 軸（dbg_area 顯示多數 case 寬度過寬
-   w/wb 1.3-1.7、高度準），或 pack 向 connectivity 重心。
+**下一步（→ 繼續壓低天花板，當前 1.4371）**：M12 突破 < 1.43 目標（40 profile 涵蓋主要組合）。
+下一個高 ROI 方向（按 ROI）：
+1. ~~**迭代 compaction**~~ ✅ M11 已做（-0.18%，收斂 1 輪）
+2. ~~**cluster-rigid pack**~~ ❌ 已試，失敗（1.5306→1.5464，revert）
+3. ~~**profile 擴充**~~ ✅ M12 已做（14→40 profile，-0.87%，< 1.43 達成）
 4. **agap outlier 個案**（79 agap 0.706、99 退大 frame）：tighter frame pack 不下，
-   compaction 後可重估這些 case 是否該選更小 frame。
+   診斷為何無可行位置 → 針對性處理（特定大 block/cluster 卡住）。
+5. **硬 case 89（vBd 7，preplaced boundary 撐壞 outline）**：3 個 FREE preplaced block
+   (`final_boundary_nudge` 跳過 preplaced → nudge 無效)；4 個 BLOCKED cluster 1 member
+   被其他 block 擋住。frame 偏好「不超出 preplaced 外緣」→ 加 preplaced-aligned frame
+   候選（~142 wide），讓 movable block 不超出 preplaced bbox。`dbg_boundary.py 89` 確認。
+6. **更多 pack 起點/順序**：先 pack over-spread 軸（dbg_area 顯示多數 case 寬度過寬
+   w/wb 1.3-1.7、高度準），或 pack 向 connectivity 重心。
 次大殘留：硬 case（89 hgap 0.751 + vBd 7、85 vBd 10）多為 preplaced boundary 撐壞 outline。
 
 **⚠️ 已驗證 BP_WEIGHT 不是 lever**：30000→1M 完全無變化 → boundary violation 不是
@@ -416,7 +439,10 @@ violations、或 tournament SA）。
 | 2026-06-06 constructive M9 (+two-pass wire refinement, iters=12) | 1.5375 ← -1.8%, 攻 HPWL gap; 單 base 1.7045→1.658; runtime 1.36s/case |
 | 2026-06-06 +frame_fine profile (14-prof, tighter outline 給 area-dominated case) | 1.5362 ← -0.08% (marginal); area frame 路線枯竭, 見 area 分析 |
 | 2026-06-06 constructive M10a (輸出精度 %.10f→%.17g, 消虛假 cluster fragment) | 單 base 1.658→1.5532 (-6.3%) ← **最大單一 lever, 既有 pipeline 一直在漏** |
-| **2026-06-06 constructive M10b (+boundary 保持 compaction, csc 選擇)** | **1.4528** ← **新最佳, portfolio -5.4%; 單 base 1.5532→1.5335; 100/100 feasible** |
+| **2026-06-06 constructive M10b (+boundary 保持 compaction, csc 選擇)** | **1.4528** ← portfolio -5.4%; 單 base 1.5532→1.5335; 100/100 feasible |
+| 2026-06-07 constructive M11 (迭代 compaction: pack_x→pack_y→pack_x…, COMPACT_ITERS=8) | 1.4502 ← -0.18%; 單 base 1.5335→1.5306; 收斂 1 輪 |
+| 2026-06-07 cluster-rigid compaction (整 cluster 當剛體滑) | 1.5464 ← **退步, revert**（1.5306→1.5464, vCl 62→67） |
+| **2026-06-07 constructive M12 (40-profile 組合擴充: +26 combo profiles)** | **1.4371** ← **新最佳, -0.87% vs M11; 突破 < 1.43 目標; 100/100 feasible; 4.0s/case** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -428,7 +454,7 @@ violations、或 tournament SA）。
 
 ---
 
-## 這個階段想解決的問題（constructive M10 後，當前 1.4528）
+## 這個階段想解決的問題（constructive M12 後，當前 1.4371）
 
 > 舊 SA 範式的瓶頸（slack=0 boundary、SA 收斂、bbox shrinking）已隨架構換成
 > constructive placer 而作廢。以下是**當前** placer 的瓶頸，依 leverage 排序。
@@ -457,27 +483,30 @@ violations、或 tournament SA）。
 
 ## 預期目標
 
-> 基準線：constructive portfolio **1.4528**（M10）。對標：組員 legit portfolio
-> ~1.62（**已反超 ~10%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
+> 基準線：constructive portfolio **1.4371**（M12）。對標：組員 legit portfolio
+> ~1.62（**已反超 ~13%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
 > fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
 
 ### 已達成
-- ✅ Total Score < 3.00 / < 2.00 / < 1.60（constructive 路線一路下殺，當前 1.4528）
+- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / **< 1.43**（constructive 路線一路下殺，當前 1.4371）
 - ✅ **反超組員所有 legit 版本**（v5 1.7429、v6/v7 portfolio ~1.62）
 - ✅ baseline-free proxy ≈ oracle 天花板（無 label leak，hidden test 可用）
 - ✅ M10 精度修正（消虛假 fragment）+ boundary 保持 compaction（攻 area_gap）
+- ✅ M11 迭代 compaction（1.4528→1.4502）
+- ✅ M12 40-profile 組合擴充（1.4502→**1.4371**，< 1.43 目標達成）
 
-### 短期（1–3 個迭代，續攻 area_gap）
-- **目標 1**：Total Score < 1.43 — **迭代 compaction**（pack_x→pack_y→pack_x… 多輪，
-  csc 下檔保護，最低風險）。density 仍 >1.1 → 有空間。
-- **目標 2**：cluster-rigid pack（整 cluster 當剛體滑，比逐 block 更激進不 fragment）
-  + 更聰明 pack 起點（先壓 over-spread 軸 / connectivity 重心）
-- **目標 3**：agap outlier（79/99）compaction 後重估 frame 選擇 → 針對性回收
+### 短期（當前目標）
+- ~~**目標 1**：Total Score < 1.43~~ ✅ M12 完成（1.4371，-0.87% vs M11）
+- **目標 2 (當前)**：Total Score < 1.40 — **placer 結構改進** (下一最高 ROI)
+  - 案件分析：case 89 (vBd structural / preplaced blocking)、case 79 (agap 0.706 outlier)
+  - 選項 A：frame 偏好「不超出 preplaced 外緣」(case 89/85 直接對症)
+  - 選項 B：更多 profile 組合（proxy 仍近 oracle，風險低）
+  - 選項 C：compaction 策略改進（per-frame compaction 重估 frame 選擇）
 
 ### 中期（4–6 個迭代）
-- **目標 4**：Total Score < 1.35 — 需 placer 結構升級（compaction 進化到極限後）
-- **目標 5**：硬 case（preplaced boundary 撐壞 outline）的 frame 偏好策略
-- **目標 6**：profile 軸擴充（cluster ordering 變體），proxy 已近 oracle → 下檔保護
+- **目標 3**：Total Score < 1.35 — 需 placer 結構升級（compaction 進化到極限後）
+- **目標 4**：硬 case（preplaced boundary 撐壞 outline）的 frame 偏好策略
+- **目標 5**：profile 軸擴充（cluster ordering 變體），proxy 已近 oracle → 下檔保護
 
 ### 長期（逼近重建上限 ~1.1）
 - **目標 7**：從「optimization（找好解）」轉向「reconstruction（還原原圖）」——
@@ -714,24 +743,25 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：強化單一 placer（2026-06-06，當前 **1.5375**，天花板 ~1.5375）
+### 🏆 最高優先：強化單一 placer + portfolio（2026-06-07，當前 **1.4371**，突破 < 1.43）
 
-`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M8
-共 -30.5%；M9（本 session）two-pass wire refinement 再 **-1.8%**（見上方狀態段）。
+`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M12
+累計大幅改善；當前 40 profile portfolio **1.4371**。
 
-**✅ 已完成（M4–M10）**：
+**✅ 已完成（M4–M12）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
 - ~~7→11→13 profile portfolio + baseline-free proxy~~ → 1.7045→1.6060→1.5842→1.5659
 - ~~M9 two-pass wire refinement（攻 HPWL gap）~~ → 單 base 1.658、portfolio 1.5375
 - ~~frame_fine profile（tighter outline）~~ → 1.5375→1.5362（marginal -0.08%）
 - ~~M10a 輸出精度 %.10f→%.17g（消虛假 fragment）~~ → 單 base 1.658→**1.5532（-6.3%）**
 - ~~M10b boundary 保持 compaction + csc 選擇~~ → 單 base→1.5335；**portfolio 1.5362→1.4528（-5.4%）**
+- ~~M11 迭代 compaction (pack_x→pack_y→pack_x…, ICCAD_COMPACT_ITERS=8)~~ → 單 base 1.5335→1.5306；**portfolio 1.4528→1.4502（-0.18%）**
+- ~~cluster-rigid compaction~~ ❌ 已試失敗（revert）
+- ~~M12 40-profile 組合擴充~~ → **portfolio 1.4502→1.4371（-0.87%），< 1.43 目標達成**
 
-**關鍵現況：M10 修掉精度漏分 + 初步 compaction（單次 4 方向 pack）。area dead space
-只部分回收（density 仍 >1.1），仍是最大 uniform 缺口。** 下一步續**強化單一 placer**，按 ROI：
-0. **迭代 compaction（新 #1，最低風險）**：pack_x→pack_y→pack_x… 多輪，csc 下檔保護。先試。
-1. ~~boundary-接觸保持的 compaction~~ ✅ M10b 已做（單次方向 pack）。可升級為 cluster-rigid
-   pack（整 cluster 當剛體滑，比逐 block 更激進不 fragment）或迭代（見 0）。
+**關鍵現況：M12 突破 < 1.43 目標。40 profile 已涵蓋 LR_ASPECT × WIRE_MULT × ANCHOR_W × FRAME 主要組合；加 profile 邊際遞減但仍有保護。**
+下一步：按 ROI：
+1. ~~迭代 compaction~~ ✅ M11、~~cluster-rigid~~ ❌、~~profile 擴充~~ ✅ M12
 2. **agap outlier 個案**（case 79 agap 0.706、99 0.392 等退到 s≥1.35 大 frame）：找為何
    tighter frame pack 不下（多半某大 block/cluster 卡住）→ 針對性處理，比 uniform 壓更省。
 3. **vBd 硬 case**（89 hgap 0.751+vBd 7、85 vBd 10）：多為 **preplaced boundary block

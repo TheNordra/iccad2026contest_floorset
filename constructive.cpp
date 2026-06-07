@@ -12,6 +12,10 @@
 //     previous-pass positions (force-directed coordinate descent), keeping the
 //     best by layout_score per frame. Single base 1.7045->1.658, portfolio
 //     1.5659->1.5375. Deterministic; ICCAD_NO_REFINE / ICCAD_REFINE_ITERS knobs.
+// M11: iterative compaction. After the initial 12-candidate round in compact_layout,
+//     continue packing from the current best until convergence: each Y-pack shifts
+//     rows so a subsequent X-pack can reclaim new slack. csc downside-protected;
+//     converges typically in 1 pass. ICCAD_COMPACT_ITERS (default 8) controls max rounds.
 //
 // Input/Output format identical to optimizer_claude.cpp.
 // Build: g++ -O3 -std=c++17 -o constructive.exe constructive.cpp
@@ -41,6 +45,8 @@ static int N;
 static double BP_W = 30000.0;   // boundary-miss penalty in greedy item scoring
 static double WIRE_MULT = 1.0;  // extra scale on the incremental-HPWL term (env)
 static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
+static bool WIRE_FOR_ALL = false; // ICCAD_WIRE_FOR_ALL: compute wire for ALL bp positions
+static bool WIRE_ORDER = false;   // ICCAD_WIRE_ORDER: sort items by total_wire first (hpwl-first packing)
 static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
@@ -84,6 +90,7 @@ struct Item {
     vector<pair<double,double>> offs;
     double w, h;
     int bscore;
+    double total_wire;   // sum of b2b edge weights over all members
     double ax, ay, aw;   // anchor
 };
 
@@ -176,8 +183,12 @@ static void finalize_item(Item& it) {
         w=max(w, it.offs[k].first+bw); h=max(h, it.offs[k].second+bh);
     }
     it.w=w; it.h=h;
-    int bs=0; for (int b: it.blocks) bs+=block_boundary_score(b);
-    it.bscore=bs;
+    int bs=0; double tw=0;
+    for (int b: it.blocks) {
+        bs+=block_boundary_score(b);
+        for (auto& nb:b2b_adj[b]) tw+=nb.second;
+    }
+    it.bscore=bs; it.total_wire=tw;
 }
 // fragments / boundary-exposure of a cluster's internal layout (offsets in item
 // frame). These are soft-constraint signals we rank ahead of compactness, since
@@ -502,9 +513,8 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
             double ad=it.aw>0?fabs(cx-it.ax)+fabs(cy-it.ay):0.0;
             double bp=item_boundary_penalty(it,x,y,fw,fh);
             double area=bbox_area_with(x,y,it.w,it.h);
-            // incremental HPWL to already-placed connected neighbors + pins
             double wire=0.0;
-            if (bp==0){
+            if (bp==0 || WIRE_FOR_ALL){
                 for (size_t k=0;k<it.blocks.size();k++){
                     int b=it.blocks[k];
                     double mcx=x+it.offs[k].first+dims[b].first/2, mcy=y+it.offs[k].second+dims[b].second/2;
@@ -692,6 +702,7 @@ static double layout_score(const vector<XYWH>& p){
 // (which includes the original), so a pack that worsens area/hpwl/violations is
 // simply not selected. ICCAD_NO_COMPACT=1 disables it.
 static bool COMPACT = true;
+static int COMPACT_ITERS = 8; // iterative compaction rounds (ICCAD_COMPACT_ITERS)
 static vector<XYWH> pack_x(const vector<XYWH>& in, int dir, double anchor){
     int n=in.size(); vector<XYWH> out=in; vector<char> placed(n,0);
     vector<int> ord(n); for(int i=0;i<n;i++) ord[i]=i;
@@ -789,6 +800,21 @@ static vector<XYWH> compact_layout(const vector<XYWH>& base){
         consider(finish(pack_x(*yy,-1,xmin)));
         consider(finish(pack_x(*yy,1,xmax)));
     }
+    // Iterative passes: after the initial 12-candidate round, continue packing
+    // from the current best until convergence. Each Y-pack shifts rows so a
+    // subsequent X-pack can reclaim new slack (and vice versa). Stop when no
+    // single-axis pack improves the csc proxy. ICCAD_COMPACT_ITERS (default 8).
+    for (int iter=0; iter<COMPACT_ITERS; iter++){
+        double cx0=1e18,cy0=1e18,cx1=-1e18,cy1=-1e18;
+        for (auto&q:best){cx0=min(cx0,q.x);cy0=min(cy0,q.y);cx1=max(cx1,q.x+q.w);cy1=max(cy1,q.y+q.h);}
+        double prev_bsc=bsc;
+        const vector<XYWH> cur=best;
+        consider(finish(pack_x(cur,-1,cx0)));
+        consider(finish(pack_x(cur,1,cx1)));
+        consider(finish(pack_y(cur,-1,cy0)));
+        consider(finish(pack_y(cur,1,cy1)));
+        if (bsc>=prev_bsc) break;
+    }
     return best;
 }
 
@@ -849,12 +875,23 @@ static void solve() {
         Item it; it.blocks={i}; it.offs={{0,0}}; finalize_item(it); set_item_anchor(it);
         items.push_back(it);
     }
-    sort(items.begin(),items.end(),[](const Item&a,const Item&b){
-        if (a.bscore!=b.bscore) return a.bscore>b.bscore;
-        if (a.blocks.size()!=b.blocks.size()) return a.blocks.size()>b.blocks.size();
-        double aa=a.w*a.h,ab=b.w*b.h; if (fabs(aa-ab)>TOL) return aa>ab;
-        return max(a.w,a.h)>max(b.w,b.h);
-    });
+    if (WIRE_ORDER) {
+        // Sort by total wire weight first (hpwl-driven packing: most-connected items placed first)
+        sort(items.begin(),items.end(),[](const Item&a,const Item&b){
+            if (fabs(a.total_wire-b.total_wire)>1e-6) return a.total_wire>b.total_wire;
+            if (a.bscore!=b.bscore) return a.bscore>b.bscore;
+            if (a.blocks.size()!=b.blocks.size()) return a.blocks.size()>b.blocks.size();
+            double aa=a.w*a.h,ab=b.w*b.h; if (fabs(aa-ab)>TOL) return aa>ab;
+            return max(a.w,a.h)>max(b.w,b.h);
+        });
+    } else {
+        sort(items.begin(),items.end(),[](const Item&a,const Item&b){
+            if (a.bscore!=b.bscore) return a.bscore>b.bscore;
+            if (a.blocks.size()!=b.blocks.size()) return a.blocks.size()>b.blocks.size();
+            double aa=a.w*a.h,ab=b.w*b.h; if (fabs(aa-ab)>TOL) return aa>ab;
+            return max(a.w,a.h)>max(b.w,b.h);
+        });
+    }
 
     vector<int> order; for(int i=0;i<N;i++) if(!blocks[i].is_preplaced) order.push_back(i);
 
@@ -955,6 +992,9 @@ int main() {
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
+    if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }
+    if (getenv("ICCAD_WIRE_FOR_ALL")) WIRE_FOR_ALL=true;
+    if (getenv("ICCAD_WIRE_ORDER")) WIRE_ORDER=true;
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;
