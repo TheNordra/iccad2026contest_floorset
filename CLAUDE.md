@@ -116,7 +116,7 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.4371** (Constructive portfolio M12: 組合 profile 擴充, 2026-06-07)
+### 🏆 最佳已驗證版本：Total Score = **1.4349** (Constructive portfolio M13: narrow frame + proxy _RH 修正, 2026-06-07)
 
 **反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -11.3%）。** `constructive.cpp` +
 `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
@@ -147,6 +147,31 @@ profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確
 
 **綜合**：單 base 1.658→**1.5335（-7.5%）**；portfolio **1.5362→1.4528（-5.4%）**。
 
+**M13（2026-06-07，narrow frame profile + proxy _RH 修正）= 兩件事，第二件是最大 lever：**
+
+1. **narrow-frame profile（40→44 profile）。** `dbg_area` 顯示 dead space 是**系統性水平**
+   的：`w/wb`（我們寬/baseline 寬）普遍 1.3-1.5、`h/hb`≈1.0 → **我們 pack 太寬**。加 4 個比
+   frame_tall（aspect 0.67-0.33）**更窄**的 outline profile（aspect **0.55-0.28**：narrow /
+   narrow_wire_anc / narrow_wire / narrow_anc）。逐案真值比較確認：narrow **贏下最高權重的
+   case 98（n=119）與 87**（frame_tall 搆不到）。但單獨加 narrow 只到 **1.4369**（≈ 沒動）—
+   因為 proxy 選不出來（見下）。
+2. **🔑 proxy `_RH` 1.0→1.4（最大 lever，realize 整個 oracle ceiling）。** 診斷 case 98：
+   proxy 選 LR3.5（真 cost 1.4892），但真正最佳是 narrow（1.4697）。根因：true cost =
+   `0.5·(hpwl/hbase + area/abase)·exp(2·vrel)`，而 proxy 用 **hmin（各 profile 最小 hpwl）
+   當 hbase 的替身**。我們永遠贏不過 baseline hpwl → `hmin > hbase`，比值 `hmin/hbase ≈
+   1.3-1.4`（case 98 418/308=1.36、96 1.38、94 1.30，**跨案集中**）→ raw proxy **低估 hpwl
+   項**，選不出 hpwl 最低的 narrow。對策：proxy 的 hpwl 權重 `_RH` 從 1.0 提到 **1.4** 補償。
+   `rh_sweep.py` 離線掃描（4200 profile×case 真值快取，offline 掃 _RH）：**_RH 1.3-1.6 是平坦
+   盆地，全部命中 oracle ceiling 1.4349**（_RH=1.0 才 1.4369）→ 泛化安全（非尖峰）。選 1.4
+   （盆地中心 + 等於 principled hmin/hbase 均值）。
+
+**綜合**：portfolio **1.4371→1.4349（-0.15%）**，100/100 feasible，4.59s/case。**proxy 現在 =
+oracle ceiling**（44 profile 完美選擇）→ selection 不再是瓶頸，往後加 profile 全額 realize。
+⚠️ 試過失敗：preplaced-aligned frame（攻 case 89）— greedy packer pack 不下 tighter width，
+case 89 結構性無解，且 incidental 贏的案全被現有 profile 蓋過（零貢獻）。見下方 M12 段尾。
+工具：`rh_sweep.py`（建真值快取 + 掃 _RH/proxy 參數，最快 proxy 調參器）、`proxy_dbg.py
+<ids>`（單案逐 profile proxy vs 真 cost，找 mis-selection）、`profile_vs_portfolio.py`。
+
 **M12（2026-06-07，組合 profile 擴充）**：`optimizer_constructive.py` 從 14 擴充到 **40
 profile**（+26 個組合 knob 變體）。新 profile 涵蓋以前缺失的組合：LR_ASPECT × WIRE_MULT
 × ANCHOR_W 三路組合、frame_tall × aspect 組合、frame_tight × aspect 組合等。Portfolio
@@ -158,6 +183,20 @@ runtime 14→40 profile：1.46s→4.0s/case（並行），contest RuntimeFactor=
 ⚠️ 試過失敗的 profile 類型：`wire_all`（bp>0 也算 wire → regression + 2× 慢）、
 `wire_order`（wire 排序 → vBd 390，退步 1.8605）。
 **portfolio 1.4502→1.4371（-0.87%），突破 < 1.43 目標。**
+
+**M12 後（2026-06-07）試過失敗：preplaced-aligned frame（option A，攻 case 89）。**
+診斷 case 89（cost 1.848，最高）：3 個 FREE preplaced RIGHT block 在 x=142，但 movable
+block（16/34/67/78/97）pack 到 145.03 → bbox 右緣 145 > 142 → preplaced 達不到右邊界 →
+3 個虛假 vBd。對策：加「width 釘在 pre_w(=142) 的 frame 候選」，逼 movable 不超出 preplaced
+外緣。**失敗，已 revert**：(1) greedy packer **packtight 不下** width 142（即使 frame 加高
+到 total×2.0，pack_in_frame 仍回 false → case 89 完全不動，bv 維持 7）；(2) 把 pinned frame
+強制 always-try 後，layout_score 因 150000·bv 權重愛上 pinned frame（case 85/99/80 退步，
+bv 降但 agap 爆），但 case 89 仍不動；(3) 唯一「贏」的 case（79/88/84/67/74/46）**全部已被
+現有 aspect/frame profile 在 portfolio 蓋過**（逐案比 portfolio cost：preplaced-frame 無一
+勝出）→ portfolio 淨增益 **= 0**。**結論：case 89 結構性無解（packer 牆），preplaced-frame
+對 portfolio 零貢獻。** env 旋鈕 `ICCAD_PREPLACED_FRAME` 與相關 code 已全部移除。
+工具：`profile_vs_portfolio.py`（跑任意 env profile，逐案比 portfolio JSON cost，算 oracle-min
+增益 — 通用「新 profile 值不值得加」測試器，用法 `profile_vs_portfolio.py KEY=VAL ...`）。
 
 **M11（2026-06-07，迭代 compaction）**：在 M10 的 12-candidate 初始輪之後，繼續從當前最佳
 迭代跑單軸 pack（pack_x→pack_y→pack_x… 最多 `COMPACT_ITERS=8` 輪）直到 csc 不改善為止。
@@ -245,9 +284,12 @@ M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 �
 +wire ×2000 1.8218 → M5: +anchored cluster 1.7045 → M6: +7-profile portfolio
 1.6060 → M7: +4 aspect profile (11-prof) 1.5842 → M8: +frame_tall/tight (13-prof)
 1.5659 → M9: +two-pass wire refinement 1.5375 → M10: 精度修正 + compaction 1.4528
-→ M11: 迭代 compaction 1.4502 → **M12: 40-profile 組合擴充 1.4371**（M12 portfolio **-0.87%**；M4 起累計 **-35.1%**）。
+→ M11: 迭代 compaction 1.4502 → M12: 40-profile 組合擴充 1.4371 → **M13: narrow frame +
+proxy _RH=1.4 修正 1.4349**（M13 portfolio **-0.15%**；M4 起累計 **-35.2%**）。
 
-**下一步（→ 繼續壓低天花板，當前 1.4371）**：M12 突破 < 1.43 目標（40 profile 涵蓋主要組合）。
+**下一步（→ 繼續壓低天花板，當前 1.4349）**：M13 修好 proxy（_RH=1.4 → proxy = oracle
+ceiling），selection 不再是瓶頸 → **加 profile 現在全額 realize**（M12 加 profile 只 realize 一半
+是因為 _RH=1.0 選不準）。M12 突破 < 1.43；M13 再 -0.15%。
 下一個高 ROI 方向（按 ROI）：
 1. ~~**迭代 compaction**~~ ✅ M11 已做（-0.18%，收斂 1 輪）
 2. ~~**cluster-rigid pack**~~ ❌ 已試，失敗（1.5306→1.5464，revert）
@@ -442,7 +484,10 @@ violations、或 tournament SA）。
 | **2026-06-06 constructive M10b (+boundary 保持 compaction, csc 選擇)** | **1.4528** ← portfolio -5.4%; 單 base 1.5532→1.5335; 100/100 feasible |
 | 2026-06-07 constructive M11 (迭代 compaction: pack_x→pack_y→pack_x…, COMPACT_ITERS=8) | 1.4502 ← -0.18%; 單 base 1.5335→1.5306; 收斂 1 輪 |
 | 2026-06-07 cluster-rigid compaction (整 cluster 當剛體滑) | 1.5464 ← **退步, revert**（1.5306→1.5464, vCl 62→67） |
-| **2026-06-07 constructive M12 (40-profile 組合擴充: +26 combo profiles)** | **1.4371** ← **新最佳, -0.87% vs M11; 突破 < 1.43 目標; 100/100 feasible; 4.0s/case** |
+| 2026-06-07 constructive M12 (40-profile 組合擴充: +26 combo profiles) | 1.4371 ← -0.87% vs M11; 突破 < 1.43 目標; 100/100 feasible; 4.0s/case |
+| 2026-06-07 M13a (+4 narrow-frame profile, aspect 0.55-0.28, 攻水平 dead space) | 1.4369 ← 贏 case 98/87 真值, 但 proxy(_RH=1.0) 選不出 → 幾乎沒動 |
+| **2026-06-07 constructive M13b (proxy _RH 1.0→1.4: hmin/hbase 補償)** | **1.4349** ← **新最佳, -0.15% vs M12; proxy = oracle ceiling 1.4349; 100/100 feasible; 4.59s/case** |
+| 2026-06-07 preplaced-aligned frame (攻 case 89) | **失敗, revert** ← greedy pack 不下 tighter width; 贏的案全被現有 profile 蓋過 (零貢獻) |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -454,7 +499,7 @@ violations、或 tournament SA）。
 
 ---
 
-## 這個階段想解決的問題（constructive M12 後，當前 1.4371）
+## 這個階段想解決的問題（constructive M13 後，當前 1.4349）
 
 > 舊 SA 範式的瓶頸（slack=0 boundary、SA 收斂、bbox shrinking）已隨架構換成
 > constructive placer 而作廢。以下是**當前** placer 的瓶頸，依 leverage 排序。
@@ -472,41 +517,49 @@ violations、或 tournament SA）。
 
 ### C. 硬 case：preplaced boundary block 撐壞 outline
 - case 89 (hgap 0.751 + vBd 7)、85 (vBd 10)：preplaced 位置固定，bbox 邊到不了它
-- 結構約束 > wire/compaction 拉力 → frame 選擇宜偏好「不超出 preplaced 外緣」
+- ⚠️ **frame 偏好「不超出 preplaced 外緣」已試並失敗（M13）**：greedy packer **pack 不下**
+  width 釘在 preplaced 外緣的 tighter frame（case 89 完全不動）。結構性無解，見 M13 段。
 
-### D. proxy selector / profile 多樣性
-- 14-profile baseline-free proxy 已近 oracle 天花板（M8 時 proxy=oracle=1.5659）
-- M10 後 proxy 需用 **shapely vrel**（wrapper `_proxy_metrics`），%.17g 後 shapely 與
-  C++ 內部更一致 → 選擇更準。加 profile 仍下檔保護（無用只花 runtime）
+### D. proxy selector / profile 多樣性（M13 後 proxy = oracle ceiling）
+- ✅ **M13 已修好 proxy**：_RH 1.0→1.4（補償 hmin/hbase≈1.3-1.4）→ proxy **完美命中
+  oracle 天花板 1.4349**。selection 不再是瓶頸。
+- 加 profile 現在**全額 realize**（M12 加 profile 半realize 是因為 _RH=1.0 選不準）→
+  oracle ceiling 本身才是新天花板。下一步壓 ceiling 要靠**新 layout 多樣性**（新 profile 軸
+  或 placer 改進降低每案最佳 cost），不是 selection。
+- proxy 用 **shapely vrel**（wrapper `_proxy_metrics`）。掃 _RH/proxy 參數用 `rh_sweep.py`。
 
 ---
 
 ## 預期目標
 
-> 基準線：constructive portfolio **1.4371**（M12）。對標：組員 legit portfolio
+> 基準線：constructive portfolio **1.4349**（M13）。對標：組員 legit portfolio
 > ~1.62（**已反超 ~13%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
 > fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
 
 ### 已達成
-- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / **< 1.43**（constructive 路線一路下殺，當前 1.4371）
+- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / **< 1.435**（constructive 路線一路下殺，當前 1.4349）
 - ✅ **反超組員所有 legit 版本**（v5 1.7429、v6/v7 portfolio ~1.62）
 - ✅ baseline-free proxy ≈ oracle 天花板（無 label leak，hidden test 可用）
 - ✅ M10 精度修正（消虛假 fragment）+ boundary 保持 compaction（攻 area_gap）
 - ✅ M11 迭代 compaction（1.4528→1.4502）
-- ✅ M12 40-profile 組合擴充（1.4502→**1.4371**，< 1.43 目標達成）
+- ✅ M12 40-profile 組合擴充（1.4502→1.4371，< 1.43 目標達成）
+- ✅ M13 narrow-frame profile + proxy _RH=1.4（1.4371→**1.4349**，proxy = oracle ceiling）
 
 ### 短期（當前目標）
 - ~~**目標 1**：Total Score < 1.43~~ ✅ M12 完成（1.4371，-0.87% vs M11）
-- **目標 2 (當前)**：Total Score < 1.40 — **placer 結構改進** (下一最高 ROI)
-  - 案件分析：case 89 (vBd structural / preplaced blocking)、case 79 (agap 0.706 outlier)
-  - 選項 A：frame 偏好「不超出 preplaced 外緣」(case 89/85 直接對症)
-  - 選項 B：更多 profile 組合（proxy 仍近 oracle，風險低）
-  - 選項 C：compaction 策略改進（per-frame compaction 重估 frame 選擇）
+- ~~**目標 1b**：proxy 命中 oracle ceiling~~ ✅ M13 完成（_RH=1.4 → 1.4349 = ceiling）
+- **目標 2 (當前)**：Total Score < 1.40 — **新 layout 多樣性 / placer 結構改進**（proxy 已
+  完美 → 壓 oracle ceiling 本身才有用；selection 已盡）
+  - 案件分析：case 79 (agap 0.706 outlier)、case 89 (structural, ⚠️ preplaced-frame 已試失敗)
+  - 選項 A：新 profile 軸（cluster ordering 變體 / compaction 方向）— 全額 realize（proxy 完美）
+  - 選項 B：compaction 策略改進（per-frame compaction 重估 frame 選擇）
+  - 選項 C：placer HPWL 改進（hgap 仍是最大 uniform 殘留，攻它降全案 oracle cost）
 
 ### 中期（4–6 個迭代）
-- **目標 3**：Total Score < 1.35 — 需 placer 結構升級（compaction 進化到極限後）
-- **目標 4**：硬 case（preplaced boundary 撐壞 outline）的 frame 偏好策略
-- **目標 5**：profile 軸擴充（cluster ordering 變體），proxy 已近 oracle → 下檔保護
+- **目標 3**：Total Score < 1.35 — 需 placer 結構升級（壓 oracle ceiling，非 selection）
+- **目標 4**：硬 case（preplaced boundary 撐壞 outline）— ⚠️ frame 偏好策略已試失敗（M13），
+  需 packer 能 pack tight（greedy packer 升級）才可能解
+- **目標 5**：profile 軸擴充（cluster ordering 變體），proxy 完美 → 全額 realize（不再半realize）
 
 ### 長期（逼近重建上限 ~1.1）
 - **目標 7**：從「optimization（找好解）」轉向「reconstruction（還原原圖）」——
@@ -619,8 +672,13 @@ FloorSet/
 ├── constructive.cpp        ← 🏆 主程式: 建構式定框 floorplanner (C++, B 路線重寫組員架構)
 │                              + M9 two-pass wire refinement + M10 %.17g 精度 / compaction
 │                              deterministic; env 旋鈕 (NO_COMPACT/NO_REFINE/...) + METRICS stderr
-├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 14 profile + baseline-free
-│                              shapely-proxy 選擇 (當前最佳 1.4528, ~1.63s/case)
+├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 44 profile + baseline-free
+│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.4349, ~4.6s/case)
+├── rh_sweep.py             ← 🆕 OFFLINE: 建 profile×case 真值快取(並行) + 掃 _RH/proxy 參數
+│                              (最快 proxy 調參器; M13 靠它找出 _RH=1.4 命中 oracle 1.4349)
+├── proxy_dbg.py            ← 🆕 單案逐 profile proxy vs 真 cost (找 proxy mis-selection)
+├── profile_vs_portfolio.py ← 🆕 跑任意 env profile 逐案比 portfolio JSON, 算 oracle-min 增益
+│                              (通用「新 profile 值不值得加」測試器)
 ├── portfolio_ceiling.py    ← 🆕 OFFLINE: 跑多 profile 算 oracle 天花板 + proxy 公式
 │                              搜尋 (確認 proxy≈oracle; harness vs C++ vrel 比對)
 ├── dbg_constructive.py     ← constructive 單 case debug (serialize + run + bbox/bv/gf)
@@ -743,12 +801,12 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：強化單一 placer + portfolio（2026-06-07，當前 **1.4371**，突破 < 1.43）
+### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-07，當前 **1.4349**，proxy = oracle ceiling）
 
-`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M12
-累計大幅改善；當前 40 profile portfolio **1.4371**。
+`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M13
+累計大幅改善；當前 **44 profile portfolio 1.4349，proxy 完美命中 oracle ceiling**。
 
-**✅ 已完成（M4–M12）**：
+**✅ 已完成（M4–M13）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
 - ~~7→11→13 profile portfolio + baseline-free proxy~~ → 1.7045→1.6060→1.5842→1.5659
 - ~~M9 two-pass wire refinement（攻 HPWL gap）~~ → 單 base 1.658、portfolio 1.5375
@@ -758,13 +816,19 @@ full training：
 - ~~M11 迭代 compaction (pack_x→pack_y→pack_x…, ICCAD_COMPACT_ITERS=8)~~ → 單 base 1.5335→1.5306；**portfolio 1.4528→1.4502（-0.18%）**
 - ~~cluster-rigid compaction~~ ❌ 已試失敗（revert）
 - ~~M12 40-profile 組合擴充~~ → **portfolio 1.4502→1.4371（-0.87%），< 1.43 目標達成**
+- ~~M13a +4 narrow-frame profile（aspect 0.55-0.28，攻水平 dead space）~~ → 1.4371→1.4369（proxy 選不出）
+- ~~M13b proxy _RH 1.0→1.4（補償 hmin/hbase）~~ → **portfolio 1.4369→1.4349，proxy = oracle ceiling**
+- ~~preplaced-aligned frame（攻 case 89）~~ ❌ 已試失敗（greedy pack 不下 tighter width）
 
-**關鍵現況：M12 突破 < 1.43 目標。40 profile 已涵蓋 LR_ASPECT × WIRE_MULT × ANCHOR_W × FRAME 主要組合；加 profile 邊際遞減但仍有保護。**
-下一步：按 ROI：
-1. ~~迭代 compaction~~ ✅ M11、~~cluster-rigid~~ ❌、~~profile 擴充~~ ✅ M12
-2. **agap outlier 個案**（case 79 agap 0.706、99 0.392 等退到 s≥1.35 大 frame）：找為何
+**關鍵現況：M13 修好 proxy → proxy = oracle ceiling（44 profile 完美選擇）。selection 路線已盡，
+往後壓分要靠新 layout 多樣性 / placer 改進（降低每案最佳 cost），不是選擇。** 下一步：按 ROI：
+1. ~~proxy _RH 修正~~ ✅ M13、~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、~~preplaced-frame~~ ❌
+2. **新 profile 軸**（cluster ordering 變體 / compaction 方向偏好）：proxy 完美 → **全額 realize**
+   （不再像 M12 半 realize）。用 `profile_vs_portfolio.py` 先離線確認新 profile 贏哪些案。
+3. **placer HPWL 改進**（hgap 仍是最大 uniform 殘留）：攻它降全案 oracle cost。
+4. **agap outlier 個案**（case 79 agap 0.706 等退到 s≥1.35 大 frame）：找為何
    tighter frame pack 不下（多半某大 block/cluster 卡住）→ 針對性處理，比 uniform 壓更省。
-3. **vBd 硬 case**（89 hgap 0.751+vBd 7、85 vBd 10）：多為 **preplaced boundary block
+5. **vBd 硬 case**（89 hgap 0.751+vBd 7、85 vBd 10）：多為 **preplaced boundary block
    撐壞 outline**（位置固定，bbox 邊到不了它）→ frame 選擇偏好「不超出 preplaced 外緣」。
    refinement 幫助有限（結構約束 > wire 拉力）。用 `dbg_boundary.py` 確認佔比。
 4. **次要**：剩餘 profile 軸（cluster ordering 變體）；掃 `ICCAD_REFINE_ITERS`（12-24 平緩，
