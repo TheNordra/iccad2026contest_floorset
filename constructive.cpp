@@ -20,7 +20,13 @@
 //     frame-face compaction can spread connected blocks apart. After compaction we
 //     slide every FREE SINGLE block toward its connectivity-weighted L1-median within
 //     the void inside the current bbox. Downside-free (area/bv/gf/mib unchanged), so
-//     default-on for every profile. Portfolio 1.4349 -> 1.42xx. ICCAD_NO_PUSH=1.
+//     default-on for every profile. Portfolio 1.4349 -> 1.4253. ICCAD_NO_PUSH=1.
+// M15: widen the HPWL push movable range to BOUNDARY SINGLE blocks. A boundary block
+//     has exactly one axis pinned by its edge (LEFT/RIGHT pin x, TOP/BOTTOM pin y);
+//     sliding the free axis keeps edge-contact, so bv is preserved -- still
+//     downside-free. Portfolio 1.4253 -> 1.4236. (Rigid free-cluster slide was tried
+//     and rejected: clusters have no slack and FP translation breaks exact abutments;
+//     see hpwl_push comment.)
 //
 // Input/Output format identical to optimizer_claude.cpp.
 // Build: g++ -O3 -std=c++17 -o constructive.exe constructive.cpp
@@ -824,18 +830,34 @@ static vector<XYWH> compact_layout(const vector<XYWH>& base){
 }
 
 // ─── post-placement HPWL slack push ───────────────────────────────────────────
-// hgap is the dominant cost lever (weighted 0.412 vs agap 0.228 vs vrel 0.040).
+// hgap is the dominant cost lever (weighted 0.404 vs agap 0.23 vs vrel 0.04).
 // Compaction packs toward frame faces (area) and can spread connected blocks apart,
-// lifting HPWL. This slides every FREE SINGLE block (no boundary code, no cluster,
-// not preplaced) toward its connectivity-weighted L1-median within the void
-// available inside the CURRENT bbox (coordinate descent, Gauss-Seidel). Such moves
-// are downside-free by construction: free singles don't define boundary or grouping
-// violations and stay inside the bbox, so area / bv / gf / mib are all unchanged --
-// only HPWL drops (and a move is accepted only if it strictly lowers it). The void
-// interval [lo,hi] is the gap to the nearest blocks overlapping in the other axis,
-// so the block stays in its slot and no overlap is ever created. Validated in Python
-// (dbg_hpwl_push.py) at -0.63% true cost, 0/100 regressions. ICCAD_NO_PUSH=1 disables.
+// lifting HPWL. This slides blocks toward their connectivity-weighted L1-median
+// within the void available inside the CURRENT bbox (coordinate descent,
+// Gauss-Seidel). Two downside-free movable categories:
+//   * FREE SINGLE (boundary==0, cluster==0, not preplaced): slide BOTH x and y.
+//   * BOUNDARY SINGLE (boundary!=0, cluster==0, not preplaced, not a corner):
+//     slide ONLY the free axis -- LEFT/RIGHT blocks slide y (x pinned on the edge),
+//     TOP/BOTTOM slide x (y pinned). The constrained-axis coord never changes, so
+//     edge-contact (hence bv) is preserved. (M15)
+// Downside-free by construction: free singles touch no boundary/grouping rule;
+// boundary singles keep their edge contact; every move stays inside the bbox, so
+// the bbox is non-increasing. A bbox-shrink can only un-satisfy a boundary block on
+// the shrunk edge, but a SATISFIED boundary block lies exactly on that edge and so
+// co-defines the extreme -- it pins the edge and cannot be un-satisfied. Hence
+// area / bv / gf / mib are all unchanged; only HPWL drops (a move is accepted only
+// if it strictly lowers it). The void interval [lo,hi] is the gap to the nearest
+// blocks overlapping in the other axis, so no overlap is ever created. Validated in
+// Python (dbg_hpwl_push.py): free-single -0.63%, +boundary-axis a further -0.11%,
+// both 0/100 regressions, 0/100 bv-or-gf increases. ICCAD_NO_PUSH=1 disables.
+//
+// Rigid free-cluster slide was tried (dbg_hpwl_push.py ENABLE_CLUSTER) and dropped:
+// the compound-item packer leaves clusters with no slack (only 1 cluster across all
+// 100 cases could move at all), and a FP rigid translation breaks the cluster's
+// exact internal abutments at the ULP level -> shapely (exact) flags a spurious
+// grouping fragment (the M10 precision hazard). Net effect +0.004% with 1 regression.
 static bool PUSH = true;
+static bool PUSH_BND = true;     // M15 boundary-axis slide (ICCAD_NO_BND_PUSH=1 -> M14 only)
 static int PUSH_PASSES = 8;
 static double wmedian(vector<pair<double,double>>& t){   // weighted L1 median
     if (t.empty()) return 0.0;
@@ -848,11 +870,20 @@ static void hpwl_push(vector<XYWH>& p){
     if (!PUSH) return;
     double xmin=1e18,ymin=1e18,xmax=-1e18,ymax=-1e18;
     for (auto&q:p){xmin=min(xmin,q.x);ymin=min(ymin,q.y);xmax=max(xmax,q.x+q.w);ymax=max(ymax,q.y+q.h);}
-    vector<int> freeb;
-    for (int i=0;i<N;i++)
-        if (blocks[i].boundary==0 && blocks[i].cluster==0 && !blocks[i].is_preplaced)
-            freeb.push_back(i);
-    if (freeb.empty()) return;
+    // free singles slide on both axes; boundary singles (exactly one axis pinned by
+    // their edge) slide only on the free axis. corner boundary blocks (both LR & TB
+    // bits) and clustered/preplaced blocks are immovable here.
+    vector<int> freeb, bndb;
+    for (int i=0;i<N;i++){
+        if (blocks[i].is_preplaced || blocks[i].cluster!=0) continue;
+        int code=blocks[i].boundary;
+        if (code==0) freeb.push_back(i);
+        else if (PUSH_BND) {
+            bool lr=(code&(B_LEFT|B_RIGHT))!=0, tb=(code&(B_TOP|B_BOTTOM))!=0;
+            if (lr!=tb) bndb.push_back(i);   // exactly one axis constrained
+        }
+    }
+    if (freeb.empty() && bndb.empty()) return;
     auto hwire=[&](int i,double x,double y)->double{
         double cx=x+p[i].w/2, cy=y+p[i].h/2, h=0;
         for (auto&nb:b2b_adj[i]){ double ncx=p[nb.first].x+p[nb.first].w/2, ncy=p[nb.first].y+p[nb.first].h/2;
@@ -860,41 +891,47 @@ static void hpwl_push(vector<XYWH>& p){
         for (auto&pn:p2b_adj[i]) h+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
         return h;
     };
-    for (int pass=0; pass<PUSH_PASSES; pass++){
-        bool moved=false;
-        for (int i:freeb){
-            double w=p[i].w, h=p[i].h;
-            // x-axis: void interval to nearest blocks overlapping in y
-            double lo=xmin, hi=xmax-w;
-            for (int j=0;j<N;j++){ if (j==i) continue;
-                if (p[j].y<p[i].y+h-TOL && p[i].y<p[j].y+p[j].h-TOL){
-                    if (p[j].x+p[j].w<=p[i].x+TOL) lo=max(lo,p[j].x+p[j].w);
-                    else if (p[j].x>=p[i].x+w-TOL)  hi=min(hi,p[j].x-w);
-                }
-            }
-            vector<pair<double,double>> tx;
-            for (auto&nb:b2b_adj[i]) tx.push_back({p[nb.first].x+p[nb.first].w/2, nb.second});
-            for (auto&pn:p2b_adj[i]) tx.push_back({pins[pn.first].first, pn.second});
-            if (!tx.empty() && hi>=lo-TOL){
-                double nx=min(max(wmedian(tx)-w/2, lo), hi);
-                if (fabs(nx-p[i].x)>TOL && hwire(i,nx,p[i].y)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].x=nx; moved=true; }
-            }
-            // y-axis: void interval to nearest blocks overlapping in x (use updated p[i].x)
-            lo=ymin; hi=ymax-h;
-            for (int j=0;j<N;j++){ if (j==i) continue;
-                if (p[j].x<p[i].x+w-TOL && p[i].x<p[j].x+p[j].w-TOL){
-                    if (p[j].y+p[j].h<=p[i].y+TOL) lo=max(lo,p[j].y+p[j].h);
-                    else if (p[j].y>=p[i].y+h-TOL)  hi=min(hi,p[j].y-h);
-                }
-            }
-            vector<pair<double,double>> ty;
-            for (auto&nb:b2b_adj[i]) ty.push_back({p[nb.first].y+p[nb.first].h/2, nb.second});
-            for (auto&pn:p2b_adj[i]) ty.push_back({pins[pn.first].second, pn.second});
-            if (!ty.empty() && hi>=lo-TOL){
-                double ny=min(max(wmedian(ty)-h/2, lo), hi);
-                if (fabs(ny-p[i].y)>TOL && hwire(i,p[i].x,ny)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].y=ny; moved=true; }
+    // slide block i along one axis to its weighted L1 median within the void; keep
+    // the other axis fixed. returns true if it moved (strictly lower HPWL).
+    auto slide_x=[&](int i)->bool{
+        double w=p[i].w, h=p[i].h, lo=xmin, hi=xmax-w;
+        for (int j=0;j<N;j++){ if (j==i) continue;
+            if (p[j].y<p[i].y+h-TOL && p[i].y<p[j].y+p[j].h-TOL){      // overlap in y
+                if (p[j].x+p[j].w<=p[i].x+TOL) lo=max(lo,p[j].x+p[j].w);
+                else if (p[j].x>=p[i].x+w-TOL)  hi=min(hi,p[j].x-w);
             }
         }
+        vector<pair<double,double>> tx;
+        for (auto&nb:b2b_adj[i]) tx.push_back({p[nb.first].x+p[nb.first].w/2, nb.second});
+        for (auto&pn:p2b_adj[i]) tx.push_back({pins[pn.first].first, pn.second});
+        if (tx.empty() || hi<lo-TOL) return false;
+        double nx=min(max(wmedian(tx)-w/2, lo), hi);
+        if (fabs(nx-p[i].x)>TOL && hwire(i,nx,p[i].y)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].x=nx; return true; }
+        return false;
+    };
+    auto slide_y=[&](int i)->bool{
+        double w=p[i].w, h=p[i].h, lo=ymin, hi=ymax-h;
+        for (int j=0;j<N;j++){ if (j==i) continue;
+            if (p[j].x<p[i].x+w-TOL && p[i].x<p[j].x+p[j].w-TOL){      // overlap in x
+                if (p[j].y+p[j].h<=p[i].y+TOL) lo=max(lo,p[j].y+p[j].h);
+                else if (p[j].y>=p[i].y+h-TOL)  hi=min(hi,p[j].y-h);
+            }
+        }
+        vector<pair<double,double>> ty;
+        for (auto&nb:b2b_adj[i]) ty.push_back({p[nb.first].y+p[nb.first].h/2, nb.second});
+        for (auto&pn:p2b_adj[i]) ty.push_back({pins[pn.first].second, pn.second});
+        if (ty.empty() || hi<lo-TOL) return false;
+        double ny=min(max(wmedian(ty)-h/2, lo), hi);
+        if (fabs(ny-p[i].y)>TOL && hwire(i,p[i].x,ny)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].y=ny; return true; }
+        return false;
+    };
+    for (int pass=0; pass<PUSH_PASSES; pass++){
+        bool moved=false;
+        for (int i:bndb){                                  // boundary: free axis only
+            if (blocks[i].boundary&(B_LEFT|B_RIGHT)) { if (slide_y(i)) moved=true; }
+            else                                          { if (slide_x(i)) moved=true; }
+        }
+        for (int i:freeb){ if (slide_x(i)) moved=true; if (slide_y(i)) moved=true; }
         if (!moved) break;
     }
 }
@@ -1077,6 +1114,7 @@ int main() {
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;
+    if (getenv("ICCAD_NO_BND_PUSH")) PUSH_BND=false;
     if (const char* e=getenv("ICCAD_PUSH_PASSES")){ int v=atoi(e); if (v>=0) PUSH_PASSES=v; }
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
     if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }

@@ -1,18 +1,37 @@
 """Prototype: post-placement HPWL slack push on the PORTFOLIO's output positions.
 
-hgap is the dominant cost lever (weighted 0.412 vs agap 0.228 vs vrel 0.040).
+hgap is the dominant cost lever (weighted 0.404 vs agap 0.23 vs vrel 0.04).
 Compaction only packs toward frame faces (area) and can spread connected blocks
-apart, lifting HPWL. This prototype slides every FREE SINGLE block (no boundary
-code, no cluster, not preplaced) toward its connectivity-weighted L1-median within
-available void, keeping it inside the current bbox.
+apart, lifting HPWL. This prototype slides blocks toward their connectivity-
+weighted L1-median within available void, keeping them inside the current bbox.
 
-Such moves are downside-free by construction: free singles don't define boundary
-or grouping violations and stay inside the bbox, so area / bv / gf / mib are all
-unchanged -- only HPWL drops. We additionally accept a move only if it lowers the
-true HPWL (guard against the rare non-monotone case).
+Three downside-free movable categories (all keep area / bv / gf / mib unchanged,
+only HPWL drops):
+  1. FREE SINGLE   (boundary==0, cluster==0, not preplaced): slide x and y.
+  2. BOUNDARY SINGLE (boundary!=0, cluster==0, not preplaced): slide ONLY the
+     free axis (LEFT/RIGHT -> y, TOP/BOTTOM -> x), keeping the constrained axis
+     so edge-contact (and thus bv) is preserved. Corner blocks (both LR&TB) skip.
+  3. FREE CLUSTER  (>=2 members, no preplaced, no boundary member): RIGID
+     translation of the whole group. Internal touching is preserved (gf unchanged
+     in theory); no member is a boundary block so bv is unaffected.
+     ** REJECTED, off by default (ENABLE_CLUSTER=False).** Two reasons: (i) the
+     compound-item packer leaves clusters with no slack -- only 1 free cluster across
+     all 100 cases could move at all; (ii) a floating-point rigid translation breaks
+     the cluster's *exact* internal abutments at the ULP level, which the harness's
+     exact shapely scoring flags as a spurious grouping fragment (the M10 precision
+     hazard). Net effect: +0.004% with 1 regression. Not ported to C++.
 
-Measures the TRUE-cost headroom of this lever on the deployed layouts (portfolio
-JSON positions) via the harness evaluate_solution. If meaningful, port to C++.
+Why bbox-shrink can't hurt bv: a SATISFIED boundary block lies exactly on its
+edge, so it co-defines that extreme -> the bbox cannot shrink past it. Hence no
+inward move of other blocks can un-satisfy a satisfied boundary block. (1) and
+(2) and (3) only move blocks within the frozen bbox, so the bbox is non-increasing
+and bv is non-increasing. We additionally accept a move only if it strictly lowers
+the relevant HPWL (guard against rare non-monotone cases).
+
+Measures the TRUE-cost headroom of these levers on the deployed layouts
+(portfolio JSON positions, which already carry the C++ M14 free-single push) via
+the harness evaluate_solution. The delta is the realizable gain of categories
+2+3 on top of M14. If meaningful, port to C++.
 
 Run: python dbg_hpwl_push.py
 """
@@ -25,6 +44,10 @@ from iccad2026_evaluate import (ContestEvaluator, evaluate_solution,
 
 TOL = 1e-6
 PASSES = 8
+B_LEFT, B_RIGHT, B_TOP, B_BOTTOM = 1, 2, 4, 8
+ENABLE_BOUNDARY = True   # category 2: boundary-axis slide (shipped in C++ M15)
+ENABLE_CLUSTER = False   # category 3: rigid free-cluster slide -- REJECTED (see below),
+                         # off by default so a plain run reproduces the shipped M15 result
 
 
 def _bbox(pos):
@@ -66,13 +89,27 @@ def _wmedian(targets):
 def push(pos, codes, clus, pre, b2b, p2b, pins, n):
     pos = [list(p) for p in pos]
     ba, pa = _adj(b2b, p2b, n)
-    free = [i for i in range(n)
-            if codes[i] == 0 and clus[i] == 0 and i not in pre]
-    if not free:
-        return [tuple(p) for p in pos]
     xmin, ymin, xmax, ymax = _bbox(pos)
 
-    def hpwl_of(i, x, y):
+    free_single = [i for i in range(n)
+                   if codes[i] == 0 and clus[i] == 0 and i not in pre]
+    bnd_single = [i for i in range(n)
+                  if codes[i] != 0 and clus[i] == 0 and i not in pre]
+    cl_map = {}
+    for i in range(n):
+        if clus[i] > 0:
+            cl_map.setdefault(clus[i], []).append(i)
+    free_clusters = []
+    for cid, mem in cl_map.items():
+        if len(mem) < 2:
+            continue
+        if any(i in pre for i in mem):
+            continue
+        if any(codes[i] != 0 for i in mem):
+            continue
+        free_clusters.append(mem)
+
+    def hpwl_blk(i, x, y):
         cx, cy = x + pos[i][2] / 2.0, y + pos[i][3] / 2.0
         h = 0.0
         for j, w in ba[i]:
@@ -82,42 +119,146 @@ def push(pos, codes, clus, pre, b2b, p2b, pins, n):
             h += w * (abs(cx - pins[pidx][0]) + abs(cy - pins[pidx][1]))
         return h
 
-    for _ in range(PASSES):
+    def void_x(i):
+        """[lo, hi] for lower-left x of block i (blocks overlapping in y)."""
+        w_, h_ = pos[i][2], pos[i][3]
+        lo, hi = xmin, xmax - w_
+        for j in range(n):
+            if j == i:
+                continue
+            if pos[j][1] < pos[i][1] + h_ - TOL and pos[i][1] < pos[j][1] + pos[j][3] - TOL:
+                if pos[j][0] + pos[j][2] <= pos[i][0] + TOL:
+                    lo = max(lo, pos[j][0] + pos[j][2])
+                elif pos[j][0] >= pos[i][0] + w_ - TOL:
+                    hi = min(hi, pos[j][0] - w_)
+        return lo, hi
+
+    def void_y(i):
+        """[lo, hi] for lower-left y of block i (blocks overlapping in x)."""
+        w_, h_ = pos[i][2], pos[i][3]
+        lo, hi = ymin, ymax - h_
+        for j in range(n):
+            if j == i:
+                continue
+            if pos[j][0] < pos[i][0] + w_ - TOL and pos[i][0] < pos[j][0] + pos[j][2] - TOL:
+                if pos[j][1] + pos[j][3] <= pos[i][1] + TOL:
+                    lo = max(lo, pos[j][1] + pos[j][3])
+                elif pos[j][1] >= pos[i][1] + h_ - TOL:
+                    hi = min(hi, pos[j][1] - h_)
+        return lo, hi
+
+    def move_free(i):
         moved = False
-        for i in free:
-            w_, h_ = pos[i][2], pos[i][3]
-            # x-axis: free void interval [lo, hi] for the lower-left x of block i
-            lo, hi = xmin, xmax - w_
-            for j in range(n):
-                if j == i:
-                    continue
-                if pos[j][1] < pos[i][1] + h_ - TOL and pos[i][1] < pos[j][1] + pos[j][3] - TOL:
-                    if pos[j][0] + pos[j][2] <= pos[i][0] + TOL:
-                        lo = max(lo, pos[j][0] + pos[j][2])
-                    elif pos[j][0] >= pos[i][0] + w_ - TOL:
-                        hi = min(hi, pos[j][0] - w_)
-            tx = _wmedian([(pos[j][0] + pos[j][2] / 2.0, w) for j, w in ba[i]]
-                          + [(pins[pidx][0], w) for pidx, w in pa[i]])
-            if tx is not None and hi >= lo - TOL:
-                nx = min(max(tx - w_ / 2.0, lo), hi)
-                if abs(nx - pos[i][0]) > TOL and hpwl_of(i, nx, pos[i][1]) < hpwl_of(i, pos[i][0], pos[i][1]) - TOL:
-                    pos[i][0] = nx; moved = True
-            # y-axis
-            lo, hi = ymin, ymax - h_
-            for j in range(n):
-                if j == i:
-                    continue
-                if pos[j][0] < pos[i][0] + w_ - TOL and pos[i][0] < pos[j][0] + pos[j][2] - TOL:
-                    if pos[j][1] + pos[j][3] <= pos[i][1] + TOL:
-                        lo = max(lo, pos[j][1] + pos[j][3])
-                    elif pos[j][1] >= pos[i][1] + h_ - TOL:
-                        hi = min(hi, pos[j][1] - h_)
+        w_, h_ = pos[i][2], pos[i][3]
+        lo, hi = void_x(i)
+        tx = _wmedian([(pos[j][0] + pos[j][2] / 2.0, w) for j, w in ba[i]]
+                      + [(pins[pidx][0], w) for pidx, w in pa[i]])
+        if tx is not None and hi >= lo - TOL:
+            nx = min(max(tx - w_ / 2.0, lo), hi)
+            if abs(nx - pos[i][0]) > TOL and hpwl_blk(i, nx, pos[i][1]) < hpwl_blk(i, pos[i][0], pos[i][1]) - TOL:
+                pos[i][0] = nx; moved = True
+        lo, hi = void_y(i)
+        ty = _wmedian([(pos[j][1] + pos[j][3] / 2.0, w) for j, w in ba[i]]
+                      + [(pins[pidx][1], w) for pidx, w in pa[i]])
+        if ty is not None and hi >= lo - TOL:
+            ny = min(max(ty - h_ / 2.0, lo), hi)
+            if abs(ny - pos[i][1]) > TOL and hpwl_blk(i, pos[i][0], ny) < hpwl_blk(i, pos[i][0], pos[i][1]) - TOL:
+                pos[i][1] = ny; moved = True
+        return moved
+
+    def move_boundary(i):
+        code = codes[i]
+        has_lr = code & (B_LEFT | B_RIGHT)
+        has_tb = code & (B_TOP | B_BOTTOM)
+        if has_lr and has_tb:
+            return False
+        w_, h_ = pos[i][2], pos[i][3]
+        if has_lr:                                   # slide y, keep x (on L/R edge)
+            lo, hi = void_y(i)
             ty = _wmedian([(pos[j][1] + pos[j][3] / 2.0, w) for j, w in ba[i]]
                           + [(pins[pidx][1], w) for pidx, w in pa[i]])
             if ty is not None and hi >= lo - TOL:
                 ny = min(max(ty - h_ / 2.0, lo), hi)
-                if abs(ny - pos[i][1]) > TOL and hpwl_of(i, pos[i][0], ny) < hpwl_of(i, pos[i][0], pos[i][1]) - TOL:
-                    pos[i][1] = ny; moved = True
+                if abs(ny - pos[i][1]) > TOL and hpwl_blk(i, pos[i][0], ny) < hpwl_blk(i, pos[i][0], pos[i][1]) - TOL:
+                    pos[i][1] = ny; return True
+        else:                                        # has_tb: slide x, keep y
+            lo, hi = void_x(i)
+            tx = _wmedian([(pos[j][0] + pos[j][2] / 2.0, w) for j, w in ba[i]]
+                          + [(pins[pidx][0], w) for pidx, w in pa[i]])
+            if tx is not None and hi >= lo - TOL:
+                nx = min(max(tx - w_ / 2.0, lo), hi)
+                if abs(nx - pos[i][0]) > TOL and hpwl_blk(i, nx, pos[i][1]) < hpwl_blk(i, pos[i][0], pos[i][1]) - TOL:
+                    pos[i][0] = nx; return True
+        return False
+
+    def shift_cluster(mem, axis):
+        """Rigid translation of free cluster `mem` along axis 0=x / 1=y."""
+        mset = set(mem)
+        if axis == 0:
+            dlo = xmin - min(pos[m][0] for m in mem)
+            dhi = xmax - max(pos[m][0] + pos[m][2] for m in mem)
+        else:
+            dlo = ymin - min(pos[m][1] for m in mem)
+            dhi = ymax - max(pos[m][1] + pos[m][3] for m in mem)
+        for m in mem:
+            mx, my, mw, mh = pos[m]
+            for j in range(n):
+                if j in mset:
+                    continue
+                jx, jy, jw, jh = pos[j]
+                if axis == 0:
+                    if jy < my + mh - TOL and my < jy + jh - TOL:       # y-overlap
+                        if jx + jw <= mx + TOL:
+                            dlo = max(dlo, (jx + jw) - mx)
+                        elif jx >= mx + mw - TOL:
+                            dhi = min(dhi, jx - (mx + mw))
+                else:
+                    if jx < mx + mw - TOL and mx < jx + jw - TOL:       # x-overlap
+                        if jy + jh <= my + TOL:
+                            dlo = max(dlo, (jy + jh) - my)
+                        elif jy >= my + mh - TOL:
+                            dhi = min(dhi, jy - (my + mh))
+        if dhi < dlo - TOL:
+            return False
+        targets = []
+        for m in mem:
+            mc = pos[m][0] + pos[m][2] / 2.0 if axis == 0 else pos[m][1] + pos[m][3] / 2.0
+            for j, w in ba[m]:
+                if j in mset:
+                    continue
+                jc = pos[j][0] + pos[j][2] / 2.0 if axis == 0 else pos[j][1] + pos[j][3] / 2.0
+                targets.append((jc - mc, w))
+            for pidx, w in pa[m]:
+                pc = pins[pidx][0] if axis == 0 else pins[pidx][1]
+                targets.append((pc - mc, w))
+        if not targets:
+            return False
+        d = min(max(_wmedian(targets), dlo), dhi)
+        if abs(d) <= TOL:
+            return False
+        before = sum(w * abs(t) for t, w in targets)
+        after = sum(w * abs(d - t) for t, w in targets)
+        if after < before - TOL:
+            for m in mem:
+                pos[m][axis] += d
+            return True
+        return False
+
+    for _ in range(PASSES):
+        moved = False
+        if ENABLE_CLUSTER:
+            for mem in free_clusters:
+                if shift_cluster(mem, 0):
+                    moved = True
+                if shift_cluster(mem, 1):
+                    moved = True
+        if ENABLE_BOUNDARY:
+            for i in bnd_single:
+                if move_boundary(i):
+                    moved = True
+        for i in free_single:
+            if move_free(i):
+                moved = True
         if not moved:
             break
     return [tuple(p) for p in pos]
@@ -154,16 +295,17 @@ def main():
                      m0.grouping_violations, m1.grouping_violations))
 
     nreg = sum(1 for r in rows if r[4] > r[3] + 1e-6)
+    nviol = sum(1 for r in rows if r[11] > r[10] or r[13] > r[12])  # bv or gf increased
     print(f"Total Score: orig={totC0/totW:.4f}  pushed={totC1/totW:.4f}  "
           f"delta={100*(totC1-totC0)/totC0:+.2f}%")
-    print(f"regressions: {nreg}/100 cases")
+    print(f"regressions: {nreg}/100 cases ; cases with bv/gf increase: {nviol}/100")
     print(f"{'case':>4} {'n':>4} {'wt%':>5} {'cost0':>6} {'cost1':>6} "
-          f"{'hg0':>6} {'hg1':>6} {'ag0':>6} {'ag1':>6} {'bv':>7} {'gf':>7} {'feas':>5}")
+          f"{'hg0':>6} {'hg1':>6} {'ag0':>6} {'ag1':>6} {'bv':>9} {'gf':>9} {'feas':>5}")
     rows.sort(key=lambda r: -(r[2] * (r[3] - r[4])))
     for (idx, n, w, c0, c1, h0, h1, a0, a1, fe, b0, b1, g0, g1) in rows[:30]:
         print(f"{idx:>4} {n:>4} {100*w/totW:5.2f} {c0:6.3f} {c1:6.3f} "
-              f"{h0:6.3f} {h1:6.3f} {a0:6.3f} {a1:6.3f} {b0:>3}->{b1:<3} "
-              f"{g0:>3}->{g1:<3} {'' if fe else 'INFEAS'}")
+              f"{h0:6.3f} {h1:6.3f} {a0:6.3f} {a1:6.3f} {b0:>3}->{b1:<4} "
+              f"{g0:>3}->{g1:<4} {'' if fe else 'INFEAS'}")
 
 
 if __name__ == "__main__":
