@@ -68,6 +68,11 @@ static bool WIRE_BFS = false;      // ICCAD_WIRE_BFS: reorder inside each bscore
                                    // connectivity attachment to already-ordered items + preplaced
 static bool BFS_PIN = false;       // ICCAD_BFS_PIN: BFS seed attachment also counts p2b pin
                                    // weights (pins are fixed anchors just like preplaced blocks)
+static bool BFS_NORM = false;      // ICCAD_BFS_NORM: BFS pick compares attach/sqrt(item area) so
+                                   // small densely-connected items order before big sparse ones
+static int ORDER_SWAP = 0;         // ICCAD_ORDER_SWAP=K: before refinement, greedy hill-climb on
+                                   // the pack order — try swapping the top-K total_wire items
+                                   // pairwise, re-pack once, keep a swap iff layout_score improves
 static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
@@ -1099,10 +1104,12 @@ static void solve() {
         for (int s=0;s<I;){
             int e=s; while (e<I && items[e].bscore==items[s].bscore) e++;
             for (int k=s;k<e;k++){
-                int pick=-1;
+                int pick=-1; double pickv=0;
                 for (int t=s;t<e;t++){
                     if (emitted[t]) continue;
-                    if (pick<0 || attach[t]>attach[pick]+1e-9) pick=t;
+                    double v=attach[t];
+                    if (BFS_NORM) v/=sqrt(max(items[t].w*items[t].h,1e-12));
+                    if (pick<0 || v>pickv+1e-9){ pick=t; pickv=v; }
                 }
                 emitted[pick]=1; bfs_out.push_back(items[pick]);
                 for (int b:items[pick].blocks) for (auto& nb:b2b_adj[b]){
@@ -1132,11 +1139,33 @@ static void solve() {
         return true;
     };
     vector<XYWH> best; bool have_best=false; double best_score=1e300; int trials=0;
+    vector<Item> items_base=items;   // per-frame order experiments stay isolated
     for (auto& f:frames){
+        items=items_base;
         vector<XYWH> c1, dummy;
         if (!run_frame(f.first,f.second,false,dummy,c1)) continue;
         trials++;
         double sc=layout_score(c1);
+        // Pack-order pair-swap hill-climb: greedy ordering misplaces an item the
+        // force-directed refinement can only nudge, not relocate. Swapping two
+        // order positions re-routes the whole downstream pack — a jump move.
+        // Compared pack-once vs pack-once (fair), downside-protected, before
+        // refinement so the better order seeds the guide passes.
+        if (ORDER_SWAP>0 && (int)items.size()>2){
+            vector<int> top;
+            for (int i=0;i<(int)items.size();i++) top.push_back(i);
+            sort(top.begin(),top.end(),[&](int a,int b){
+                return items[a].total_wire>items[b].total_wire; });
+            top.resize(min((size_t)ORDER_SWAP, top.size()));
+            for (size_t a=0;a+1<top.size();a++) for (size_t b=a+1;b<top.size();b++){
+                swap(items[top[a]],items[top[b]]);
+                vector<XYWH> c2;
+                bool ok=run_frame(f.first,f.second,false,dummy,c2);
+                double sc2=ok?layout_score(c2):1e300;
+                if (sc2<sc-1e-9){ sc=sc2; c1.swap(c2); }
+                else swap(items[top[a]],items[top[b]]);
+            }
+        }
         // refinement passes: re-pack with full-neighbor wire pulling toward the
         // previous layout (coordinate descent). Keep the best by layout_score per
         // frame (downside-protected); advance the guide each iteration to converge.
@@ -1234,6 +1263,8 @@ int main() {
     if (getenv("ICCAD_WIRE_TIEBREAK")) WIRE_TIEBREAK=true;
     if (getenv("ICCAD_WIRE_BFS")) WIRE_BFS=true;
     if (getenv("ICCAD_BFS_PIN")) BFS_PIN=true;
+    if (getenv("ICCAD_BFS_NORM")) BFS_NORM=true;
+    if (const char* e=getenv("ICCAD_ORDER_SWAP")){ int v=atoi(e); if (v>0) ORDER_SWAP=v; }
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;

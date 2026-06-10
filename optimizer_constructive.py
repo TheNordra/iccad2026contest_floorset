@@ -131,6 +131,14 @@ _PROFILES: List[Dict[str, str]] = [
     # + small-n cases. BFS+anc/PIN+W2/PIN+tall were dominated by these two.
     {"ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # bfs_pin_wt_wire
     {"ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},       # bfs_tight_wire
+    # M20: ORDER_SWAP=K — before refinement, greedy pair-swap hill-climb on the
+    # pack order over the top-K total_wire items (pack-once comparisons, strict
+    # layout_score improvement only). A jump move greedy ordering + force-directed
+    # refinement can't make. On the strongest ordering it re-breaks case 94
+    # (1.3411->1.3128) and 98 (1.4221->1.4118) + 79/50/28/9 (+0.252% oracle-min).
+    # Plain OS8 (+0.030%) and OS8+tall (+0.025%) won only low-weight cases — the
+    # swap needs the PIN+WT order as its starting point to matter at high weight.
+    {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # os_pin_wt_wire
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
