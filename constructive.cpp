@@ -27,6 +27,10 @@
 //     downside-free. Portfolio 1.4253 -> 1.4236. (Rigid free-cluster slide was tried
 //     and rejected: clusters have no slack and FP translation breaks exact abutments;
 //     see hpwl_push comment.)
+// M16: same-size swap inside the HPWL push. Two non-preplaced non-cluster blocks
+//     with bit-identical (w,h) and equal boundary code exchange positions when that
+//     strictly lowers HPWL. The geometry multiset is unchanged, so area/bv/gf/mib
+//     are identical by construction -- downside-free, default-on. ICCAD_NO_SWAP=1.
 //
 // Input/Output format identical to optimizer_claude.cpp.
 // Build: g++ -O3 -std=c++17 -o constructive.exe constructive.cpp
@@ -39,6 +43,7 @@
 #include <cstdlib>
 #include <functional>
 #include <string>
+#include <tuple>
 using namespace std;
 
 static const int B_LEFT = 1, B_RIGHT = 2, B_TOP = 4, B_BOTTOM = 8;
@@ -856,8 +861,21 @@ static vector<XYWH> compact_layout(const vector<XYWH>& base){
 // 100 cases could move at all), and a FP rigid translation breaks the cluster's
 // exact internal abutments at the ULP level -> shapely (exact) flags a spurious
 // grouping fragment (the M10 precision hazard). Net effect +0.004% with 1 regression.
+//
+// M16 same-size swap: swap the positions of two non-preplaced, non-cluster blocks
+// with EXACTLY equal (w,h) and equal boundary code. The geometry multiset is
+// unchanged -> bbox/area identical, no overlap can appear, the number of blocks
+// touching each required edge is unchanged (bv identical), no cluster member moves
+// (gf identical), dims unchanged (mib identical). Only HPWL changes; accepted only
+// on strict decrease. Soft blocks with equal area and equal boundary code get
+// bit-identical dims from default_soft_dim, so exact-equality grouping finds real
+// partners. Repairing VIOLATING boundary singles by sliding them to their edge was
+// also prototyped and is a DEAD END: all 34 violating singles across 100 cases are
+// blocked by other blocks (123 violating cluster members and 45 preplaced are
+// immovable anyway) -- see dbg_hpwl_push.py ENABLE_VIOLATING / dbg_vio_stats.py.
 static bool PUSH = true;
 static bool PUSH_BND = true;     // M15 boundary-axis slide (ICCAD_NO_BND_PUSH=1 -> M14 only)
+static bool PUSH_SWAP = true;    // M16 same-size swap (ICCAD_NO_SWAP=1 -> M15 only)
 static int PUSH_PASSES = 8;
 static double wmedian(vector<pair<double,double>>& t){   // weighted L1 median
     if (t.empty()) return 0.0;
@@ -925,6 +943,32 @@ static void hpwl_push(vector<XYWH>& p){
         if (fabs(ny-p[i].y)>TOL && hwire(i,p[i].x,ny)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].y=ny; return true; }
         return false;
     };
+    // M16 swap groups: exact (w,h,boundary) over non-preplaced non-cluster blocks.
+    // dims never change inside the push loop, so build once.
+    vector<vector<int>> swap_groups;
+    if (PUSH_SWAP){
+        map<tuple<double,double,int>,vector<int>> sg;
+        for (int i=0;i<N;i++){
+            if (blocks[i].is_preplaced || blocks[i].cluster!=0) continue;
+            sg[make_tuple(p[i].w,p[i].h,blocks[i].boundary)].push_back(i);
+        }
+        for (auto&kv:sg) if (kv.second.size()>=2) swap_groups.push_back(kv.second);
+    }
+    auto swap_pass=[&]()->bool{
+        bool any=false;
+        for (auto&mem:swap_groups){
+            for (size_t a=0;a<mem.size();a++) for (size_t b=a+1;b<mem.size();b++){
+                int i=mem[a], j=mem[b];
+                double h0=hwire(i,p[i].x,p[i].y)+hwire(j,p[j].x,p[j].y);
+                swap(p[i].x,p[j].x); swap(p[i].y,p[j].y);
+                // an i-j edge contributes identically before/after and cancels
+                double h1=hwire(i,p[i].x,p[i].y)+hwire(j,p[j].x,p[j].y);
+                if (h1<h0-TOL) any=true;
+                else { swap(p[i].x,p[j].x); swap(p[i].y,p[j].y); }
+            }
+        }
+        return any;
+    };
     for (int pass=0; pass<PUSH_PASSES; pass++){
         bool moved=false;
         for (int i:bndb){                                  // boundary: free axis only
@@ -932,6 +976,7 @@ static void hpwl_push(vector<XYWH>& p){
             else                                          { if (slide_x(i)) moved=true; }
         }
         for (int i:freeb){ if (slide_x(i)) moved=true; if (slide_y(i)) moved=true; }
+        if (PUSH_SWAP && swap_pass()) moved=true;
         if (!moved) break;
     }
 }
@@ -1115,6 +1160,7 @@ int main() {
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;
     if (getenv("ICCAD_NO_BND_PUSH")) PUSH_BND=false;
+    if (getenv("ICCAD_NO_SWAP")) PUSH_SWAP=false;
     if (const char* e=getenv("ICCAD_PUSH_PASSES")){ int v=atoi(e); if (v>=0) PUSH_PASSES=v; }
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
     if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }

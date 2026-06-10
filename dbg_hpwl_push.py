@@ -5,8 +5,8 @@ Compaction only packs toward frame faces (area) and can spread connected blocks
 apart, lifting HPWL. This prototype slides blocks toward their connectivity-
 weighted L1-median within available void, keeping them inside the current bbox.
 
-Three downside-free movable categories (all keep area / bv / gf / mib unchanged,
-only HPWL drops):
+Movable categories (1/2 keep area / bv / gf / mib unchanged, only HPWL drops;
+4 can only *decrease* bv):
   1. FREE SINGLE   (boundary==0, cluster==0, not preplaced): slide x and y.
   2. BOUNDARY SINGLE (boundary!=0, cluster==0, not preplaced): slide ONLY the
      free axis (LEFT/RIGHT -> y, TOP/BOTTOM -> x), keeping the constrained axis
@@ -20,6 +20,19 @@ only HPWL drops):
      the cluster's *exact* internal abutments at the ULP level, which the harness's
      exact shapely scoring flags as a spurious grouping fragment (the M10 precision
      hazard). Net effect: +0.004% with 1 regression. Not ported to C++.
+  4. VIOLATING BOUNDARY SINGLE (M16 candidate): a boundary single whose required
+     edge bits are NOT all satisfied already counts 1 bv. Moving it cannot
+     increase bv (satisfied blocks pin their edges; this block stays violating
+     unless fully repaired). Strategy per pass: (a) if every unsatisfied bit can
+     reach its frozen-bbox edge through the void, snap it there -> bv strictly
+     drops by 1; (b) otherwise slide the unpinned axes (any axis without a
+     satisfied bit) toward the L1-median, accepted only on strict HPWL decrease.
+     ** DEAD END, off by default (ENABLE_VIOLATING=False).** Measured on the M15
+     portfolio output (2026-06-10, dbg_vio_stats.py): of 202 violating boundary
+     blocks across 100 cases, 123 are cluster members (immovable, M10 precision
+     wall), 45 preplaced (fixed), and only 34 singles -- ALL 34 of which are
+     BLOCKED (snap-to-edge overlaps another block). Zero repairs possible; the
+     median-slide fallback yields ~0.00% (only 5th-decimal noise). Not ported.
 
 Why bbox-shrink can't hurt bv: a SATISFIED boundary block lies exactly on its
 edge, so it co-defines that extreme -> the bbox cannot shrink past it. Hence no
@@ -43,11 +56,22 @@ from iccad2026_evaluate import (ContestEvaluator, evaluate_solution,
                                 calculate_hpwl_b2b, calculate_hpwl_p2b)
 
 TOL = 1e-6
+EPS = 1e-6               # evaluator's edge-contact tolerance (must match)
 PASSES = 8
 B_LEFT, B_RIGHT, B_TOP, B_BOTTOM = 1, 2, 4, 8
 ENABLE_BOUNDARY = True   # category 2: boundary-axis slide (shipped in C++ M15)
 ENABLE_CLUSTER = False   # category 3: rigid free-cluster slide -- REJECTED (see below),
                          # off by default so a plain run reproduces the shipped M15 result
+ENABLE_VIOLATING = False  # category 4: violating-boundary repair -- DEAD END (see above)
+ENABLE_SWAP = True       # category 5 (M16): same-size single swap, see below
+# 5. SAME-SIZE SINGLE SWAP (M16): swap the positions of two non-preplaced,
+#    non-cluster blocks with EXACTLY equal (w, h) and equal boundary code. The
+#    geometry multiset is unchanged -> bbox/area identical, overlap-free stays
+#    overlap-free, edge-contact count per code unchanged (bv identical), no
+#    cluster member moves (gf identical), dims unchanged (mib identical). Only
+#    HPWL changes; a swap is accepted only on strict decrease. Soft blocks with
+#    equal area and equal boundary code get bit-identical dims from
+#    default_soft_dim, so exact-equality grouping finds real swap partners.
 
 
 def _bbox(pos):
@@ -191,6 +215,108 @@ def push(pos, codes, clus, pre, b2b, p2b, pins, n):
                     pos[i][0] = nx; return True
         return False
 
+    def unsat_bits(i):
+        """Required-edge bits of block i not currently touching the frozen bbox."""
+        x, y, w_, h_ = pos[i]
+        code, u = codes[i], 0
+        if code & B_LEFT and abs(x - xmin) >= EPS:          u |= B_LEFT
+        if code & B_RIGHT and abs(x + w_ - xmax) >= EPS:    u |= B_RIGHT
+        if code & B_TOP and abs(y + h_ - ymax) >= EPS:      u |= B_TOP
+        if code & B_BOTTOM and abs(y - ymin) >= EPS:        u |= B_BOTTOM
+        return u
+
+    def slide_median_x(i):
+        lo, hi = void_x(i)
+        tx = _wmedian([(pos[j][0] + pos[j][2] / 2.0, w) for j, w in ba[i]]
+                      + [(pins[pidx][0], w) for pidx, w in pa[i]])
+        if tx is not None and hi >= lo - TOL:
+            nx = min(max(tx - pos[i][2] / 2.0, lo), hi)
+            if abs(nx - pos[i][0]) > TOL and hpwl_blk(i, nx, pos[i][1]) < hpwl_blk(i, pos[i][0], pos[i][1]) - TOL:
+                pos[i][0] = nx; return True
+        return False
+
+    def slide_median_y(i):
+        lo, hi = void_y(i)
+        ty = _wmedian([(pos[j][1] + pos[j][3] / 2.0, w) for j, w in ba[i]]
+                      + [(pins[pidx][1], w) for pidx, w in pa[i]])
+        if ty is not None and hi >= lo - TOL:
+            ny = min(max(ty - pos[i][3] / 2.0, lo), hi)
+            if abs(ny - pos[i][1]) > TOL and hpwl_blk(i, pos[i][0], ny) < hpwl_blk(i, pos[i][0], pos[i][1]) - TOL:
+                pos[i][1] = ny; return True
+        return False
+
+    def move_violating(i):
+        """Block i is a violating boundary single (>=1 unsatisfied edge bit).
+        (a) Full repair: snap every unsatisfied bit to its frozen-bbox edge if the
+            void allows -> bv drops by 1 (accepted unconditionally).
+        (b) Else: L1-median slide on any axis without a satisfied bit (cannot
+            increase bv -- the block stays violating), strict HPWL decrease only.
+        """
+        code = codes[i]
+        u = unsat_bits(i)
+        ux, uy = u & (B_LEFT | B_RIGHT), u & (B_TOP | B_BOTTOM)
+        # contradictory codes (needs both L&R, or both T&B edges) cannot be repaired
+        can_x = (code & (B_LEFT | B_RIGHT)) != (B_LEFT | B_RIGHT)
+        can_y = (code & (B_TOP | B_BOTTOM)) != (B_TOP | B_BOTTOM)
+        if can_x and can_y:
+            save = list(pos[i])
+            ok = True
+            if ux:
+                lo, hi = void_x(i)
+                tgt = xmin if ux & B_LEFT else xmax - pos[i][2]
+                if lo - TOL <= tgt <= hi + TOL:
+                    pos[i][0] = tgt
+                else:
+                    ok = False
+            if ok and uy:
+                lo, hi = void_y(i)              # recomputed after the x snap
+                tgt = ymax - pos[i][3] if uy & B_TOP else ymin
+                if lo - TOL <= tgt <= hi + TOL:
+                    pos[i][1] = tgt
+                else:
+                    ok = False
+            if ok:
+                return True                     # fully repaired: bv -= 1
+            pos[i][0], pos[i][1] = save[0], save[1]
+        # fallback: slide axes that carry no SATISFIED bit (pinned axes stay put)
+        moved = False
+        x_pinned = (code & (B_LEFT | B_RIGHT)) and not ux
+        y_pinned = (code & (B_TOP | B_BOTTOM)) and not uy
+        if not x_pinned and slide_median_x(i):
+            moved = True
+        if not y_pinned and slide_median_y(i):
+            moved = True
+        return moved
+
+    # same-size swap groups: exact (w, h, boundary_code) over non-pre non-cluster
+    swap_groups = {}
+    for i in range(n):
+        if clus[i] != 0 or i in pre:
+            continue
+        swap_groups.setdefault((pos[i][2], pos[i][3], codes[i]), []).append(i)
+    swap_groups = [m for m in swap_groups.values() if len(m) >= 2]
+
+    def swap_pass():
+        moved = False
+        for mem in swap_groups:
+            for a in range(len(mem)):
+                for b in range(a + 1, len(mem)):
+                    i, j = mem[a], mem[b]
+                    h0 = (hpwl_blk(i, pos[i][0], pos[i][1])
+                          + hpwl_blk(j, pos[j][0], pos[j][1]))
+                    # swap, then evaluate with both at their new spots (an i-j
+                    # edge contributes identically before/after and cancels)
+                    pos[i][0], pos[j][0] = pos[j][0], pos[i][0]
+                    pos[i][1], pos[j][1] = pos[j][1], pos[i][1]
+                    h1 = (hpwl_blk(i, pos[i][0], pos[i][1])
+                          + hpwl_blk(j, pos[j][0], pos[j][1]))
+                    if h1 < h0 - TOL:
+                        moved = True
+                    else:                                   # revert
+                        pos[i][0], pos[j][0] = pos[j][0], pos[i][0]
+                        pos[i][1], pos[j][1] = pos[j][1], pos[i][1]
+        return moved
+
     def shift_cluster(mem, axis):
         """Rigid translation of free cluster `mem` along axis 0=x / 1=y."""
         mset = set(mem)
@@ -254,11 +380,16 @@ def push(pos, codes, clus, pre, b2b, p2b, pins, n):
                     moved = True
         if ENABLE_BOUNDARY:
             for i in bnd_single:
-                if move_boundary(i):
+                if ENABLE_VIOLATING and unsat_bits(i):
+                    if move_violating(i):
+                        moved = True
+                elif move_boundary(i):
                     moved = True
         for i in free_single:
             if move_free(i):
                 moved = True
+        if ENABLE_SWAP and swap_pass():
+            moved = True
         if not moved:
             break
     return [tuple(p) for p in pos]
