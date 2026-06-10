@@ -64,6 +64,8 @@ static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
 static bool WIRE_FOR_ALL = false; // ICCAD_WIRE_FOR_ALL: compute wire for ALL bp positions
 static bool WIRE_ORDER = false;   // ICCAD_WIRE_ORDER: sort items by total_wire first (hpwl-first packing)
 static bool WIRE_TIEBREAK = false; // ICCAD_WIRE_TIEBREAK: total_wire as 2nd sort key after bscore
+static bool WIRE_BFS = false;      // ICCAD_WIRE_BFS: reorder inside each bscore class by greedy
+                                   // connectivity attachment to already-ordered items + preplaced
 static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
@@ -1072,6 +1074,41 @@ static void solve() {
             return max(a.w,a.h)>max(b.w,b.h);
         });
     }
+    if (WIRE_BFS) {
+        // BFS-connectivity ordering layered over the base sort: bscore classes stay
+        // intact (wire-first ordering across classes was the WIRE_ORDER failure,
+        // vBd 390), but inside each class items are emitted greedily by largest
+        // edge weight into the already-ordered set (any class) plus preplaced
+        // blocks. The greedy wire term then sees the placed side of an item's
+        // heavy edges instead of placing early items blind. Ties (attachment 0,
+        // e.g. unconnected items) keep the base order, so cases without wire
+        // signal reduce to the base/WT behaviour.
+        int I=(int)items.size();
+        vector<int> blk2item(N,-1);
+        for (int t=0;t<I;t++) for (int b:items[t].blocks) blk2item[b]=t;
+        vector<double> attach(I,0.0);
+        for (int t=0;t<I;t++) for (int b:items[t].blocks) for (auto& nb:b2b_adj[b])
+            if (blocks[nb.first].is_preplaced) attach[t]+=nb.second;
+        vector<Item> bfs_out; bfs_out.reserve(I);
+        vector<char> emitted(I,0);
+        for (int s=0;s<I;){
+            int e=s; while (e<I && items[e].bscore==items[s].bscore) e++;
+            for (int k=s;k<e;k++){
+                int pick=-1;
+                for (int t=s;t<e;t++){
+                    if (emitted[t]) continue;
+                    if (pick<0 || attach[t]>attach[pick]+1e-9) pick=t;
+                }
+                emitted[pick]=1; bfs_out.push_back(items[pick]);
+                for (int b:items[pick].blocks) for (auto& nb:b2b_adj[b]){
+                    int ot=blk2item[nb.first];
+                    if (ot>=0 && !emitted[ot]) attach[ot]+=nb.second;
+                }
+            }
+            s=e;
+        }
+        items.swap(bfs_out);
+    }
 
     vector<int> order; for(int i=0;i<N;i++) if(!blocks[i].is_preplaced) order.push_back(i);
 
@@ -1190,6 +1227,7 @@ int main() {
     if (getenv("ICCAD_WIRE_FOR_ALL")) WIRE_FOR_ALL=true;
     if (getenv("ICCAD_WIRE_ORDER")) WIRE_ORDER=true;
     if (getenv("ICCAD_WIRE_TIEBREAK")) WIRE_TIEBREAK=true;
+    if (getenv("ICCAD_WIRE_BFS")) WIRE_BFS=true;
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;

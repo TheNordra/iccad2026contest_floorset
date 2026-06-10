@@ -9,7 +9,7 @@ from iccad2026_evaluate import ContestEvaluator, evaluate_solution
 from optimizer_claude import _serialize_input, _parse_output
 from proxy_analysis import build_opt_target_pos
 ev = ContestEvaluator(data_path=str(_DIR), verbose=False); ev._load_dataset()
-EXE = str(_DIR / "constructive.exe")
+EXE = os.environ.get("ICCAD_CONSTRUCTIVE_BIN", str(_DIR / "constructive.exe"))
 PORT = json.load(open(_DIR/"iccad2026contest"/"optimizer_constructive_results.json"))
 pcost = {t['test_id']: t['cost'] for t in PORT['test_results']}
 

@@ -120,14 +120,36 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.4202** (Constructive portfolio M17: WIRE_TIEBREAK pack-order 軸 + 2 profiles, 2026-06-10)
+### 🏆 最佳已驗證版本：Total Score = **1.4138** (Constructive portfolio M18: WIRE_BFS pack-order 軸 + 3 profiles, 2026-06-10)
 
-**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -12.3%）。** `constructive.cpp` +
+**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -12.7%）。** `constructive.cpp` +
 `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的
-C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~3.9s/case（46
-profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.4202）。
+C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~4.5s/case（49
+profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.4138）。
 
-**M17（本 session，2026-06-10，接續 M16）= WIRE_TIEBREAK pack-order 新軸 + 2 個 portfolio
+**M18（本 session，2026-06-10，接續 M17）= WIRE_BFS pack-order 新軸 + 3 個 portfolio
+profile（46→49），驗證 -0.45%（1.4202→1.4138，100/100 feasible，16/16 預估贏案全
+realize、殘留 0.000% — proxy = oracle 持續成立）。M14 以來最大單 session 增益。**
+- **🔑 WIRE_BFS（`ICCAD_WIRE_BFS=1`，constructive.cpp 新排序層）**：在 base/WT 排序之上的
+  **類內 BFS-connectivity 重排** — bscore 類邊界不動（WIRE_ORDER 跨類教訓），類內每步
+  greedy 選「與已排 items（任意類）+ preplaced blocks 連接權重最大」者先放；attachment
+  平手保基序（無 wire 訊號時退回 base/WT 行為）。效果：greedy wire 項幾乎總看得到 item
+  重邊的「已放端」，早期 item 不再盲放。獨立 if 疊加層 → 可與 WT（決定 tie 序）、frame
+  shape 任意組合。
+- **加 3 個 profile**（離線掃 8 個 WT 組合 + 6 個 BFS 變體，>0.05% 才加）：
+  - `bfs_wt_wire`（BFS+WT+W2）**+0.316%**：最高權重 **case 98** 再下殺（1.4413→1.4221）
+    + 95（n=116，1.3215→1.2995）+ 91/50/32/27/18/1/5
+  - `bfs_tall_wire`（BFS+tall+W2）**+0.251%**，與上面**贏案零重疊**：**case 79 再破**
+    （1.5974→1.5249，M17 破解後又 -4.5%）+ 86/74/97/89
+  - `wtb_tall_anc`（WT+tall+anc，M17 未掃組合）+0.071%：**case 87 獨有**（1.4512→1.4272）
+- **WT knob 軸枯竭確認**：其餘 WT 組合（anc_lo/tight/asp7/W2+anc/tight+W2/asp7+W2）全
+  ≤0.03%；BFS 單獨 +0.150%、BFS+narrow+W2 +0.131% 的贏案幾乎全被 ship 的兩個 BFS profile
+  蓋過 → 不加。
+- runtime 3.86→4.51s/case（49 profile，RuntimeFactor=1.0 中性）。
+- ⚠️ 下一步：BFS 組合空間只掃了 6 個；未掃 BFS+tight、BFS+asp 系列、BFS+WT+tall、
+  BFS+narrow+anc 等。case 79 殘留 1.525、case 89 殘留 1.827 仍是最大單案。
+
+**M17（同日稍早，2026-06-10，接續 M16）= WIRE_TIEBREAK pack-order 新軸 + 2 個 portfolio
 profile，驗證 -0.20%（1.4231→1.4202，100/100 feasible）+ per-frame csc 死路驗證。**
 - **🔑 WIRE_TIEBREAK（`ICCAD_WIRE_TIEBREAK=1`，constructive.cpp 新 item 排序變體）**：
   bscore（boundary 優先）仍是第一鍵不動，但同 bscore 類內**把 total_wire 最大的 item 先放**
@@ -391,32 +413,36 @@ M3 +incremental wire 2.2515 → M4: +MIB 2.1673 → +cluster layout key 1.9638 �
 proxy _RH=1.4 修正 1.4349 → M14: post-placement HPWL push 1.4253 →
 M15: HPWL push 擴大可移範圍 (boundary-axis slide) 1.4236 →
 M16: HPWL push 加 same-size swap 1.4231 →
-**M17: WIRE_TIEBREAK pack-order 軸 + 2 profiles (46-prof) 1.4202**（M17 portfolio
-**-0.20%**；M4 起累計 **-36.0%**）。
+M17: WIRE_TIEBREAK pack-order 軸 + 2 profiles (46-prof) 1.4202 →
+**M18: WIRE_BFS pack-order 軸 + 3 profiles (49-prof) 1.4138**（M18 portfolio
+**-0.45%**；M4 起累計 **-37.2%**）。
 
-**下一步（→ 繼續壓低天花板，當前 1.4202）**：proxy 已 = oracle ceiling（M13），selection
-不再是瓶頸。M14-M16 攻 hgap 的 post-placement 微調已收割完（-0.67%→-0.12%→-0.04% 遞減）；
-M17 開了 **pack-order 新軸**（WIRE_TIEBREAK，-0.20%）證明「packing 結構改動」才是剩餘方向。
+**下一步（→ 繼續壓低天花板，當前 1.4138）**：proxy 已 = oracle ceiling（M13 起，M18 再
+驗證 16/16 全 realize），selection 不再是瓶頸。post-placement 微調（M14-M16）收割完；
+pack-order 軸連兩次得分（M17 WT -0.20%、M18 BFS -0.45%）→ **packing 結構改動是主方向**。
 按預估 ROI：
 1. ~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、~~HPWL push (free/boundary/swap)~~
-   ✅ M14/M15/M16、~~WIRE_TIEBREAK 軸~~ ✅ M17（wtb_wire + wtb_tall_wire）
+   ✅ M14/M15/M16、~~WIRE_TIEBREAK 軸~~ ✅ M17、~~WT 組合再掃 + BFS-connectivity 化~~
+   ✅ M18（bfs_wt_wire + bfs_tall_wire + wtb_tall_anc）
 2. ~~cluster-rigid pack/slide~~ ❌ 兩次失敗；~~violating boundary 修復~~ ❌ M16 實測 0 可修
    （34 single 全 blocked、123 cluster + 45 preplaced 不可動，`dbg_vio_stats.py`）；
    ~~profile knob 軸（無 WT）~~ ❌ M16 掃 5 候選 ≤+0.063%；~~per-frame compaction + csc~~
    ❌ M17 實測（default-on 退步 +0.63%；當 profile +0.008% — 跨 layout 選擇是 wrapper proxy
-   的工作）；~~NO_COMPACT profile~~ ❌（0.000%）
-3. **🔑 WIRE_TIEBREAK 組合再掃**（最低成本）：WT 軸剛開，只試了 W2/W3/tall/narrow/LR5。
-   還沒掃：WT+anc_lo、WT+tight、WT+asp7、WT+tall+anc 等。用 `profile_vs_portfolio.py`
-   離線掃，>0.05% 才加（proxy=oracle → 全額 realize）。case 79 殘留 hgap（1.597）可能還有空間。
-4. **wire-driven packing 更深改動**（攻 hgap 結構殘留）：refinement 加 pair-relocation、
-   pack 順序 BFS-connectivity 化（保 bscore 第一鍵 — WIRE_ORDER 全排序 vBd 390 的教訓）。
-5. **硬 case 89（vBd 7，preplaced boundary 撐壞 outline）**：3 個 FREE preplaced block
-   (`final_boundary_nudge` 跳過 preplaced → nudge 無效)；4 個 BLOCKED cluster 1 member
-   被其他 block 擋住。⚠️ preplaced-aligned frame 已試失敗（M13，greedy pack 不下 tighter
-   width）。`dbg_boundary.py 89` 確認。
+   的工作）；~~NO_COMPACT profile~~ ❌（0.000%）；~~WT knob 組合（anc/tight/asp7...）~~
+   ❌ M18 掃 7 個全 ≤0.03%（WT 軸枯竭，只剩 wtb_tall_anc 過門檻已加）
+3. **🔑 BFS 組合再掃**（最低成本）：BFS 軸剛開（M18），只掃了 6 個。未掃：BFS+tight、
+   BFS+asp5/asp7 系列、BFS+WT+tall、BFS+narrow+anc 等。`profile_vs_portfolio.py` 離線掃，
+   >0.05% 才加（proxy=oracle → 全額 realize）。
+4. **wire-driven packing 更深改動**（攻 hgap 結構殘留）：refinement 加 pair-relocation；
+   BFS 變體（attachment 用 wire/area 比？seed 改 pin-anchored item？）。case 79 殘留
+   （1.525）是試金石。
+5. **硬 case 89（vBd 7 → M18 後 1.827 仍最高 cost，preplaced boundary 撐壞 outline）**：
+   3 個 FREE preplaced block (`final_boundary_nudge` 跳過 preplaced → nudge 無效)；4 個
+   BLOCKED cluster member 被擋。⚠️ preplaced-aligned frame 已試失敗（M13，greedy pack
+   不下 tighter width）。`dbg_boundary.py 89` 確認。
 6. **更多 pack 起點/順序**：先 pack over-spread 軸（dbg_area 顯示多數 case 寬度過寬
    w/wb 1.3-1.7、高度準），或 pack 向 connectivity 重心。
-次大殘留：硬 case（89 hgap 0.516 + vBd 7、85 hgap 0.560 vBd 6）多為 preplaced boundary 撐壞 outline。
+次大殘留：硬 case（89、85）多為 preplaced boundary 撐壞 outline。
 violation 殘留結構（M16 量測）：202 violating boundary block = 123 cluster member + 45
 preplaced + 34 blocked single → **後處理不可修，只能靠 packing 階段擺對**。
 
@@ -611,7 +637,9 @@ violations、或 tournament SA）。
 | 2026-06-10 profile knob 軸掃描 (WIRE_MULT 4/6, LR3.5+W4, ANCHOR 0.30, ultra-narrow) | **枯竭, 不加** ← 最佳 W4.0 oracle-min 僅 +0.063%, 其餘 ≤0.02% (profile_vs_portfolio.py) |
 | 2026-06-10 constructive M16 (HPWL push 加 same-size swap, default-on) | 1.4231 ← -0.04% vs M15; 同 (w,h,boundary-code) 的 non-pre non-cluster pair 交換位置 (嚴格降 HPWL); 幾何 multiset 不變 → downside-free (單 base 1.5202→1.5197, vBd/vCl/vMb 270/62/0 不變); 0/100 退步; 100/100 feasible; 3.99s/case |
 | 2026-06-10 per-frame compaction + csc 重估 frame (M17 實驗) | **死路, code 已移除** ← default-on 單 base 1.5197→1.5293 (csc 固定 hw 跨 outline 失準, 拿 vCl 換 vBd); 當 profile oracle-min +0.008%。跨 layout 選擇是 wrapper shapely proxy 的工作 |
-| **2026-06-10 constructive M17 (WIRE_TIEBREAK pack-order 軸 + wtb_wire/wtb_tall_wire, 46-prof)** | **1.4202** ← **新最佳, -0.20% vs M16; bscore 第一鍵不動、同類內 total_wire 大者先放; wtb_tall_wire 破解 case 79 (1.706→1.597, 最大 hgap 單案) + 89/53/16; wtb_wire 拿最高權重 case 98 (1.4502→1.4413) + 63; 100/100 feasible; 3.86s/case** |
+| 2026-06-10 constructive M17 (WIRE_TIEBREAK pack-order 軸 + wtb_wire/wtb_tall_wire, 46-prof) | 1.4202 ← -0.20% vs M16; bscore 第一鍵不動、同類內 total_wire 大者先放; wtb_tall_wire 破解 case 79 (1.706→1.597, 最大 hgap 單案) + 89/53/16; wtb_wire 拿最高權重 case 98 (1.4502→1.4413) + 63; 100/100 feasible; 3.86s/case |
+| 2026-06-10 WT knob 組合掃描 (anc_lo/tight/asp7/W2+anc/tight+W2/asp7+W2, M18 實驗) | **WT 軸枯竭** ← 7 個組合 ≤0.03%, 只有 WT+tall+anc +0.089% (case 87 獨有) 過門檻已加 |
+| **2026-06-10 constructive M18 (WIRE_BFS pack-order 軸 + bfs_wt_wire/bfs_tall_wire/wtb_tall_anc, 49-prof)** | **1.4138** ← **新最佳, -0.45% vs M17 (M14 以來最大單 session); bscore 類內 BFS-connectivity greedy attachment 重排 (與已排 items+preplaced 連接權重最大者先放, tie 保基序); bfs_wt_wire +0.316% 拿 case 98 (1.4413→1.4221)+95/91/50; bfs_tall_wire +0.251% 零重疊拿 case 79 (1.597→1.525)+86/74/97/89; 16/16 預估贏案全 realize (proxy=oracle); 100/100 feasible; 4.51s/case** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -623,21 +651,23 @@ violations、或 tournament SA）。
 
 ---
 
-## 這個階段想解決的問題（constructive M17 後，當前 1.4202）
+## 這個階段想解決的問題（constructive M18 後，當前 1.4138）
 
 > 舊 SA 範式的瓶頸（slack=0 boundary、SA 收斂、bbox shrinking）已隨架構換成
 > constructive placer 而作廢。以下是**當前** placer 的瓶頸，依 leverage 排序。
 > ⚠️ **gap 分解（讀 results.json 加權）：weighted hgap ≫ agap 0.23 ≫ vrel 0.038。
 > HPWL gap 是壓倒性主 lever**（cost=(1+0.5(hgap+agap))exp(2vrel)）。
 
-### A. HPWL gap 是最大 cost lever（最高 leverage，M14-M17 主軸）
+### A. HPWL gap 是最大 cost lever（最高 leverage，M14-M18 主軸）
 - M14 free-single push (-0.67%) + M15 boundary-axis slide (-0.12%) + M16 same-size swap
-  (-0.04%)：**post-placement 微調已收割完**；M17 WIRE_TIEBREAK pack-order 軸 (-0.20%)
-  證明 hgap 殘留要靠 **packing 結構**收
+  (-0.04%)：**post-placement 微調已收割完**；pack-order 軸連兩次得分（M17 WT -0.20%、
+  M18 BFS -0.45%）證明 hgap 殘留要靠 **packing 結構**收
 - ❌ 封死：cluster-rigid（無 slack + FP 破壞 abutment）；violating boundary 修復（M16 實測
-  0 可修：34 single 全 blocked、123 cluster + 45 preplaced 不可動）；per-frame csc（M17）
-- case 79（dense uniform graph，先前最大 hgap 單案）**已被 wtb_tall_wire 破解**
-  （1.706→1.597）— 殘留 hgap 仍有空間；WT 軸組合只掃了一小部分（見下一步 3）
+  0 可修：34 single 全 blocked、123 cluster + 45 preplaced 不可動）；per-frame csc（M17）；
+  WT knob 組合（M18 掃 7 個 ≤0.03%，軸枯竭）
+- case 79（dense uniform graph，先前最大 hgap 單案）M17 wtb_tall_wire 破解（1.706→1.597）、
+  **M18 bfs_tall_wire 再破（→1.525）** — wire-driven 聚集持續有效；BFS 軸組合只掃了 6 個
+  （見下一步 3）
 
 ### B. area_gap dead space（次大 uniform 缺口）
 - M10/M11 compaction 後 density 仍 >1.1（原圖 1.035）→ 還有 void 可擠
@@ -662,12 +692,12 @@ violations、或 tournament SA）。
 
 ## 預期目標
 
-> 基準線：constructive portfolio **1.4202**（M17）。對標：組員 legit portfolio
-> ~1.62（**已反超 ~12%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
+> 基準線：constructive portfolio **1.4138**（M18）。對標：組員 legit portfolio
+> ~1.62（**已反超 ~12.7%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
 > fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
 
 ### 已達成
-- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43（constructive 路線一路下殺，當前 1.4202）
+- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / < 1.42（constructive 路線一路下殺，當前 1.4138）
 - ✅ **反超組員所有 legit 版本**（v5 1.7429、v6/v7 portfolio ~1.62）
 - ✅ baseline-free proxy ≈ oracle 天花板（無 label leak，hidden test 可用）
 - ✅ M10 精度修正（消虛假 fragment）+ boundary 保持 compaction（攻 area_gap）
@@ -678,18 +708,21 @@ violations、或 tournament SA）。
 - ✅ M15 HPWL push 擴大可移範圍 (boundary-axis slide)（1.4253→1.4236，downside-free default-on）
 - ✅ M16 HPWL push 加 same-size swap（1.4236→1.4231，downside-free default-on）+
   三個死路驗證（violating 修復 / profile knob 軸 / case 79 cheap trick，省下後續 session 重試）
-- ✅ M17 WIRE_TIEBREAK pack-order 軸 + wtb_wire/wtb_tall_wire profiles（1.4231→**1.4202**，
+- ✅ M17 WIRE_TIEBREAK pack-order 軸 + wtb_wire/wtb_tall_wire profiles（1.4231→1.4202，
   破解 case 79 + 拿下 case 98）+ per-frame csc 死路驗證
+- ✅ M18 WIRE_BFS pack-order 軸 + bfs_wt_wire/bfs_tall_wire/wtb_tall_anc profiles
+  （1.4202→**1.4138**，case 98/95/79/87 全下殺，16/16 realize）+ WT knob 軸枯竭驗證
 
 ### 短期（當前目標）
 - ~~**目標 1**：Total Score < 1.43~~ ✅ M12 完成（1.4371，-0.87% vs M11）
 - ~~**目標 1b**：proxy 命中 oracle ceiling~~ ✅ M13 完成（_RH=1.4 → 1.4349 = ceiling）
-- **目標 2 (當前)**：Total Score < 1.40 — M14-M17 累計到 1.4202，距 < 1.40 還差 ~1.4%。
-  proxy 已完美、post-placement 微調已收割完 → **packing 結構**才有下一個 1%（M17 的
-  WIRE_TIEBREAK 是第一個證據：-0.20%）。
-  - ~~violating boundary 修復~~ ❌、~~profile knob 軸（無 WT）~~ ❌、~~per-frame csc~~ ❌
-  - 最低成本：**WT 組合再掃**（WT+anc_lo / WT+tight / WT+asp 系列，profile_vs_portfolio.py）
-  - 結構性：refinement pair-relocation、pack 順序 BFS-connectivity 化（保 bscore 第一鍵）
+- **目標 2 (當前)**：Total Score < 1.40 — M14-M18 累計到 1.4138，距 < 1.40 還差 ~1.0%。
+  proxy 已完美、post-placement 微調已收割完 → **packing 結構**才有下一個 1%（pack-order
+  軸連兩次得分：M17 WT -0.20%、M18 BFS -0.45%）。
+  - ~~violating boundary 修復~~ ❌、~~profile knob 軸（無 WT）~~ ❌、~~per-frame csc~~ ❌、
+    ~~WT knob 組合~~ ❌（M18 掃 7 個 ≤0.03%）
+  - 最低成本：**BFS 組合再掃**（BFS+tight / BFS+asp 系列 / BFS+WT+tall，profile_vs_portfolio.py）
+  - 結構性：refinement pair-relocation、BFS attachment 變體（wire/area 比、pin-anchored seed）
   - ⚠️ cluster-rigid slide 路線已封死（M11+M15 兩次失敗：無 slack + FP 破壞 abutment）
 
 ### 中期（4–6 個迭代）
@@ -745,11 +778,13 @@ violations、或 tournament SA）。
 - 用 `dbg_boundary.py` 分類違反（single/cluster/preplaced × blocked/free）；
   全 portfolio 統計用 `dbg_vio_stats.py`（M16 新工具）。
 
-### 4. profile 軸擴充 — ⚠️ **env knob 變體已枯竭（M16 掃描）**
+### 4. profile 軸擴充 — ⚠️ **env knob 變體已枯竭（M16/M18 掃描）**
 - ❌ WIRE_MULT 4/6、LR+W 組合、ANCHOR 0.30、ultra-narrow frame：oracle-min 全 ≤+0.063%
-  （`profile_vs_portfolio.py`）。
-- 仍可能有用的軸需要**新 C++ 行為**（cluster ordering 變體、compaction 方向偏好、
-  pack 順序 connectivity 化），不是現有 knob 的數值組合。
+  （`profile_vs_portfolio.py`）；❌ WT knob 組合（M18 掃 7 個 ≤0.03%）。
+- ✅ **M17/M18 驗證：有用的新軸 = 新 C++ 行為**（WIRE_TIEBREAK -0.20%、WIRE_BFS -0.45%）。
+  下一個候選：cluster ordering 變體、compaction 方向偏好、BFS attachment 變體
+  （wire/area 比、pin-anchored seed）。BFS 組合本身只掃了 6 個（BFS+tight / BFS+asp 系列
+  / BFS+WT+tall 未掃）。
 
 ### 5. 重建方向（逼近 ~1.1 上限，研究型）
 - 當前仍是 optimization（壓 area/hpwl/violation）。真天花板需 **reconstruction**：
@@ -827,10 +862,11 @@ FloorSet/
 │                              + M9 two-pass wire refinement + M10 %.17g 精度 / compaction
 │                              + M14 hpwl_push (free single 滑動) + M15 (boundary-axis slide)
 │                              + M16 same-size swap + M17 WIRE_TIEBREAK pack-order 變體
+│                              + M18 WIRE_BFS (bscore 類內 BFS-connectivity greedy attachment 重排)
 │                              deterministic; env 旋鈕 (NO_COMPACT/NO_REFINE/NO_PUSH/NO_BND_PUSH/
-│                              NO_SWAP/WIRE_TIEBREAK/...) + METRICS stderr
-├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 46 profile + baseline-free
-│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.4202, ~3.9s/case)
+│                              NO_SWAP/WIRE_TIEBREAK/WIRE_BFS/...) + METRICS stderr
+├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 49 profile + baseline-free
+│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.4138, ~4.5s/case)
 ├── dbg_hpwl_push.py        ← 🆕 M14-M16 HPWL push Python 原型: 對 portfolio JSON positions 滑
 │                              free single (x,y) + boundary single (free 軸) + same-size swap +
 │                              cluster-rigid (停用) + violating 修復 (停用, 死路),
@@ -966,12 +1002,12 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-10，當前 **1.4202**，M17 WIRE_TIEBREAK）
+### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-10，當前 **1.4138**，M18 WIRE_BFS）
 
-`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M17
-累計大幅改善；當前 **46 profile portfolio 1.4202**（proxy 命中 oracle ceiling）。
+`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本**。M4–M18
+累計大幅改善；當前 **49 profile portfolio 1.4138**（proxy 命中 oracle ceiling）。
 
-**✅ 已完成（M4–M17）**：
+**✅ 已完成（M4–M18）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
 - ~~7→11→13 profile portfolio + baseline-free proxy~~ → 1.7045→1.6060→1.5842→1.5659
 - ~~M9 two-pass wire refinement（攻 HPWL gap）~~ → 單 base 1.658、portfolio 1.5375
@@ -998,27 +1034,35 @@ full training：
 - ~~M17 WIRE_TIEBREAK pack-order 軸 + 2 profiles（44→46）~~ →
   **portfolio 1.4231→1.4202（-0.20%）**：bscore 第一鍵不動、同類內 total_wire 大者先放；
   wtb_tall_wire **破解 case 79**（1.706→1.597）、wtb_wire 拿 **case 98**（1.4502→1.4413）
+- ~~WT knob 組合掃描~~ ❌ M18 掃 7 個（anc_lo/tight/asp7/W2+anc/tight+W2/asp7+W2）全 ≤0.03%
+  → WT 軸枯竭；唯一過門檻 WT+tall+anc +0.089%（case 87 獨有）已加
+- ~~M18 WIRE_BFS pack-order 軸 + 3 profiles（46→49）~~ →
+  **portfolio 1.4202→1.4138（-0.45%，M14 以來最大）**：bscore 類內 BFS-connectivity greedy
+  attachment 重排（與已排 items+preplaced 連接最強者先放、tie 保基序、可疊 WT/frame）；
+  `bfs_wt_wire` +0.316% 拿 **case 98**（1.4413→1.4221）+95/91/50、`bfs_tall_wire` +0.251%
+  零重疊再破 **case 79**（1.597→1.525）+86/74/97/89、`wtb_tall_anc` +0.071%（case 87）；
+  16/16 預估贏案全 realize（proxy = oracle 再驗證）
 
-**關鍵現況：post-placement 微調（M14-M16）結案；M17 證明 packing 結構改動（pack-order）
-是剩餘 hgap 的正確路線。violation 殘留（123 cluster + 45 preplaced + 34 blocked single）
-後處理不可修。** 下一步：按 ROI：
+**關鍵現況：post-placement 微調（M14-M16）結案；pack-order 軸連兩次得分（M17 -0.20%、
+M18 -0.45%）→ packing 結構改動是剩餘 hgap 的正確路線。violation 殘留（123 cluster +
+45 preplaced + 34 blocked single）後處理不可修。** 下一步：按 ROI：
 1. ~~proxy _RH 修正~~ ✅ M13、~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、
    ~~preplaced-frame~~ ❌、~~HPWL push 三連發~~ ✅ M14/M15/M16、~~cluster-rigid slide~~ ❌、
    ~~violating 修復~~ ❌、~~profile knob 軸~~ ❌、~~per-frame csc~~ ❌、
-   ~~WIRE_TIEBREAK 軸（first pass）~~ ✅ M17
-2. **🔑 WT 組合再掃（最低成本，接續 M17）**：WT 軸只掃了 W2/W3/tall/narrow/LR5。未掃：
-   WT+anc_lo、WT+tight、WT+asp7/asp5 系列、WT+tall+anc 組合。`profile_vs_portfolio.py`
-   離線掃，oracle-min >0.05% 才加（proxy=oracle → 全額 realize，加 profile 只花 runtime）。
+   ~~WIRE_TIEBREAK 軸~~ ✅ M17、~~WT 組合掃尾 + WIRE_BFS 軸（first pass）~~ ✅ M18
+2. **🔑 BFS 組合再掃（最低成本，接續 M18）**：BFS 軸只掃了 6 個（單獨/W2/WT+W2/tall+W2/
+   tall+anc/narrow+W2）。未掃：BFS+tight、BFS+asp5/asp7 系列、BFS+WT+tall、BFS+narrow+anc。
+   `profile_vs_portfolio.py` 離線掃（支援 `ICCAD_CONSTRUCTIVE_BIN` 換測試 exe），oracle-min
+   >0.05% 才加（proxy=oracle → 全額 realize，加 profile 只花 runtime）。
 3. **wire-driven packing 更深改動**（攻 hgap 結構殘留）：refinement 加 pair-relocation、
-   pack 順序 BFS-connectivity 化（保 bscore 第一鍵 — ⚠️ WIRE_ORDER 全排序已失敗 vBd 390）。
-   case 79 殘留（1.597, hgap 仍高）是試金石。
-4. **vBd 硬 case**（89 hgap 0.516+vBd 7、85 hgap 0.560 vBd 6）：多為 **preplaced boundary block
+   BFS attachment 變體（wire/area 比、pin-anchored seed）。case 79 殘留（1.525）是試金石。
+4. **vBd 硬 case**（89 cost 1.827 仍最高、85）：多為 **preplaced boundary block
    撐壞 outline**（位置固定，bbox 邊到不了它）。⚠️ frame 偏好「不超出 preplaced 外緣」已試失敗
    （M13）。用 `dbg_boundary.py` 確認佔比。
 5. **次要**：掃 `ICCAD_REFINE_ITERS`（12-24 平緩，>12 邊際 <0.2%）、`ICCAD_PUSH_PASSES`（預設 8，
    通常 2-3 pass 收斂）。⚠️ 已驗證**不是 lever**：`layout_score` hpwl 權重（HW_MULT 3/8 不動
    選擇）、frame scale 細化（frame_fine 僅 -0.08%）。
-6. ⚠️ runtime ~3.9s/case（46 profile）。**本地 eval 強制 RuntimeFactor=1.0 → runtime 對分數
+6. ⚠️ runtime ~4.5s/case（49 profile）。**本地 eval 強制 RuntimeFactor=1.0 → runtime 對分數
    中性**；官方 leaderboard 算 cross-submission median，仍快。單 placer 改進所有 profile 同步受惠。
 
 > ⚠️ **試過會退步**：max_trials 試「所有 frame」→ 2.42；BP_WEIGHT 拉高無效；
@@ -1034,7 +1078,9 @@ full training：
 >    `ICCAD_BP_WEIGHT` / `ICCAD_NO_COMPACT=1`（關 M10 compaction）/ `ICCAD_NO_REFINE=1` /
 >    `ICCAD_NO_PUSH=1`（關 M14-M16 HPWL push）/ `ICCAD_NO_BND_PUSH=1`（關 M15 boundary-axis,
 >    退回 M14 free-single only）/ `ICCAD_NO_SWAP=1`（關 M16 swap, 退回 M15）/ `ICCAD_PUSH_PASSES=N` /
->    `ICCAD_WIRE_TIEBREAK=1`（M17 pack-order: bscore 同類內 total_wire 大者先放）；
+>    `ICCAD_WIRE_TIEBREAK=1`（M17 pack-order: bscore 同類內 total_wire 大者先放）/
+>    `ICCAD_WIRE_BFS=1`（M18 pack-order: bscore 類內 BFS-connectivity greedy attachment
+>    重排，可疊 WT/frame knob）；
 >    `ICCAD_CONSTRUCTIVE_SINGLE=1` 退回單 base。analyze/dbg 直跑 exe（不經 wrapper）→
 >    量單一 profile。組員參考碼在 `C:\Users\Nordra\Downloads\teammate_iccad_study\`。
 

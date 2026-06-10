@@ -113,6 +113,17 @@ _PROFILES: List[Dict[str, str]] = [
     # were dominated by these two and are not worth the runtime.
     {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                                             # wtb_wire
     {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"}, # wtb_tall_wire
+    # M18: WIRE_BFS pack-order axis — bscore classes intact, but inside each class
+    # items are emitted greedily by largest edge weight into the already-ordered
+    # set + preplaced blocks (BFS over the connectivity graph), so the greedy wire
+    # term sees the placed side of an item's heavy edges. Layers over WT (tie order)
+    # and frame shapes. Offline scan: bfs_wt_wire +0.316% oracle-min (wins the
+    # highest-weight case 98 1.4413->1.4221 plus 95/91/50); bfs_tall_wire +0.251%
+    # with ZERO overlap (79 1.597->1.525, 86/74/97/89). wtb_tall_anc adds the
+    # otherwise-uncovered case 87 (+0.071%). Plain BFS/BFS+narrow were dominated.
+    {"ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                      # bfs_wt_wire
+    {"ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_WIRE_MULT": "2.0"},      # bfs_tall_wire
+    {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_ANCHOR_W": "0.04"}, # wtb_tall_anc
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
