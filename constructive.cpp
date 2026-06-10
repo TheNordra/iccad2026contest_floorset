@@ -66,6 +66,8 @@ static bool WIRE_ORDER = false;   // ICCAD_WIRE_ORDER: sort items by total_wire 
 static bool WIRE_TIEBREAK = false; // ICCAD_WIRE_TIEBREAK: total_wire as 2nd sort key after bscore
 static bool WIRE_BFS = false;      // ICCAD_WIRE_BFS: reorder inside each bscore class by greedy
                                    // connectivity attachment to already-ordered items + preplaced
+static bool BFS_PIN = false;       // ICCAD_BFS_PIN: BFS seed attachment also counts p2b pin
+                                   // weights (pins are fixed anchors just like preplaced blocks)
 static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
@@ -1087,8 +1089,11 @@ static void solve() {
         vector<int> blk2item(N,-1);
         for (int t=0;t<I;t++) for (int b:items[t].blocks) blk2item[b]=t;
         vector<double> attach(I,0.0);
-        for (int t=0;t<I;t++) for (int b:items[t].blocks) for (auto& nb:b2b_adj[b])
-            if (blocks[nb.first].is_preplaced) attach[t]+=nb.second;
+        for (int t=0;t<I;t++) for (int b:items[t].blocks){
+            for (auto& nb:b2b_adj[b])
+                if (blocks[nb.first].is_preplaced) attach[t]+=nb.second;
+            if (BFS_PIN) for (auto& pw:p2b_adj[b]) attach[t]+=pw.second;
+        }
         vector<Item> bfs_out; bfs_out.reserve(I);
         vector<char> emitted(I,0);
         for (int s=0;s<I;){
@@ -1228,6 +1233,7 @@ int main() {
     if (getenv("ICCAD_WIRE_ORDER")) WIRE_ORDER=true;
     if (getenv("ICCAD_WIRE_TIEBREAK")) WIRE_TIEBREAK=true;
     if (getenv("ICCAD_WIRE_BFS")) WIRE_BFS=true;
+    if (getenv("ICCAD_BFS_PIN")) BFS_PIN=true;
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;
