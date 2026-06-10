@@ -63,6 +63,7 @@ static double WIRE_MULT = 1.0;  // extra scale on the incremental-HPWL term (env
 static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
 static bool WIRE_FOR_ALL = false; // ICCAD_WIRE_FOR_ALL: compute wire for ALL bp positions
 static bool WIRE_ORDER = false;   // ICCAD_WIRE_ORDER: sort items by total_wire first (hpwl-first packing)
+static bool WIRE_TIEBREAK = false; // ICCAD_WIRE_TIEBREAK: total_wire as 2nd sort key after bscore
 static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
@@ -781,24 +782,29 @@ static double compute_nsoft(){
     for (auto&kv:mibsh) nsoft+=max(0,(int)kv.second.size()-1);
     return max(nsoft,1);
 }
+// csc = (area + hw*hpwl)*exp(2*(bv+gf)/nsoft): proxy of the TRUE cost shape.
+// layout_score weights boundary 150000 but grouping only 6500, so it loves a pack
+// that trades a boundary miss for a cluster fragment — yet the real cost
+// normalises (bv+gf+vmb)/nsoft inside exp(), so that trade is neutral (or a loss
+// once it also lifts hpwl). csc weights bv and gf equally. Used to select among
+// compaction candidates (M10) and, under ICCAD_FRAME_CSC, among per-frame
+// compacted+pushed finalists.
+static double csc_of(const vector<XYWH>& p, double nsoft){
+    double x0=1e18,y0=1e18,x1=-1e18,y1=-1e18;
+    for (auto&q:p){x0=min(x0,q.x);y0=min(y0,q.y);x1=max(x1,q.x+q.w);y1=max(y1,q.y+q.h);}
+    double area=(x1-x0)*(y1-y0), hpwl=approx_hpwl(p);
+    int bv=count_boundary_violations(p), gf=count_group_fragments(p);
+    double hw=(N>=116)?0.12:0.06;
+    return (area+hw*hpwl)*exp(2.0*(bv+gf)/nsoft);
+}
 static vector<XYWH> compact_layout(const vector<XYWH>& base){
     if (!COMPACT) return base;
     double xmin=1e18,ymin=1e18,xmax=-1e18,ymax=-1e18;
     for (auto&q:base){xmin=min(xmin,q.x);ymin=min(ymin,q.y);xmax=max(xmax,q.x+q.w);ymax=max(ymax,q.y+q.h);}
-    // Select with a proxy of the TRUE cost, not layout_score: layout_score weights
-    // boundary 150000 but grouping only 6500, so it loves a pack that trades a
-    // boundary miss for a cluster fragment — yet the real cost normalises
-    // (bv+gf+vmb)/nsoft inside exp(), so that trade is neutral (or a loss once it
-    // also lifts hpwl). csc = (area + hw*hpwl)*exp(2*(bv+gf)/nsoft) weights bv and
-    // gf equally and keeps the original whenever no pack truly wins.
-    double nsoft=compute_nsoft(), hw=(N>=116)?0.12:0.06;
-    auto csc=[&](const vector<XYWH>& p)->double{
-        double x0=1e18,y0=1e18,x1=-1e18,y1=-1e18;
-        for (auto&q:p){x0=min(x0,q.x);y0=min(y0,q.y);x1=max(x1,q.x+q.w);y1=max(y1,q.y+q.h);}
-        double area=(x1-x0)*(y1-y0), hpwl=approx_hpwl(p);
-        int bv=count_boundary_violations(p), gf=count_group_fragments(p);
-        return (area+hw*hpwl)*exp(2.0*(bv+gf)/nsoft);
-    };
+    // Select with the true-cost proxy csc, not layout_score (see csc_of comment);
+    // keeps the original whenever no pack truly wins.
+    double nsoft=compute_nsoft();
+    auto csc=[&](const vector<XYWH>& p)->double{ return csc_of(p,nsoft); };
     // Only the single-block boundary nudge here (final_group_boundary_nudge would
     // re-introduce the bv-for-area trade the proxy is trying to avoid).
     auto finish=[&](vector<XYWH> L)->vector<XYWH>{ final_boundary_nudge(L); return L; };
@@ -1047,6 +1053,17 @@ static void solve() {
             double aa=a.w*a.h,ab=b.w*b.h; if (fabs(aa-ab)>TOL) return aa>ab;
             return max(a.w,a.h)>max(b.w,b.h);
         });
+    } else if (WIRE_TIEBREAK) {
+        // boundary priority intact (WIRE_ORDER's failure was wire-first ordering,
+        // vBd 390); inside each bscore class place most-connected items first so
+        // the greedy wire term sees its heavy neighbours early.
+        sort(items.begin(),items.end(),[](const Item&a,const Item&b){
+            if (a.bscore!=b.bscore) return a.bscore>b.bscore;
+            if (fabs(a.total_wire-b.total_wire)>1e-6) return a.total_wire>b.total_wire;
+            if (a.blocks.size()!=b.blocks.size()) return a.blocks.size()>b.blocks.size();
+            double aa=a.w*a.h,ab=b.w*b.h; if (fabs(aa-ab)>TOL) return aa>ab;
+            return max(a.w,a.h)>max(b.w,b.h);
+        });
     } else {
         sort(items.begin(),items.end(),[](const Item&a,const Item&b){
             if (a.bscore!=b.bscore) return a.bscore>b.bscore;
@@ -1101,6 +1118,12 @@ static void solve() {
     // layout_score proxy every frame's compacted variant lets it overfit and pick
     // a low-proxy / high-true-cost outline (same failure mode as trying too many
     // frames). Compacting only the winner matched the validated prototype.
+    // A csc-pool variant (compact+push every frame finalist, pick by csc — the
+    // "M17" experiment) was also tried and is a DEAD END: csc's fixed hw weight
+    // mis-ranks across different outlines (it trades cluster fragments for
+    // boundary violations; single-base 1.5197->1.5293) and as a portfolio profile
+    // its oracle-min gain is +0.008% (1 case). Cross-frame selection needs the
+    // wrapper's shapely proxy, which already does exactly this across profiles.
     if (COMPACT) best=compact_layout(best);
     // Post-compaction HPWL push: slide free singles toward connectivity centroids
     // into remaining void. Downside-free (area/bv/gf/mib unchanged), attacks the
@@ -1166,6 +1189,7 @@ int main() {
     if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }
     if (getenv("ICCAD_WIRE_FOR_ALL")) WIRE_FOR_ALL=true;
     if (getenv("ICCAD_WIRE_ORDER")) WIRE_ORDER=true;
+    if (getenv("ICCAD_WIRE_TIEBREAK")) WIRE_TIEBREAK=true;
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;

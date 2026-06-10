@@ -103,6 +103,16 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_WIRE_MULT": "2.0", "ICCAD_ANCHOR_W": "0.04"}, # narrow_wire_anc
     {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_WIRE_MULT": "2.0"},                           # narrow_wire
     {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_ANCHOR_W": "0.04"},                           # narrow_anc
+    # M17: WIRE_TIEBREAK pack-order axis — boundary priority (bscore) intact, but
+    # inside each bscore class the most-connected items are placed first, so the
+    # greedy wire term sees its heavy neighbours early. Plain WIRE_ORDER (wire as
+    # the FIRST key) failed (vBd 390); the tie-break variant keeps vBd. Offline scan
+    # (profile_vs_portfolio): wtb_tall_wire wins case 79 (densest uniform graph,
+    # 1.706->1.597, the worst single-case hgap) + 89/53/16; wtb_wire wins the
+    # highest-weight case 98 (1.4502->1.4413) + 63. Other combos (narrow/LR5/W3)
+    # were dominated by these two and are not worth the runtime.
+    {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                                             # wtb_wire
+    {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"}, # wtb_tall_wire
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
