@@ -139,6 +139,16 @@ _PROFILES: List[Dict[str, str]] = [
     # Plain OS8 (+0.030%) and OS8+tall (+0.025%) won only low-weight cases — the
     # swap needs the PIN+WT order as its starting point to matter at high weight.
     {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # os_pin_wt_wire
+    # M21: ORDER_SWAP combo sweep. A larger swap pool (K=16, 120 pairs) on the
+    # strongest ordering is the biggest single profile since M18 (+0.460%
+    # oracle-min): re-breaks the highest-weight case 98 (1.4118->1.3841) and 79
+    # (1.5135->1.4219) + 82/89/91. OS8 on BFS+WT *without* PIN (+0.262%) wins
+    # 86/95/97; OS8 on BFS+tight (+0.221%) is the first profile to dent hard
+    # case 85 (1.6606->1.6255) + 42/40. Wins are near-disjoint. OS12 (+0.157%)
+    # and OS16+tall (+0.056%) were dominated by these three; OS8+WT+tall +0.016%.
+    {"ICCAD_ORDER_SWAP": "16", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # os16_pin_wt_wire
+    {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                        # os_bfs_wt_wire
+    {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},       # os_bfs_tight_wire
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
