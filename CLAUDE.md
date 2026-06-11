@@ -120,15 +120,38 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.3998** (Constructive portfolio M21: ORDER_SWAP 組合掃描 + 3 profiles, 2026-06-11)
+### 🏆 最佳已驗證版本：Total Score = **1.3987** (Constructive portfolio M22: OS16 移植兩個無 PIN 排序 + 2 profiles, 2026-06-11)
 
-**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -13.6%）。突破 < 1.40 目標。**
-`constructive.cpp` + `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框
-floorplanner 的 C++ 重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，
-~8.4s/case（55 profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；
-官方 eval 1.3998）。
+**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -13.7%）。** `constructive.cpp` +
+`optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的 C++
+重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~8.8s/case（57
+profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.3987）。
 
-**M21（本 session，2026-06-11，接續 M20）= ORDER_SWAP 組合掃描 + 3 個 portfolio profile
+**M22（本 session，2026-06-11，接續 M21）= OS K 放大掃描收尾 + 2 個 portfolio profile
+（55→57），驗證 -0.08%（1.3998→1.3987，100/100 feasible，8/8 預估贏案全 realize）+
+K 軸飽和證明 + runtime 風險決策。**
+- **🔑 K 軸在最強排序上於 K=16 飽和**：OS24（+0.041%）與 OS32（+0.062%）的贏案裡
+  **case 98/79/82 全部絕跡** — K=16 已拿走高權重案的 jump-move 紅利，更大 K 只在中型案
+  各撿不同的渣（hill-climb 路徑不同 → OS24 拿 66、OS32 拿 71，互不重疊）。
+- **ship os16_bfs_wt_wire（OS16+BFS+WT 無 PIN）+0.056%**：case 86 再磨深（1.3347→
+  1.3255）+ 82（1.4679→1.4565）+ 50（1.2920→1.2419）+ 29。
+- **ship os16_bfs_tight_wire（OS16+BFS+tight）+0.057%**：**新 case 62 首殺**（1.6214→
+  1.5248）+ 55（1.8198→1.7828）+ 51 + 66 半收（1.4450→1.4378）。
+- **⚠️ runtime 風險決策（重要先例）**：os32_pin（case 71 1.3187 + 最深 89 1.8093）與
+  os24_pin（**唯一拿下長期未收割 case 66 → 1.3989** + 27）四個全加 live 驗證 =
+  **1.3979（掃描預估完全吻合、100/100 feasible）但 avg runtime 8.4→21.9s/case（2.6×）**。
+  官方 RuntimeFactor = max(0.7, R^0.3)，R 分母是 cross-submission median（未知；組員
+  portfolio ~11s 是唯一參考）→ 21.9s 若 median 8-12s 會吃 +20-35% cost 懲罰，遠超
+  0.04% 分數差 → **回退兩個重 profile**（n=120 cpu：OS24 32s、OS32 58s）。候補記錄在
+  optimizer_constructive.py 註解，**若官方 runtime 規則確認寬鬆可加回（+0.08% 現成）**。
+- wrapper subprocess timeout 55→**120s**（防呆上限，OS16 變體在 57-prof 並行下大案
+  wall 可能 >55s；無壞處）。
+- ⚠️ 下一步：**OS K 軸枯竭**（K=16 飽和 + K>16 runtime 不划算）→ 回到新 C++ 行為軸：
+  cluster ordering 變體、refinement pair-relocation、compaction 方向偏好、pack
+  over-spread 軸先。case 89 殘留 1.8155（os32 可到 1.8093）、85 1.6255、66 半收 1.4378
+  （os24 可到 1.3989）。
+
+**M21（本 session 稍早，2026-06-11，接續 M20）= ORDER_SWAP 組合掃描 + 3 個 portfolio profile
 （52→55），驗證 -0.58%（1.4080→1.3998，100/100 feasible，12/12 預估贏案全 realize，
 掃描預估 1.3999 vs 實際 1.3998 — proxy = oracle 第五次驗證）。突破 < 1.40 目標。
 無 C++ 改動，純 portfolio 層（M20 的 ORDER_SWAP 機制 × 新 K/排序/frame 組合）。**
@@ -483,34 +506,34 @@ M17: WIRE_TIEBREAK pack-order 軸 + 2 profiles (46-prof) 1.4202 →
 M18: WIRE_BFS pack-order 軸 + 3 profiles (49-prof) 1.4138 →
 M19: BFS_PIN pin-anchored seed + 2 profiles (51-prof) 1.4105 →
 M20: ORDER_SWAP pack-order hill-climb + 1 profile (52-prof) 1.4080 →
-**M21: ORDER_SWAP 組合掃描 + 3 profiles (55-prof) 1.3998**（M21 portfolio
-**-0.58%**；M4 起累計 **-37.9%**）。
+M21: ORDER_SWAP 組合掃描 + 3 profiles (55-prof) 1.3998 →
+**M22: OS16 移植無 PIN 排序 + 2 profiles (57-prof) 1.3987**（M22 portfolio
+**-0.08%**；M4 起累計 **-38.0%**）。
 
-**下一步（→ 繼續壓低天花板，當前 1.3998）**：proxy 已 = oracle ceiling（M13 起，
-M18-M21 連續驗證 53/54 realize），selection 不再是瓶頸。pack-order 軸連五次得分
-（M17 WT -0.20%、M18 BFS -0.45%、M19 PIN -0.23%、M20 OS -0.18%、M21 OS 組合 -0.58%）
-→ **packing 結構 + OS 組合持續是主方向**。按預估 ROI：
+**下一步（→ 繼續壓低天花板，當前 1.3987）**：proxy 已 = oracle ceiling（M13 起，
+M18-M22 連續驗證 61/62 realize），selection 不再是瓶頸。pack-order 軸六連勝
+（M17 WT -0.20%、M18 BFS -0.45%、M19 PIN -0.23%、M20 OS -0.18%、M21 OS 組合 -0.58%、
+M22 OS16 移植 -0.08%）但 **OS K 軸已枯竭**（M22：K=16 飽和於高權重案、K>16 runtime
+不划算）→ **回到新 C++ 行為軸**。按預估 ROI：
 1. ~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、~~HPWL push~~ ✅ M14/M15/M16、
    ~~WIRE_TIEBREAK 軸~~ ✅ M17、~~WT 組合 + WIRE_BFS 軸~~ ✅ M18、~~BFS 組合 + BFS_PIN~~
-   ✅ M19、~~ORDER_SWAP 軸~~ ✅ M20、~~OS 組合掃（K=8/12/16 × 排序 × frame）~~ ✅ M21
-   （os16_pin_wt_wire/os_bfs_wt_wire/os_bfs_tight_wire）
+   ✅ M19、~~ORDER_SWAP 軸~~ ✅ M20、~~OS 組合掃~~ ✅ M21、~~OS K 放大（24/32）+ OS16
+   移植~~ ✅ M22（os16_bfs_wt_wire/os16_bfs_tight_wire；OS24/32 驗證有效但 runtime 回退）
 2. ~~cluster-rigid pack/slide~~ ❌ 兩次失敗；~~violating boundary 修復~~ ❌ M16（0 可修）；
    ~~profile knob 軸~~ ❌ M16；~~per-frame csc~~ ❌ M17；~~NO_COMPACT profile~~ ❌；
    ~~WT knob 組合~~ ❌ M18（7 個 ≤0.03%）；~~BFS knob 組合~~ ❌ M19（8 個僅 1 過門檻）；
    ~~BFS_NORM（attach/√area）~~ ❌ M20（4 個 ≤0.026%）；~~PIN 補掃（tight/narrow）~~
    ❌ M20（≤0.030%）；~~OS+WT+tall / OS16+tall / OS12+PIN~~ ❌ M21（被入選三者蓋過）
-3. **🔑 OS K 繼續放大（最低成本，接續 M21）**：K=8→16 在最強排序上給 +0.46%（98/79/82/89
-   全下殺）且**邊際未見頂** → OS24/OS32 on PIN+WT+W2 值得掃（swap 段 runtime ~2.3×/4.4×，
-   本地中性）。也可掃 OS16 on BFS+WT（無 PIN，M21 的 os_bfs_wt_wire 只試了 K=8）。
-4. **case 66 個案**（1.4450，PIN+W2/PIN+narrow/NORM 多變體可到 ~1.389 但都 ~0.03% 不過
-   門檻）：若再有一個變體拿到 66 + 其他案，合併可過門檻。
-5. **硬 case 89（1.8155 仍最高 cost，preplaced boundary 撐壞 outline）**：M21 OS16+PIN
-   首次鬆動（1.8273→1.8155）；os12_pin 可到 1.8106（殘留 0.017% 不過門檻）→ swap 對它
-   有效，更大 K 或「拿 89+其他」組合可收。⚠️ preplaced-aligned frame 已試失敗（M13）。
-6. **更多 pack 起點/順序**：先 pack over-spread 軸（dbg_area 顯示多數 case 寬度過寬），
-   或 pack 向 connectivity 重心。
-次大殘留：硬 case（89 1.8155、85 1.6255）多為 preplaced boundary 撐壞 outline（M21 兩者
-皆首次下殺但仍是 top-2 cost）。
+3. **🔑 新 C++ 行為軸（OS K 軸枯竭後的主方向）**：cluster ordering 變體（複合 item 的
+   內部 layout 選擇 key 已掃過，但 cluster 在 pack order 的位置未動過）、refinement
+   pair-relocation（M19 提過未做）、compaction 方向偏好 / pack over-spread 軸先
+   （dbg_area：多數 case 寬度過寬）、pack 向 connectivity 重心。
+4. **runtime 候補（+0.08% 現成，等規則確認）**：os32_pin（case 71 1.3187 + 89 1.8093）
+   + os24_pin（case 66 1.3989）已 live 驗證（59-prof = 1.3979）但 avg runtime 21.9s
+   （2.6×）→ 若官方 RuntimeFactor（cross-submission median）確認寬鬆可直接加回。
+5. **case 66 半收割**（1.4378，os24 可到 1.3989）；**case 89**（1.8155，os32 可到
+   1.8093）；85（1.6255）；62 已收（1.5248）。
+次大殘留：硬 case（89 1.8155、85 1.6255）多為 preplaced boundary 撐壞 outline。
 violation 殘留結構（M16 量測）：202 violating boundary block = 123 cluster member + 45
 preplaced + 34 blocked single → **後處理不可修，只能靠 packing 階段擺對**。
 
@@ -713,7 +736,9 @@ violations、或 tournament SA）。
 | 2026-06-10 BFS_NORM (attach/√area) + PIN 補掃 (tight/narrow, M20 實驗) | **兩軸死路** ← NORM 4 組合 ≤0.026%、PIN 補掃 ≤0.030%, 全部主贏案是 case 66 (~1.389 可達但單案 ~0.03% 不過門檻) |
 | 2026-06-10 constructive M20 (ORDER_SWAP pack-order hill-climb + os_pin_wt_wire, 52-prof) | 1.4080 ← -0.18% vs M19; 每 frame refinement 前對 top-8 total_wire items 28 對做 pack-order 互換 hill-climb (pack-once 比較, layout_score 嚴格改善才收, items_base 隔離); os_pin_wt_wire +0.252% 再殺 case 94 (1.3411→1.3128)+98 (1.4221→1.4118)+79 (1.5249→1.5135)+50/28/9; OS8 單獨僅 +0.030% (低權重廣效) → swap 需好的起始 order; 12/12 realize; 100/100 feasible; 5.10s/case |
 | 2026-06-11 OS 組合掃尾 (OS8+WT+tall / OS12+PIN / OS16+BFS+tall, M21 實驗) | **不加** ← OS12+PIN +0.157% (case 89 1.8106 最深) 與 OS16+tall +0.056% 全被入選三 profile 蓋過 (殘留 ≤0.017%); OS8+WT+tall +0.016% |
-| **2026-06-11 constructive M21 (ORDER_SWAP 組合掃描 + os16_pin_wt_wire/os_bfs_wt_wire/os_bfs_tight_wire, 55-prof)** | **1.3998** ← **新最佳, -0.58% vs M20, 突破 < 1.40; 無 C++ 改動純 portfolio 層; os16_pin_wt_wire +0.460% (K=16=120 對 swap 池) 再殺 case 98 (1.4118→1.3841)+79 (1.5135→1.4219)+82+89 首次鬆動 (1.8273→1.8155); os_bfs_wt_wire +0.262% 拿 86 (1.3775→1.3347)+95+97; os_bfs_tight_wire +0.221% 首殺硬 case 85 (1.6606→1.6255)+42+40; 三者贏案近零重疊; 12/12 realize (掃描預估 1.3999 vs 實際 1.3998); 100/100 feasible; 8.36s/case** |
+| 2026-06-11 constructive M21 (ORDER_SWAP 組合掃描 + os16_pin_wt_wire/os_bfs_wt_wire/os_bfs_tight_wire, 55-prof) | 1.3998 ← -0.58% vs M20, 突破 < 1.40; 無 C++ 改動純 portfolio 層; os16_pin_wt_wire +0.460% (K=16=120 對 swap 池) 再殺 case 98 (1.4118→1.3841)+79 (1.5135→1.4219)+82+89 首次鬆動 (1.8273→1.8155); os_bfs_wt_wire +0.262% 拿 86 (1.3775→1.3347)+95+97; os_bfs_tight_wire +0.221% 首殺硬 case 85 (1.6606→1.6255)+42+40; 三者贏案近零重疊; 12/12 realize (掃描預估 1.3999 vs 實際 1.3998); 100/100 feasible; 8.36s/case |
+| 2026-06-11 OS K 放大掃描 (OS24/OS32 on PIN+WT, M22 實驗) | **驗證有效但 runtime 回退** ← 四個全加 59-prof live = **1.3979**（掃描精確吻合, 100/100 feasible）但 avg runtime 8.4→**21.9s/case**（OS24/32 在 n=120 cpu 32s/58s）；官方 RuntimeFactor=max(0.7,R^0.3) 分母 cross-submission median 未知（組員 ~11s 唯一參考）→ 0.04% 分數差扛 20-35% 懲罰風險不划算 → 回退 os32_pin（71 1.3187+89 1.8093）/os24_pin（**66 1.3989 唯一解**），候補留 code 註解；**K=16 飽和證明：98/79/82 在 OS24/32 贏案全絕跡** |
+| **2026-06-11 constructive M22 (OS16 移植兩個無 PIN 排序 + os16_bfs_wt_wire/os16_bfs_tight_wire, 57-prof)** | **1.3987** ← **新最佳, -0.08% vs M21; os16_bfs_wt_wire +0.056% 磨深 86 (1.3347→1.3255)+82 (1.4679→1.4565)+50 (1.2920→1.2419); os16_bfs_tight_wire +0.057% 首殺 case 62 (1.6214→1.5248)+55+51+66 半收 (1.4450→1.4378); 8/8 realize; 100/100 feasible; 8.79s/case; wrapper timeout 55→120s** |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -725,7 +750,7 @@ violations、或 tournament SA）。
 
 ---
 
-## 這個階段想解決的問題（constructive M21 後，當前 1.3998）
+## 這個階段想解決的問題（constructive M22 後，當前 1.3987）
 
 > 舊 SA 範式的瓶頸（slack=0 boundary、SA 收斂、bbox shrinking）已隨架構換成
 > constructive placer 而作廢。以下是**當前** placer 的瓶頸，依 leverage 排序。
@@ -743,7 +768,9 @@ violations、或 tournament SA）。
   新 C++ 行為與其組合（M21 純組合掃也靠 M20 的 OS 機制）
 - case 79：M17 破解（1.706→1.597）→ M18 再破（→1.525）→ M20 再降（→1.5135）→
   M21 OS16 又破（→**1.4219**）；case 98 連四殺至 **1.3841**；硬 case 89/85 M21 首次
-  鬆動 — wire-driven 聚集 + order jump move 持續有效。**OS K 放大未見頂**（見下一步 3）
+  鬆動 — wire-driven 聚集 + order jump move 持續有效。**⚠️ M22 證明 OS K 軸枯竭**：
+  K=16 飽和於高權重案（OS24/32 贏案中 98/79/82 絕跡）、K>16 撿中型渣但 runtime 不划算
+  （21.9s/case 撞 RuntimeFactor 風險 → 回退）。下一步回到新 C++ 行為軸。
 
 ### B. area_gap dead space（次大 uniform 缺口）
 - M10/M11 compaction 後 density 仍 >1.1（原圖 1.035）→ 還有 void 可擠
@@ -768,12 +795,12 @@ violations、或 tournament SA）。
 
 ## 預期目標
 
-> 基準線：constructive portfolio **1.3998**（M21）。對標：組員 legit portfolio
-> ~1.62（**已反超 ~13.6%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
+> 基準線：constructive portfolio **1.3987**（M22）。對標：組員 legit portfolio
+> ~1.62（**已反超 ~13.7%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
 > fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
 
 ### 已達成
-- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / < 1.42 / < 1.41 / **< 1.40**（當前 1.3998）
+- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / < 1.42 / < 1.41 / **< 1.40**（當前 1.3987）
 - ✅ **反超組員所有 legit 版本**（v5 1.7429、v6/v7 portfolio ~1.62）
 - ✅ baseline-free proxy ≈ oracle 天花板（無 label leak，hidden test 可用）
 - ✅ M10 精度修正（消虛假 fragment）+ boundary 保持 compaction（攻 area_gap）
@@ -794,16 +821,21 @@ violations、或 tournament SA）。
   （1.4105→1.4080，case 94/98/79/50 再殺，12/12 realize）+ NORM/PIN 補掃死路驗證
 - ✅ M21 ORDER_SWAP 組合掃描 + os16_pin_wt_wire/os_bfs_wt_wire/os_bfs_tight_wire
   （1.4080→**1.3998**，< 1.40 達成；case 98/79/86/95/85/82/89 全下殺，12/12 realize）
+- ✅ M22 OS K 放大掃描收尾 + os16_bfs_wt_wire/os16_bfs_tight_wire（1.3998→**1.3987**，
+  case 62 首殺 + 86/82/50/55/51，8/8 realize）+ K 軸飽和證明 + runtime 風險決策
+  （os24/os32 驗證 1.3979 但 21.9s 回退，候補 +0.08%）
 
 ### 短期（當前目標）
 - ~~**目標 1**：Total Score < 1.43~~ ✅ M12 完成（1.4371，-0.87% vs M11）
 - ~~**目標 1b**：proxy 命中 oracle ceiling~~ ✅ M13 完成（_RH=1.4 → 1.4349 = ceiling）
 - ~~**目標 2**：Total Score < 1.40~~ ✅ M21 完成（1.3998，-0.58% vs M20）
-- **目標 2b (當前)**：Total Score < 1.39 — 還差 ~0.7%。pack-order/OS 軸連五勝且
-  K 放大未見頂。
-  - 最低成本：**OS K 再放大**（OS24/OS32 on PIN+WT+W2；OS16 on BFS+WT 無 PIN）
-  - case 66（~1.389 可達、單案 ~0.03%）等一個能合併過門檻的變體
-  - case 89（1.8155）/85（1.6255）M21 首次鬆動 → swap 對硬 case 有效，可再深挖
+- **目標 2b (當前)**：Total Score < 1.39 — 還差 ~0.6%。**OS K 軸已枯竭**（M22）→
+  需新 C++ 行為軸。
+  - 候選：cluster 在 pack order 的位置變體、refinement pair-relocation、compaction
+    方向偏好 / pack over-spread 軸先、pack 向 connectivity 重心
+  - **runtime 候補 +0.08% 現成**：os32_pin + os24_pin（live 驗證 1.3979）等官方
+    RuntimeFactor 規則確認寬鬆即可加回
+  - case 66 半收（1.4378，os24 可到 1.3989）、89（1.8155，os32 可到 1.8093）、85（1.6255）
   - ⚠️ cluster-rigid slide 路線已封死（M11+M15 兩次失敗：無 slack + FP 破壞 abutment）
 
 ### 中期（4–6 個迭代）
@@ -863,9 +895,10 @@ violations、或 tournament SA）。
 - ❌ WIRE_MULT 4/6、LR+W 組合、ANCHOR 0.30、ultra-narrow frame：oracle-min 全 ≤+0.063%；
   ❌ WT knob 組合（M18）；❌ BFS knob 組合（M19）；❌ BFS_NORM（attach/√area，M20 掃 4 個
   ≤0.026%）；❌ PIN 補掃（M20，≤0.030%）。
-- ✅ **M17-M21 驗證：有用的新軸 = 新 C++ 行為與其組合**（WIRE_TIEBREAK -0.20%、WIRE_BFS
-  -0.45%、BFS_PIN -0.23%、ORDER_SWAP -0.18%、OS 組合掃 K=16 -0.58%）。下一個候選：
-  OS K 再放大（OS24/OS32）、cluster ordering 變體、compaction 方向偏好。
+- ✅ **M17-M22 驗證：有用的新軸 = 新 C++ 行為與其組合**（WIRE_TIEBREAK -0.20%、WIRE_BFS
+  -0.45%、BFS_PIN -0.23%、ORDER_SWAP -0.18%、OS 組合掃 K=16 -0.58%、OS16 移植 -0.08%）。
+  ❌ OS K>16 已枯竭（M22：高權重案飽和 + runtime 不划算）。下一個候選：
+  cluster ordering 變體、refinement pair-relocation、compaction 方向偏好。
 
 ### 5. 重建方向（逼近 ~1.1 上限，研究型）
 - 當前仍是 optimization（壓 area/hpwl/violation）。真天花板需 **reconstruction**：
@@ -951,8 +984,9 @@ FloorSet/
 │                              deterministic; env 旋鈕 (NO_COMPACT/NO_REFINE/NO_PUSH/NO_BND_PUSH/
 │                              NO_SWAP/WIRE_TIEBREAK/WIRE_BFS/BFS_PIN/BFS_NORM/ORDER_SWAP/...)
 │                              + METRICS stderr
-├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 55 profile + baseline-free
-│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.3998, ~8.4s/case)
+├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 57 profile + baseline-free
+│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.3987, ~8.8s/case;
+│                              os24/os32 候補在註解, +0.08% 等 runtime 規則確認)
 ├── dbg_hpwl_push.py        ← 🆕 M14-M16 HPWL push Python 原型: 對 portfolio JSON positions 滑
 │                              free single (x,y) + boundary single (free 軸) + same-size swap +
 │                              cluster-rigid (停用) + violating 修復 (停用, 死路),
@@ -1088,12 +1122,12 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-11，當前 **1.3998**，M21 OS 組合掃描）
+### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-11，當前 **1.3987**，M22 OS16 移植）
 
 `optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本、突破 < 1.40**。
-M4–M21 累計大幅改善；當前 **55 profile portfolio 1.3998**（proxy 命中 oracle ceiling）。
+M4–M22 累計大幅改善；當前 **57 profile portfolio 1.3987**（proxy 命中 oracle ceiling）。
 
-**✅ 已完成（M4–M21）**：
+**✅ 已完成（M4–M22）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
 - ~~7→11→13 profile portfolio + baseline-free proxy~~ → 1.7045→1.6060→1.5842→1.5659
 - ~~M9 two-pass wire refinement（攻 HPWL gap）~~ → 單 base 1.658、portfolio 1.5375
@@ -1151,28 +1185,35 @@ M4–M21 累計大幅改善；當前 **55 profile portfolio 1.3998**（proxy 命
   `os_bfs_tight_wire` +0.221%（**首殺硬 case 85** 1.6606→1.6255 + 42/40）；
   三者贏案近零重疊；OS12+PIN/OS16+tall/OS8+WT+tall 被蓋過不加；12/12 realize
   （掃描預估 1.3999 vs 實際 1.3998）；runtime 5.10→8.36s/case
+- ~~M22 OS K 放大掃描收尾 + 2 profiles（55→57）~~ →
+  **portfolio 1.3998→1.3987（-0.08%）**：`os16_bfs_wt_wire` +0.056%（磨深 86/82 + 50
+  1.2920→1.2419）、`os16_bfs_tight_wire` +0.057%（**首殺 case 62** 1.6214→1.5248 +
+  55/51 + 66 半收 1.4378）；8/8 realize；**K 軸飽和證明**（OS24/32 贏案中 98/79/82
+  絕跡）；**runtime 風險決策**：os32_pin（71/89）+os24_pin（**66 1.3989 唯一解**）四個
+  全加 live = 1.3979 但 21.9s/case → 回退（RuntimeFactor cross-submission median 未知，
+  0.04% 不值 20-35% 懲罰敞口），候補在 code 註解；timeout 55→120s
 
-**關鍵現況：pack-order/OS 軸連五勝（M17 -0.20%、M18 -0.45%、M19 -0.23%、M20 -0.18%、
-M21 -0.58%）；knob/輕變體空間徹底掃完（M16-M20 逐軸驗證 ❌）→ 新增益來自新 C++ 行為
-與其組合深掃。OS K=8→16 增益未見頂。violation 殘留（123 cluster + 45 preplaced + 34
-blocked single）後處理不可修。** 下一步：按 ROI：
+**關鍵現況：pack-order/OS 軸六連勝後 OS K 軸枯竭（M22 證明 K=16 飽和於高權重案）；
+knob/輕變體空間徹底掃完（M16-M20 逐軸驗證 ❌）→ 增益要回到新 C++ 行為軸。violation
+殘留（123 cluster + 45 preplaced + 34 blocked single）後處理不可修。** 下一步：按 ROI：
 1. ~~proxy _RH 修正~~ ✅ M13、~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、
    ~~preplaced-frame~~ ❌、~~HPWL push 三連發~~ ✅ M14/M15/M16、~~cluster-rigid slide~~ ❌、
    ~~violating 修復~~ ❌、~~per-frame csc~~ ❌、~~WIRE_TIEBREAK 軸~~ ✅ M17、
    ~~WT 組合 + WIRE_BFS~~ ✅ M18、~~BFS 組合 + BFS_PIN~~ ✅ M19、
-   ~~BFS_NORM / PIN 補掃~~ ❌ M20、~~ORDER_SWAP 軸~~ ✅ M20、~~OS 組合掃~~ ✅ M21
-2. **🔑 OS K 再放大（最低成本，接續 M21）**：K=8→16 on PIN+WT 給 +0.460% 未見頂 →
-   掃 OS24/OS32 on PIN+WT+W2（swap 段 runtime ~2.3×/4.4×，本地中性）；OS16 on BFS+WT
-   （無 PIN，M21 只試了 K=8 拿 86/95/97 — K=16 可能更深）。
-3. **case 66 合併收割**：多變體可到 ~1.389（PIN+W2 / PIN+narrow / NORM）但單案 ~0.03%；
-   找一個「拿 66 + 其他案」的組合過門檻。
-4. **vBd 硬 case**（89 cost 1.8155 仍最高、85 1.6255）：M21 兩者首次下殺 → swap 有效；
-   os12_pin 對 89 可到 1.8106（殘留 0.017%）。⚠️ frame 偏好「不超出 preplaced 外緣」
-   已試失敗（M13）。
+   ~~BFS_NORM / PIN 補掃~~ ❌ M20、~~ORDER_SWAP 軸~~ ✅ M20、~~OS 組合掃~~ ✅ M21、
+   ~~OS K 放大 + OS16 移植~~ ✅ M22（K 軸枯竭）
+2. **🔑 新 C++ 行為軸**：cluster 在 pack order 的位置變體、refinement pair-relocation、
+   compaction 方向偏好 / pack over-spread 軸先（dbg_area：寬度過寬）、pack 向
+   connectivity 重心。
+3. **runtime 候補（+0.08% 現成）**：os32_pin + os24_pin 已 live 驗證（59-prof =
+   1.3979，掃描精確吻合）→ 官方 RuntimeFactor 規則確認寬鬆即加回。
+4. **case 66 半收**（1.4378，os24 可到 1.3989）；**case 89**（1.8155，os32 可到 1.8093）；
+   85（1.6255）。⚠️ frame 偏好「不超出 preplaced 外緣」已試失敗（M13）。
 5. **次要**：掃 `ICCAD_REFINE_ITERS`、`ICCAD_PUSH_PASSES`。⚠️ 已驗證**不是 lever**：
    `layout_score` hpwl 權重、frame scale 細化。
-6. ⚠️ runtime ~8.4s/case（55 profile）。**本地 eval 強制 RuntimeFactor=1.0 → runtime 對分數
-   中性**；官方 leaderboard 算 cross-submission median。單 placer 改進所有 profile 同步受惠。
+6. ⚠️ runtime ~8.8s/case（57 profile）。**本地 eval 強制 RuntimeFactor=1.0 中性**；官方
+   算 cross-submission median（組員 portfolio ~11s 唯一參考）→ **8-11s 是安全帶，>20s
+   高風險**（M22 決策先例）。單 placer 改進所有 profile 同步受惠。
 
 > ⚠️ **試過會退步**：max_trials 試「所有 frame」→ 2.42；BP_WEIGHT 拉高無效；
 >    wire ×50000 反彈 1.93；proxy near-tie min-vrel tiebreak 反而更差（proxy 夠準）。

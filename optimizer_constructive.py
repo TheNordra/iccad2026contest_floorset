@@ -149,6 +149,22 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_ORDER_SWAP": "16", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # os16_pin_wt_wire
     {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                        # os_bfs_wt_wire
     {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},       # os_bfs_tight_wire
+    # M22: K-axis follow-up. On the strongest (PIN+WT) order K saturates at 16
+    # for the high-weight cases (98/79/82 absent from both OS24 and OS32 wins);
+    # K=16 transplanted onto the two M21 no-PIN orders lands borderline-but-
+    # disjoint wins and is shipped: os16_bfs_wt (+0.056%: 86/82 deepened + 50)
+    # and os16_bfs_tight (+0.057%: new case 62 1.6214->1.5248 + 55/51).
+    # NOT shipped (runtime risk, not score): OS32 on PIN+WT (+0.062%: case 71
+    # 1.3187, deepest 89 1.8093, 57/21/35) and OS24 (+0.041%: the ONLY profile
+    # reaching the long-unharvested case 66, 1.4450->1.3989). Both verified live
+    # (full 4-profile portfolio = 1.3979, matching the scan exactly) but they
+    # cost 58s/32s CPU on n=120 and pushed avg runtime 8.4->21.9s/case — the
+    # official RuntimeFactor uses the cross-submission median (teammate
+    # portfolio ~11s is our only reference), so a 2.6x runtime jump risks a
+    # 20-35% cost penalty for a 0.04% score gain. Re-add if the runtime rule
+    # turns out lenient.
+    {"ICCAD_ORDER_SWAP": "16", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                        # os16_bfs_wt_wire
+    {"ICCAD_ORDER_SWAP": "16", "ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},       # os16_bfs_tight_wire
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
@@ -231,7 +247,7 @@ def _run_profile(env_over: Dict[str, str], inp: str, n: int):
     env.update(env_over)
     try:
         r = subprocess.run([str(_BIN)], input=inp, capture_output=True,
-                           text=True, timeout=55.0, env=env)
+                           text=True, timeout=120.0, env=env)
         if r.returncode != 0 or not r.stdout.strip():
             return None
         return _parse_output(r.stdout, n)
