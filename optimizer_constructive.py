@@ -165,6 +165,27 @@ _PROFILES: List[Dict[str, str]] = [
     # turns out lenient.
     {"ICCAD_ORDER_SWAP": "16", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                        # os16_bfs_wt_wire
     {"ICCAD_ORDER_SWAP": "16", "ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},       # os16_bfs_tight_wire
+    # M23: ORDER_MOVE=K — relocation hill-climb on the pack order (pull one top-K
+    # wire item out, insert it at another top-K slot; the segment between shifts).
+    # A structural jump ORDER_SWAP can't reach (swap keeps everyone else fixed).
+    # om8_pin_wt_wire +0.041% oracle-min, all wins realized live: deepest case 89
+    # yet (1.8155->1.8061, beats even the os32 stand-by 1.8093) + 57 (1.3689) +
+    # 26/33. Cheap (56 extra packs/frame, n=120 ~7s).
+    # NOT shipped (runtime, same call as the M22 os24/os32 shelving):
+    # om16_bfs_wt_wire (OM16+BFS+WT, no PIN) +0.148% — first kill of case 96
+    # (n=117, 1.3336->1.3160), finally harvests case 66 (1.4378->1.3951, deeper
+    # than the os24 stand-by) + 91/42/53/17/19 — fully verified live (59-prof =
+    # 1.3968, 20/20 predicted wins realized) but costs ~28s cpu on n=120 and
+    # pushed avg runtime 8.8->13.5s/case; (13.5/8.8)^0.3 = +13.8% RuntimeFactor
+    # exposure for +0.14% score whenever the official median < ~19s. Re-add
+    # together with os24/os32 if the runtime rule turns out lenient.
+    # Other M23 scan results: K-amplification is order-dependent like OS
+    # (K=8->16 pays on BFS+WT 0.026->0.148% but not on PIN+WT 0.041->0.040%);
+    # OM12 loses 96/66 entirely (+0.012%, hill-climb path nonlinear in K);
+    # OM8+OS16 stacked +0.070% dominated by the two leads; OM8 on BFS+tight
+    # 0.000%; CLUSTER_ORD (compound cluster first/last in bscore class) dead on
+    # both orderings tried (0.000%).
+    {"ICCAD_ORDER_MOVE": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},   # om8_pin_wt_wire
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl

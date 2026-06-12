@@ -70,6 +70,15 @@ static bool BFS_PIN = false;       // ICCAD_BFS_PIN: BFS seed attachment also co
                                    // weights (pins are fixed anchors just like preplaced blocks)
 static bool BFS_NORM = false;      // ICCAD_BFS_NORM: BFS pick compares attach/sqrt(item area) so
                                    // small densely-connected items order before big sparse ones
+static int ORDER_MOVE = 0;         // ICCAD_ORDER_MOVE=K: after ORDER_SWAP (if any), greedy
+                                   // hill-climb relocating one top-K total_wire item to another
+                                   // top-K item's order position (remove+insert; the segment
+                                   // between them shifts by one). A structural jump ORDER_SWAP
+                                   // can't make: swap keeps everyone else's position fixed.
+static int CLUSTER_ORD = 0;        // ICCAD_CLUSTER_ORD: 1 = compound (multi-block cluster)
+                                   // items first within their bscore class, 2 = last. Stable
+                                   // partition applied after all ordering layers (WT/BFS), so
+                                   // the class-internal relative order is otherwise kept.
 static int ORDER_SWAP = 0;         // ICCAD_ORDER_SWAP=K: before refinement, greedy hill-climb on
                                    // the pack order — try swapping the top-K total_wire items
                                    // pairwise, re-pack once, keep a swap iff layout_score improves
@@ -1121,6 +1130,19 @@ static void solve() {
         }
         items.swap(bfs_out);
     }
+    if (CLUSTER_ORD==1 || CLUSTER_ORD==2) {
+        // Compound cluster items' position inside their bscore class is an axis the
+        // base sort never moves (its size key always puts them first; WT/BFS shuffle
+        // them by wire). Force them to the class front (1) or back (2): back packs
+        // singles tight first and lets the big compound land on the perimeter.
+        int I=(int)items.size();
+        for (int s=0;s<I;){
+            int e=s; while (e<I && items[e].bscore==items[s].bscore) e++;
+            stable_partition(items.begin()+s, items.begin()+e,
+                [](const Item& it){ return (it.blocks.size()>1) == (CLUSTER_ORD==1); });
+            s=e;
+        }
+    }
 
     vector<int> order; for(int i=0;i<N;i++) if(!blocks[i].is_preplaced) order.push_back(i);
 
@@ -1164,6 +1186,38 @@ static void solve() {
                 double sc2=ok?layout_score(c2):1e300;
                 if (sc2<sc-1e-9){ sc=sc2; c1.swap(c2); }
                 else swap(items[top[a]],items[top[b]]);
+            }
+        }
+        // Pack-order relocation hill-climb: pull one top-K wire item out and insert
+        // it at another top-K item's slot (the segment between shifts by one) — a
+        // structural jump ORDER_SWAP can't reach since swap fixes everyone else.
+        // Same protocol: pack-once comparisons, strict improvement only. Items are
+        // tracked by their first block id because accepted moves shift positions.
+        if (ORDER_MOVE>0 && (int)items.size()>2){
+            vector<int> mtop;
+            for (int i=0;i<(int)items.size();i++) mtop.push_back(i);
+            sort(mtop.begin(),mtop.end(),[&](int a,int b){
+                return items[a].total_wire>items[b].total_wire; });
+            mtop.resize(min((size_t)ORDER_MOVE, mtop.size()));
+            vector<int> ids; for (int t:mtop) ids.push_back(items[t].blocks[0]);
+            auto pos_of=[&](int id)->int{
+                for (int i=0;i<(int)items.size();i++)
+                    if (items[i].blocks[0]==id) return i;
+                return -1; };
+            for (size_t a=0;a<ids.size();a++) for (size_t b=0;b<ids.size();b++){
+                if (a==b) continue;
+                int pa=pos_of(ids[a]), pb=pos_of(ids[b]);
+                if (pa<0||pb<0||pa==pb) continue;
+                if (pa<pb) rotate(items.begin()+pa, items.begin()+pa+1, items.begin()+pb+1);
+                else       rotate(items.begin()+pb, items.begin()+pa,   items.begin()+pa+1);
+                vector<XYWH> c2;
+                bool ok=run_frame(f.first,f.second,false,dummy,c2);
+                double sc2=ok?layout_score(c2):1e300;
+                if (sc2<sc-1e-9){ sc=sc2; c1.swap(c2); }
+                else {
+                    if (pa<pb) rotate(items.begin()+pa, items.begin()+pb,   items.begin()+pb+1);
+                    else       rotate(items.begin()+pb, items.begin()+pb+1, items.begin()+pa+1);
+                }
             }
         }
         // refinement passes: re-pack with full-neighbor wire pulling toward the
@@ -1265,6 +1319,8 @@ int main() {
     if (getenv("ICCAD_BFS_PIN")) BFS_PIN=true;
     if (getenv("ICCAD_BFS_NORM")) BFS_NORM=true;
     if (const char* e=getenv("ICCAD_ORDER_SWAP")){ int v=atoi(e); if (v>0) ORDER_SWAP=v; }
+    if (const char* e=getenv("ICCAD_ORDER_MOVE")){ int v=atoi(e); if (v>0) ORDER_MOVE=v; }
+    if (const char* e=getenv("ICCAD_CLUSTER_ORD")){ int v=atoi(e); if (v==1||v==2) CLUSTER_ORD=v; }
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;
