@@ -120,14 +120,57 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 
 ## 目前狀態 (Current Status)
 
-### 🏆 最佳已驗證版本：Total Score = **1.3983** (Constructive portfolio M23: ORDER_MOVE relocation 軸 + 1 profile, 2026-06-12)
+### 🏆 最佳已驗證版本：Total Score = **1.3862** (Constructive portfolio M25: HPWL jump + 池審計剪枝, 38-prof, 2026-06-12)
 
-**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -13.7%）。** `constructive.cpp` +
+**反超組員所有 legit 版本（含 v6/v7 portfolio ~1.62，現 -14.5%）。** `constructive.cpp` +
 `optimizer_constructive.py` 是組員 `my_optimizer.py` 建構式定框 floorplanner 的 C++
-重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，~9.5s/case（58
-profile）。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；官方 eval 1.3983）。
+重寫（B 路線）+ 我們自建的 portfolio 選擇層。100/100 feasible，**7.61s/case（38
+profile，M25 剪枝後）**。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；
+官方 eval 1.3862）。
 
-**M23（本 session，2026-06-12，接續 M22）= 兩個新 C++ 行為軸（ORDER_MOVE relocation
+**M24+M25（本 session，2026-06-12，接續 M23）= 一個新 default-on C++ 行為（HPWL jump
+跨障礙拔插）+ portfolio 池審計剪枝（56→38）+ om16/os24/os32 候補實質作廢，驗證
+-0.87%（1.3983→**1.3862**，100/100 feasible）+ runtime -27%（9.49/10.43→**7.61s/case**）。
+M14 以來最大單 session 增益，目標 < 1.39 達成。**
+- **🔑 M24 HPWL_JUMP（`hpwl_push()` 內新 jump pass，default-on，`ICCAD_NO_JUMP=1` 退回
+  M16）**：slide（M14/M15）的 void 區間只由同行/列重疊塊界定 — **code 上可證永遠不能跨越
+  障礙**；swap（M16）只配對 bit-identical (w,h,boundary) → median 在障礙後面的 block 從來
+  沒有任何 move 能救。jump 把 free single 拔出重插到 **frozen bbox 內任意可容 slot**（候選
+  = 對每個其他 rect 的 8 個角對齊 abutment 槽 + bbox 四角，clamp 進 bbox + dedupe，按
+  per-block HPWL 排序走訪取第一個可行 = 最優），嚴格降才收；boundary single 做 1-D 變體
+  （釘軸座標不動 → edge-contact 保住）。**downside-free 論證與 M14 逐字相同**（落點限
+  frozen bbox → area 非增；滿足的 boundary block co-define 其邊 → bv 非增；不碰 cluster
+  成員、dims 不變 → gf/mib 不變）→ default-on。
+  - 原型（dbg_hpwl_push.py `ENABLE_JUMP`，對 evaluate_solution 真值）：**-0.67%、0/100
+    退步、0/100 bv/gf 增**、591 jumps（491 free 2-D + 100 boundary 1-D）
+  - C++ 單 base：1.5197→**1.4992（-1.35%）**，vBd/vCl/vMb 270/62/0 完全不變；實測成本
+    **12.7ms/case**（serial A/B 隔離量測；live 的 +0.9s 波動是 56-process 競爭噪音）
+  - live：**1.3983→1.3862（-0.87%）**，proxy 在 jumped 候選池重選再放大（M14 pattern）
+  - per-case 全線無退步：**case 66 1.4378→1.3981、96→1.3171、89→1.7936（歷史新低）、
+    90（hgap 最高 0.553 的純 wire 結構案，M24 的設計標靶）→1.3707、85→1.6091、
+    99（殘留第一）→1.3554、93→1.3638、88→1.4354**
+- **M25 池審計（新工具 `profile_audit.py`：兩階段可續跑、audit_cache.pkl 增量快取、
+  lazy true-cost）**：per-profile **win tally**（_RH=1.4 模擬選擇 = live 完全吻合 1.3862
+  → 工具自驗證）+ **leave-one-out ΔTotal**（移除後重模擬，正確處理 proxy hmin 耦合）+
+  per-(profile,case) cpu。**18 條「0 wins ∧ LOO=0」的 knob profile 剪除（56→38，wrapper
+  內註解保留 `[M25-pruned]` 標記可一鍵復原）** → live 驗證 100 案 per-case **位元一致**、
+  runtime 10.43→**7.61s/case（-27%）**（est wall 模型說不變 7.30s，但官方 harness 的
+  56-process 超額調度競爭隨池縮小消失 — 剪枝的真實紅利在這裡）
+- **⚠️ runtime 候補池實質清空（重要結論）**：M24 jump **免費吃掉了候補的賣點** —
+  om16 的 case 96（jump 1.3171 vs om16 1.3160）與 66（1.3981 vs 1.3951）；os32 的 case 89
+  （1.8093，已被 jump 的 **1.7936** 超越）；os24 的 case 66（1.3989，同樣被超越）。審計實測
+  om16 疊在 M24 池上邊際只剩 **+0.065%**（1.3862→1.3853），而它自身 runtime（mean 13.91s、
+  n=120 36s）**直接主導每案 wall**（est 7.30→13.91s）→ 懲罰比 (13.91/7.61)^0.3 ≈ **+20%
+  換 +0.065% 永遠不划算**。且**剪枝救不了它**：可剪的全是 ~0.7s 便宜 knob，wall 由重
+  profile 的 max 項決定。三個候補只剩「官方完全不計 runtime」才值得重訪（os32 殘餘獨有
+  價值僅 case 71 一案）。
+- ⚠️ 下一步：jump 後 hgap 仍是主 lever（微調家族 M14-M16+M24 至此收割完，jump 是最後一個
+  downside-free move）。剩餘候選：**reframe**（壓縮後以實測 bbox 形狀 seed frame 重跑、
+  輸出交 wrapper proxy 仲裁，攻 agap/case 99/79）、guide-median 候選注入 item_candidates、
+  **oracle-perm 探測**（ICCAD_ORDER_FILE 注入 fp_sol 排序，離線 only，決定 ordering/ML
+  封卷與否）。
+
+**M23（同日稍早，2026-06-12，接續 M22）= 兩個新 C++ 行為軸（ORDER_MOVE relocation
 hill-climb + CLUSTER_ORD）+ 1 個 portfolio profile（57→58），驗證 -0.03%（1.3987→
 1.3983，100/100 feasible，6/6 預估贏案全 realize — proxy = oracle 第七次驗證）+
 om16 runtime 候補決策 + CLUSTER_ORD 死路驗證。**
@@ -538,37 +581,44 @@ M19: BFS_PIN pin-anchored seed + 2 profiles (51-prof) 1.4105 →
 M20: ORDER_SWAP pack-order hill-climb + 1 profile (52-prof) 1.4080 →
 M21: ORDER_SWAP 組合掃描 + 3 profiles (55-prof) 1.3998 →
 M22: OS16 移植無 PIN 排序 + 2 profiles (57-prof) 1.3987 →
-**M23: ORDER_MOVE relocation 軸 + 1 profile (58-prof) 1.3983**（M23 portfolio
-**-0.03%**；M4 起累計 **-38.0%**）。
+M23: ORDER_MOVE relocation 軸 + 1 profile (58-prof) 1.3983 →
+M24: HPWL jump (跨障礙拔插, default-on) 1.3862 →
+**M25: 池審計剪枝 (56→38-prof, 分數不變 runtime -27%) 1.3862**（M24+M25 session
+**-0.87%**；M4 起累計 **-38.4%**）。
 
-**下一步（→ 繼續壓低天花板，當前 1.3983）**：proxy 已 = oracle ceiling（M13 起，
-M18-M23 連續驗證 67/68 realize），selection 不再是瓶頸。pack-order 軸七連勝
-（M17 WT -0.20%、M18 BFS -0.45%、M19 PIN -0.23%、M20 OS -0.18%、M21 OS 組合 -0.58%、
-M22 OS16 移植 -0.08%、M23 OM -0.03%）但 **OS K 軸（M22）與 OM 軸（M23）皆已收割**
-→ **剩餘新 C++ 行為軸**。按預估 ROI：
+**下一步（→ 繼續壓低天花板，當前 1.3862）**：proxy 已 = oracle ceiling（M13 起連續
+驗證；M25 審計模擬 = live 位元吻合）。post-placement 微調家族（M14/15/16/24）與
+pack-order 軸（M17-M23）皆已收割。按預估 ROI：
 1. ~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、~~HPWL push~~ ✅ M14/M15/M16、
    ~~WIRE_TIEBREAK 軸~~ ✅ M17、~~WT 組合 + WIRE_BFS 軸~~ ✅ M18、~~BFS 組合 + BFS_PIN~~
    ✅ M19、~~ORDER_SWAP 軸~~ ✅ M20、~~OS 組合掃~~ ✅ M21、~~OS K 放大（24/32）+ OS16
-   移植~~ ✅ M22（OS24/32 驗證有效但 runtime 回退）、~~ORDER_MOVE 軸 + cluster pack-order
-   位置~~ ✅ M23（om8 ship；om16 候補；CLUSTER_ORD 死）
+   移植~~ ✅ M22、~~ORDER_MOVE 軸~~ ✅ M23、~~HPWL jump（placement 層拔插的
+   post-placement 版）~~ ✅ M24（-0.87%）、~~池審計剪枝~~ ✅ M25（runtime -27%）
 2. ~~cluster-rigid pack/slide~~ ❌ 兩次失敗；~~violating boundary 修復~~ ❌ M16（0 可修）；
    ~~profile knob 軸~~ ❌ M16；~~per-frame csc~~ ❌ M17；~~NO_COMPACT profile~~ ❌；
    ~~WT knob 組合~~ ❌ M18（7 個 ≤0.03%）；~~BFS knob 組合~~ ❌ M19（8 個僅 1 過門檻）；
    ~~BFS_NORM（attach/√area）~~ ❌ M20（4 個 ≤0.026%）；~~PIN 補掃（tight/narrow）~~
    ❌ M20（≤0.030%）；~~OS+WT+tall / OS16+tall / OS12+PIN~~ ❌ M21（被入選三者蓋過）；
-   ~~CLUSTER_ORD~~ ❌ M23（兩排序全 0.000%）；~~OM+tight~~ ❌ M23（0.000%）
-3. **🔑 剩餘新 C++ 行為軸**：refinement pair-relocation（placement 層 — 在 refinement
-   迴圈內把放壞的 block 拔出重插別的 slot，M19 提過未做）、compaction 方向偏好 /
-   pack over-spread 軸先（dbg_area：多數 case 寬度過寬）、pack 向 connectivity 重心。
-4. **runtime 候補（+0.23% 現成，等規則確認）**：os32_pin（case 71 1.3187 + 89 1.8093）
-   + os24_pin（case 66 1.3989）+ **om16_bfs_wt_wire（M23：case 96 1.3160 + 66 1.3951
-   + 91/42/53，live 驗證 59-prof = 1.3968、20/20 realize）** → 若官方 RuntimeFactor
-   （cross-submission median）確認寬鬆可直接加回。**懲罰比公式（M23 確立）：兩配置
-   factor 比 = (t1/t2)^0.3 與 median 無關** → 加重 profile 的決策只看「增益是否付得起
-   確定性溢價」。
-5. **case 66 半收割**（1.4378，om16 可到 1.3951）；**case 89**（1.8061 = M23 新低，
-   os32 1.8093 已被超越）；**case 96**（1.3336，om16 可到 1.3160）；85（1.6255）。
-次大殘留：硬 case（89 1.8061、85 1.6255）多為 preplaced boundary 撐壞 outline。
+   ~~CLUSTER_ORD~~ ❌ M23（兩排序全 0.000%）；~~OM+tight~~ ❌ M23（0.000%）；
+   ~~compaction 方向偏好（pack over-spread 軸先）~~ ❌ M24 規劃期 code 驗證冗餘
+   （compact_layout 已對稱試 4 單向+8 兩步組合並由 csc 迭代仲裁，方向偏好是其嚴格子集，
+   勿做）；~~pack 向 connectivity 重心~~ ❌ 大半冗餘（wire 項已是 placed+guide 動態重心，
+   殘餘僅 guide-median 候選注入，見 3）
+3. **🔑 剩餘候選（M26+）**：**reframe**（compact_layout 後量實測 bbox (w_c,h_c)，以該
+   形狀 seed 小 frame 集重跑 frame loop 一次，輸出唯一結果交 wrapper proxy 仲裁 — 與
+   已死的 per-frame csc 不同：不做內部跨 layout 選擇。攻 agap 0.229/case 99/79。kill：
+   >80% 案 pack 不進 seeded frame）；**guide-median 候選注入** item_candidates（env-gated
+   profile 軸）；**oracle-perm 探測**（ICCAD_ORDER_FILE 注入 fp_sol 推導排序，離線 only
+   永不 ship；o2 ≥0.5% → ordering 還有礦、<0.2% → 永久封卷 ordering/ML ranking）；
+   refinement 內 pair-relocation（full-repack 型，runtime 同 om16 級 — 只在 oracle-perm
+   說 order 側還有礦時才做）
+4. ~~runtime 候補~~ ❌ **M25 實質作廢**：M24 jump 免費吃掉賣點（om16 邊際剩 +0.065%、
+   它的 wall mean 13.91s 主導每案 → (13.91/7.61)^0.3 ≈ +20% 懲罰；os32 case 89 與
+   os24 case 66 都已被 jump 超越，os32 殘餘僅 case 71）。除非官方確認完全不計 runtime，
+   否則勿重訪。**懲罰比公式（M23 確立）：兩配置 factor 比 = (t1/t2)^0.3 與 median 無關**。
+5. **殘留 case（M24 後）**：89 **1.7936**（歷史新低，仍最高殘留）、85 1.6091、
+   62 1.5227、88 1.4354、79 1.4121、66 1.3981、96 1.3171、90 1.3707。
+次大殘留：硬 case（89、85）多為 preplaced boundary 撐壞 outline。
 violation 殘留結構（M16 量測）：202 violating boundary block = 123 cluster member + 45
 preplaced + 34 blocked single → **後處理不可修，只能靠 packing 階段擺對**。
 
@@ -775,7 +825,9 @@ violations、或 tournament SA）。
 | 2026-06-11 OS K 放大掃描 (OS24/OS32 on PIN+WT, M22 實驗) | **驗證有效但 runtime 回退** ← 四個全加 59-prof live = **1.3979**（掃描精確吻合, 100/100 feasible）但 avg runtime 8.4→**21.9s/case**（OS24/32 在 n=120 cpu 32s/58s）；官方 RuntimeFactor=max(0.7,R^0.3) 分母 cross-submission median 未知（組員 ~11s 唯一參考）→ 0.04% 分數差扛 20-35% 懲罰風險不划算 → 回退 os32_pin（71 1.3187+89 1.8093）/os24_pin（**66 1.3989 唯一解**），候補留 code 註解；**K=16 飽和證明：98/79/82 在 OS24/32 贏案全絕跡** |
 | 2026-06-11 constructive M22 (OS16 移植兩個無 PIN 排序 + os16_bfs_wt_wire/os16_bfs_tight_wire, 57-prof) | 1.3987 ← -0.08% vs M21; os16_bfs_wt_wire +0.056% 磨深 86 (1.3347→1.3255)+82 (1.4679→1.4565)+50 (1.2920→1.2419); os16_bfs_tight_wire +0.057% 首殺 case 62 (1.6214→1.5248)+55+51+66 半收 (1.4450→1.4378); 8/8 realize; 100/100 feasible; 8.79s/case; wrapper timeout 55→120s |
 | 2026-06-12 M23 掃描: OM16+BFS+WT (+0.148%) / OM8+OS16 (+0.070%) / OM16+PIN (+0.040%) / OM12 (+0.012%) / OM8+tight、CLUSTER_ORD×2 (0.000%) | **om16_bfs_wt 驗證有效但 runtime 回退** ← 59-prof live = 1.3968 (20/20 realize, case 96 首殺 1.3160 + 66 收割 1.3951) 但 avg 13.51s/case; (13.51/8.8)^0.3 = +13.8% 懲罰比 (與 median 無關) 換 +0.14% 不划算 → 候補化 (與 os24/os32 並列, 合計 +0.23% 現成); **CLUSTER_ORD 軸死路** (兩排序 0.000%); OM12 非線性丟失 96/66 → K 無便宜折衷 |
-| **2026-06-12 constructive M23 (ORDER_MOVE relocation 軸 + om8_pin_wt_wire, 58-prof)** | **1.3983** ← **新最佳, -0.03% vs M22; ORDER_MOVE=K 拔出重插 jump move (swap 之外的新結構移動); om8_pin_wt_wire +0.041% — case 89 歷來最深 (1.8155→1.8061, 勝 os32 候補 1.8093)+57 (1.4011→1.3689)+26/35/33/2; 6/6 realize; 100/100 feasible; 9.49s/case 安全帶內** |
+| 2026-06-12 constructive M23 (ORDER_MOVE relocation 軸 + om8_pin_wt_wire, 58-prof) | 1.3983 ← -0.03% vs M22; ORDER_MOVE=K 拔出重插 jump move (swap 之外的新結構移動); om8_pin_wt_wire +0.041% — case 89 歷來最深 (1.8155→1.8061, 勝 os32 候補 1.8093)+57 (1.4011→1.3689)+26/35/33/2; 6/6 realize; 100/100 feasible; 9.49s/case 安全帶內 |
+| **2026-06-12 constructive M24 (HPWL jump: 跨障礙拔插, default-on)** | **1.3862** ← **新最佳, -0.87% vs M23 (M14 以來最大); slide 不能跨障礙/swap 限同尺寸 → jump 拔出 free single 重插 frozen bbox 內任意 void (8 向 abutment 槽+bbox 角, 嚴格降 HPWL), boundary single 1-D 變體; downside-free 同 M14 論證; 原型 -0.67% 0/100 退步; 單 base 1.5197→1.4992 (vBd/vCl/vMb 270/62/0 不變); 成本 12.7ms/case; case 66→1.3981/96→1.3171/89→1.7936 歷史新低/90→1.3707/99→1.3554; 100/100 feasible** |
+| 2026-06-12 constructive M25 (池審計剪枝 56→38-prof + om16 降級, profile_audit.py) | 1.3862 ← 分數位元不變 (審計模擬=live 自驗證); 18 條 0-win∧LOO=0 knob 剪除 ([M25-pruned] 註解可復原); **runtime 10.43→7.61s/case (-27%, 超額調度競爭消失)**; om16 邊際剩 +0.065% (jump 吃掉 96/66 賣點) 且自身 wall 13.91s 主導 → 候補實質作廢 (os24/os32 headline 同樣被超越) |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -787,16 +839,17 @@ violations、或 tournament SA）。
 
 ---
 
-## 這個階段想解決的問題（constructive M23 後，當前 1.3983）
+## 這個階段想解決的問題（constructive M25 後，當前 1.3862）
 
 > 舊 SA 範式的瓶頸（slack=0 boundary、SA 收斂、bbox shrinking）已隨架構換成
 > constructive placer 而作廢。以下是**當前** placer 的瓶頸，依 leverage 排序。
 > ⚠️ **gap 分解（讀 results.json 加權）：weighted hgap ≫ agap 0.23 ≫ vrel 0.038。
 > HPWL gap 是壓倒性主 lever**（cost=(1+0.5(hgap+agap))exp(2vrel)）。
 
-### A. HPWL gap 是最大 cost lever（最高 leverage，M14-M23 主軸）
+### A. HPWL gap 是最大 cost lever（最高 leverage，M14-M24 主軸）
 - M14 free-single push (-0.67%) + M15 boundary-axis slide (-0.12%) + M16 same-size swap
-  (-0.04%)：**post-placement 微調已收割完**；pack-order 軸連七次得分（M17 WT -0.20%、
+  (-0.04%) + **M24 跨障礙 jump (-0.87%，slide/swap 構造性盲區的最後一塊)**：
+  **post-placement 微調家族至此收割完**；pack-order 軸連七次得分（M17 WT -0.20%、
   M18 BFS -0.45%、M19 PIN -0.23%、M20 ORDER_SWAP -0.18%、M21 OS 組合 -0.58%、
   M22 OS16 移植 -0.08%、M23 ORDER_MOVE -0.03%）證明 hgap 殘留要靠 **packing 結構**收
 - ❌ 封死：cluster-rigid（無 slack + FP 破壞 abutment）；violating boundary 修復（M16 實測
@@ -834,12 +887,12 @@ violations、或 tournament SA）。
 
 ## 預期目標
 
-> 基準線：constructive portfolio **1.3983**（M23）。對標：組員 legit portfolio
-> ~1.62（**已反超 ~13.7%**）、組員 oracle 1.0322（讀 label，hidden test 不適用）、
-> fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
+> 基準線：constructive portfolio **1.3862**（M25，38-prof，7.61s/case）。對標：組員
+> legit portfolio ~1.62（**已反超 ~14.5%**）、組員 oracle 1.0322（讀 label，hidden test
+> 不適用）、fp_sol verbatim 1.1079（理論重建上限）。確定性 → 可精確 A/B，無 SA 限時噪音。
 
 ### 已達成
-- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / < 1.42 / < 1.41 / **< 1.40**（當前 1.3983）
+- ✅ Total Score < 3.00 / < 2.00 / < 1.60 / < 1.43 / < 1.41 / < 1.40 / **< 1.39**（當前 1.3862）
 - ✅ **反超組員所有 legit 版本**（v5 1.7429、v6/v7 portfolio ~1.62）
 - ✅ baseline-free proxy ≈ oracle 天花板（無 label leak，hidden test 可用）
 - ✅ M10 精度修正（消虛假 fragment）+ boundary 保持 compaction（攻 area_gap）
@@ -867,21 +920,24 @@ violations、或 tournament SA）。
   最深 1.8061 + 57/26，6/6 realize；9.49s/case）+ om16 候補化（+0.148% 驗證有效，
   live 1.3968/20/20 realize，但 13.51s/case 懲罰比 +13.8% 不划算）+ CLUSTER_ORD
   死路驗證 + 懲罰比公式確立（factor 比 = (t1/t2)^0.3 與 median 無關）
+- ✅ M24 HPWL jump（1.3983→**1.3862**，-0.87% = M14 以來最大；跨障礙拔插補上 slide/swap
+  的構造性盲區；downside-free default-on；12.7ms/case；case 89→1.7936 歷史新低 +
+  66/96/90/85/99 全下殺）
+- ✅ M25 池審計剪枝（profile_audit.py：win tally + leave-one-out + cpu；56→38 prof
+  分數位元不變、runtime 7.61s/case -27%；om16/os24/os32 候補實質作廢 — jump 吃掉賣點）
 
 ### 短期（當前目標）
 - ~~**目標 1**：Total Score < 1.43~~ ✅ M12 完成（1.4371，-0.87% vs M11）
 - ~~**目標 1b**：proxy 命中 oracle ceiling~~ ✅ M13 完成（_RH=1.4 → 1.4349 = ceiling）
 - ~~**目標 2**：Total Score < 1.40~~ ✅ M21 完成（1.3998，-0.58% vs M20）
-- **目標 2b (當前)**：Total Score < 1.39 — 還差 ~0.6%。**OS K 軸（M22）與 OM 軸（M23）
-  皆已收割** → 需 placement 層新行為。
-  - 候選：refinement pair-relocation（placement 層拔出重插）、compaction 方向偏好 /
-    pack over-spread 軸先、pack 向 connectivity 重心
-  - **runtime 候補 +0.23% 現成**：os32_pin + os24_pin（1.3979）+ om16_bfs_wt_wire
-    （M23 驗證 1.3968、case 96 1.3160/66 1.3951）等官方 RuntimeFactor 規則確認寬鬆即加回
-  - case 66 半收（1.4378，om16 可到 1.3951）、89（1.8061 = M23 新低）、96（1.3336，
-    om16 可到 1.3160）、85（1.6255）
-  - ⚠️ cluster-rigid slide 路線已封死（M11+M15 兩次失敗：無 slack + FP 破壞 abutment）；
-    ⚠️ CLUSTER_ORD 已死（M23）
+- ~~**目標 2b**：Total Score < 1.39~~ ✅ M24 完成（1.3862，-0.87% vs M23）
+- **目標 2c (當前)**：Total Score < 1.38 — 還差 ~0.45%。微調家族（M14-16/24）與
+  order 層（M17-23）皆收割完 → 需 packing/frame 結構新行為。
+  - 候選（M26+，按 ROI）：**reframe**（壓縮後實測 bbox seed frame 重跑，攻 agap/case
+    99/79）、guide-median 候選注入、oracle-perm 探測（決定 ordering/ML 封卷）
+  - 殘留 case：89（1.7936）、85（1.6091）、62（1.5227）、88（1.4354）、79（1.4121）
+  - ⚠️ cluster-rigid slide 路線已封死（M11+M15 兩次失敗）；⚠️ CLUSTER_ORD 已死（M23）；
+    ⚠️ compaction 方向偏好已驗證冗餘（M24 規劃期）；⚠️ runtime 候補已作廢（M25）
 
 ### 中期（4–6 個迭代）
 - **目標 3**：Total Score < 1.35 — 需 placer 結構升級（壓 oracle ceiling，非 selection）
@@ -1022,7 +1078,9 @@ FloorSet/
 ├── constructive.cpp        ← 🏆 主程式: 建構式定框 floorplanner (C++, B 路線重寫組員架構)
 │                              + M9 two-pass wire refinement + M10 %.17g 精度 / compaction
 │                              + M14 hpwl_push (free single 滑動) + M15 (boundary-axis slide)
-│                              + M16 same-size swap + M17 WIRE_TIEBREAK pack-order 變體
+│                              + M16 same-size swap + M24 JUMP (跨障礙拔插: free single 重插
+│                              frozen bbox 內任意 void + boundary 1-D 變體, downside-free)
+│                              + M17 WIRE_TIEBREAK pack-order 變體
 │                              + M18 WIRE_BFS (bscore 類內 BFS-connectivity greedy attachment 重排)
 │                              + M19 BFS_PIN (BFS seed attachment 加 p2b pin 權重)
 │                              + M20 ORDER_SWAP (refinement 前 top-K wire items pack-order
@@ -1030,16 +1088,22 @@ FloorSet/
 │                              (OS 後 top-K 拔出重插 relocation hill-climb) + BFS_NORM /
 │                              CLUSTER_ORD (death-tested, default off)
 │                              deterministic; env 旋鈕 (NO_COMPACT/NO_REFINE/NO_PUSH/NO_BND_PUSH/
-│                              NO_SWAP/WIRE_TIEBREAK/WIRE_BFS/BFS_PIN/BFS_NORM/ORDER_SWAP/
+│                              NO_SWAP/NO_JUMP/WIRE_TIEBREAK/WIRE_BFS/BFS_PIN/BFS_NORM/ORDER_SWAP/
 │                              ORDER_MOVE/CLUSTER_ORD/...) + METRICS stderr
-├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 58 profile + baseline-free
-│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.3983, ~9.5s/case;
-│                              os24/os32/om16_bfs_wt 候補在註解, +0.23% 等 runtime 規則確認)
-├── dbg_hpwl_push.py        ← 🆕 M14-M16 HPWL push Python 原型: 對 portfolio JSON positions 滑
-│                              free single (x,y) + boundary single (free 軸) + same-size swap +
-│                              cluster-rigid (停用) + violating 修復 (停用, 死路),
-│                              對 evaluate_solution 真值 (orig vs pushed);
-│                              ENABLE_BOUNDARY/ENABLE_CLUSTER/ENABLE_VIOLATING/ENABLE_SWAP 旗標
+├── optimizer_constructive.py ← 🏆 PORTFOLIO wrapper: 平行 38 profile + baseline-free
+│                              shapely-proxy 選擇 (_RH=1.4; 當前最佳 1.3862, 7.61s/case;
+│                              M25 剪 18 條 [M25-pruned] 註解可復原; om16/os24/os32 候補
+│                              已實質作廢, 見註解)
+├── profile_audit.py        ← 🆕 M25 池審計: 兩階段可續跑 (audit_cache.pkl) — per-profile
+│                              win tally (_RH=1.4 模擬=live 自驗證) + leave-one-out ΔTotal
+│                              (處理 hmin 耦合) + per-(profile,case) cpu + 池 wall 模型
+│                              max(max_t, Σt/12) + om16 假設情境; lazy true-cost
+├── dbg_hpwl_push.py        ← 🆕 M14-M16+M24 HPWL push Python 原型: 對 portfolio JSON positions
+│                              滑 free single (x,y) + boundary single (free 軸) + same-size swap
+│                              + M24 jump (跨障礙拔插) + cluster-rigid (停用) + violating 修復
+│                              (停用, 死路), 對 evaluate_solution 真值 (orig vs pushed);
+│                              ENABLE_BOUNDARY/ENABLE_CLUSTER/ENABLE_VIOLATING/ENABLE_SWAP/
+│                              ENABLE_JUMP 旗標
 ├── dbg_vio_stats.py        ← 🆕 M16: 對 portfolio JSON 分類全部 violating boundary block
 │                              (single/cluster/preplaced × snap-to-edge free/blocked);
 │                              證明 violating 修復是死路 (34 single 全 blocked)
@@ -1170,10 +1234,11 @@ full training：
 
 ## 給下一個 session 的優先建議
 
-### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-12，當前 **1.3983**，M23 ORDER_MOVE）
+### 🏆 最高優先：強化 placer + portfolio + proxy（2026-06-12，當前 **1.3862**，M24 HPWL jump + M25 池審計）
 
-`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本、突破 < 1.40**。
-M4–M23 累計大幅改善；當前 **58 profile portfolio 1.3983**（proxy 命中 oracle ceiling）。
+`optimizer_constructive.py` portfolio 已是新主力，**反超組員所有 legit 版本、突破 < 1.39**。
+M4–M25 累計大幅改善；當前 **38 profile portfolio 1.3862，7.61s/case**（proxy 命中
+oracle ceiling；M25 審計模擬 = live 位元吻合）。
 
 **✅ 已完成（M4–M23）**：
 - ~~MIB 統一 / cluster layout key / wire ×2000 / anchored cluster~~（單 placer 1.7045）
@@ -1245,16 +1310,27 @@ M4–M23 累計大幅改善；當前 **58 profile portfolio 1.3983**（proxy 命
   ORDER_SWAP 後跑，swap 固定其他位置、move 位移中間段 — 不同的結構移動）；
   `om8_pin_wt_wire` +0.041%（**case 89 歷來最深** 1.8155→**1.8061**，勝 os32 候補
   1.8093 + 57 1.4011→1.3689 + 26/35/33）；6/6 realize；9.49s/case。
-  **om16_bfs_wt_wire +0.148% 驗證有效但候補化**（59-prof live = **1.3968**、20/20
-  realize：**case 96 首殺** 1.3336→1.3160 + **66 收割** 1.4378→1.3951 + 91/42/53，
-  但 avg 13.51s/case；**懲罰比 = (13.51/8.8)^0.3 = +13.8% 與 median 無關** → 不值
-  +0.14%）；OM16+PIN +0.040%/OM12 +0.012%（非線性丟 96/66）/OM8+OS16 +0.070%（被蓋）
-  /OM8+tight 0%；**❌ CLUSTER_ORD 死路**（複合 cluster item 類內最前/最後，兩排序全
-  0.000%，env-gated code 保留勿重掃）
+  om16_bfs_wt_wire +0.148% 驗證有效但候補化（→ **M25 已實質作廢**，見下）；
+  **❌ CLUSTER_ORD 死路**（兩排序全 0.000%，env-gated code 保留勿重掃）
+- ~~M24 HPWL jump（placement 層拔插的 post-placement 版，default-on）~~ →
+  **portfolio 1.3983→1.3862（-0.87%，M14 以來最大）**：slide 的 void 區間 code 上可證
+  不能跨障礙、swap 限 bit-identical 尺寸 → jump 把 free single 拔出重插 frozen bbox 內
+  任意可容 slot（每 rect 8 向 abutment 槽 + bbox 角，per-block HPWL 排序取首個可行），
+  boundary single 1-D 變體（釘軸不動）；downside-free 同 M14 論證 → default-on 全
+  profile 受惠；原型 -0.67%/0 退步、單 base 1.5197→1.4992（vBd/vCl/vMb 不變）、實測
+  12.7ms/case；case 66→1.3981、96→1.3171、**89→1.7936 歷史新低**、90→1.3707、99→1.3554；
+  `ICCAD_NO_JUMP=1` 退回 M16
+- ~~M25 池審計 + 剪枝（56→38）~~ → **1.3862 位元不變、runtime 10.43→7.61s/case
+  （-27%）**：新工具 `profile_audit.py`（win tally + leave-one-out + cpu + wall 模型
+  + om16 情境，兩階段可續跑）；18 條 0-win∧LOO=0 knob 剪除（`[M25-pruned]` 註解可復原）；
+  **om16 候補實質作廢**（jump 吃掉 96/66 賣點 → 邊際 +0.065%，自身 wall mean 13.91s
+  主導每案 → 懲罰比 +20%；剪便宜 knob 救不了 wall 的 max 項）；os24/os32 同理
+  （case 89/66 headline 已被 jump 超越，os32 殘餘僅 case 71）
 
-**關鍵現況：pack-order 軸七連勝後 order 層全收割（M22 OS K 軸 + M23 OM 軸）；
-knob/輕變體空間徹底掃完（M16-M20/M23 逐軸驗證 ❌）→ 增益要從 placement 層新行為來。
-violation 殘留（123 cluster + 45 preplaced + 34 blocked single）後處理不可修。**
+**關鍵現況：post-placement 微調家族（M14/15/16/24）與 order 層（M17-M23）全收割；
+knob/輕變體空間徹底掃完；runtime 候補作廢（M25）→ 增益要從 packing/frame 結構新行為來。
+violation 殘留（123 cluster + 45 preplaced + 34 blocked single）後處理不可修。
+runtime 7.61s/case 處於安全帶低端，有 ~3s 預算給未來新 profile/行為。**
 下一步：按 ROI：
 1. ~~proxy _RH 修正~~ ✅ M13、~~迭代 compaction~~ ✅ M11、~~profile 擴充~~ ✅ M12、
    ~~preplaced-frame~~ ❌、~~HPWL push 三連發~~ ✅ M14/M15/M16、~~cluster-rigid slide~~ ❌、
@@ -1262,21 +1338,27 @@ violation 殘留（123 cluster + 45 preplaced + 34 blocked single）後處理不
    ~~WT 組合 + WIRE_BFS~~ ✅ M18、~~BFS 組合 + BFS_PIN~~ ✅ M19、
    ~~BFS_NORM / PIN 補掃~~ ❌ M20、~~ORDER_SWAP 軸~~ ✅ M20、~~OS 組合掃~~ ✅ M21、
    ~~OS K 放大 + OS16 移植~~ ✅ M22（K 軸枯竭）、~~ORDER_MOVE 軸 + CLUSTER_ORD~~
-   ✅/❌ M23（om8 ship、om16 候補、CO 死）
-2. **🔑 placement 層新行為軸**：refinement pair-relocation（refinement 迴圈內拔出
-   重插 slot）、compaction 方向偏好 / pack over-spread 軸先（dbg_area：寬度過寬）、
-   pack 向 connectivity 重心。
-3. **runtime 候補（+0.23% 現成）**：os32_pin + os24_pin（1.3979）+ om16_bfs_wt_wire
-   （1.3968，M23）全部 live 驗證 → 官方 RuntimeFactor 規則確認寬鬆即加回。
-   **懲罰比公式（M23）：兩配置 factor 比 = (t1/t2)^0.3，與未知 median 無關**。
-4. **case 66 半收**（1.4378，om16 可到 1.3951）；**case 89**（1.8061 M23 新低）；
-   **case 96**（1.3336，om16 可到 1.3160）；85（1.6255）。⚠️ frame 偏好「不超出
-   preplaced 外緣」已試失敗（M13）。
+   ✅/❌ M23、~~HPWL jump~~ ✅ M24（-0.87%）、~~池審計剪枝~~ ✅ M25（runtime -27%）、
+   ~~compaction 方向偏好~~ ❌ M24 規劃期驗證冗餘（csc 對稱候選集已涵蓋，勿做）、
+   ~~pack 向 connectivity 重心~~ ❌ 大半冗餘（wire 項已是動態重心）
+2. **🔑 M26 主軸候選：reframe** — compact_layout 後量實測壓縮 bbox (w_c,h_c)，以該形狀
+   seed 小 frame 集（scales ~1.0/1.02/1.05 × 實測 aspect ±鄰域）重跑 frame loop 一次，
+   compact+push 後**輸出唯一結果交 wrapper proxy 仲裁**（與 M17 已死的 per-frame csc
+   不同：不做內部跨 layout 選擇）。攻 agap 0.229 與 case 99/79（「退到肥 frame」outlier）。
+   env `ICCAD_REFRAME=1`，profile_vs_portfolio.py 掃 >0.05% 門檻。
+   kill：>80% 案 pack 不進 seeded frame（M13 失敗模式重現）。
+3. **M26 fallback：guide-median 候選注入** — item_candidates 加一個「done+guide 鄰居
+   加權 median」候選位置（wire 項已在算的量），env-gated profile 軸，同掃描協議。
+4. **oracle-perm 探測**（離線 only，永不 ship）：`ICCAD_ORDER_FILE` 注入 fp_sol 推導
+   排序（全域 (y,x) 掃 + bscore 類內版）；o2 天花板 ≥0.5% → ordering 還有礦（才考慮
+   refinement 內 pair-relocation / order-LNS / ML ranking）；<0.2% → 永久封卷。
 5. **次要**：掃 `ICCAD_REFINE_ITERS`、`ICCAD_PUSH_PASSES`。⚠️ 已驗證**不是 lever**：
    `layout_score` hpwl 權重、frame scale 細化。
-6. ⚠️ runtime ~9.5s/case（58 profile）。**本地 eval 強制 RuntimeFactor=1.0 中性**；官方
+6. ⚠️ runtime 7.61s/case（38 profile）。**本地 eval 強制 RuntimeFactor=1.0 中性**；官方
    算 cross-submission median（組員 portfolio ~11s 唯一參考）→ **8-11s 是安全帶，>13s
-   依懲罰比公式必虧**（M22/M23 決策先例）。單 placer 改進所有 profile 同步受惠。
+   依懲罰比公式必虧**（M22/M23/M25 決策先例）。單 placer 改進所有 profile 同步受惠。
+   每案 wall 由最重 profile 的 max 項主導（M25 審計實證）→ 新增重 profile 前先查它
+   自己的 per-case cpu，不是池總量。
 
 > ⚠️ **試過會退步**：max_trials 試「所有 frame」→ 2.42；BP_WEIGHT 拉高無效；
 >    wire ×50000 反彈 1.93；proxy near-tie min-vrel tiebreak 反而更差（proxy 夠準）。
@@ -1285,12 +1367,15 @@ violation 殘留（123 cluster + 45 preplaced + 34 blocked single）後處理不
 > ✅ 工具：`portfolio_ceiling.py`（oracle 天花板 + proxy 搜尋，~5min）；
 >    `analyze_constructive.py`（單 profile per-case breakdown，~30s）；
 >    `dbg_boundary.py <ids>`；`dbg_vio_stats.py`（portfolio 違反分類統計）；`dbg_constructive.py`；
->    `dbg_hpwl_push.py`（M14-M16 push 原型, ENABLE_BOUNDARY/ENABLE_CLUSTER/ENABLE_VIOLATING/
->    ENABLE_SWAP 旗標）；`profile_vs_portfolio.py`（新 profile 候選離線掃描）。
+>    `dbg_hpwl_push.py`（M14-M16+M24 push 原型, ENABLE_BOUNDARY/ENABLE_CLUSTER/
+>    ENABLE_VIOLATING/ENABLE_SWAP/ENABLE_JUMP 旗標）；`profile_vs_portfolio.py`（新 profile
+>    候選離線掃描）；`profile_audit.py`（M25 池審計: win tally/LOO/cpu/wall 模型，
+>    detached 跑 ~15min，audit_cache.pkl 可續）。
 >    env 旋鈕：`ICCAD_WIRE_MULT` / `ICCAD_ANCHOR_W` / `ICCAD_LR_ASPECT` / `ICCAD_TB_ASPECT` /
 >    `ICCAD_BP_WEIGHT` / `ICCAD_NO_COMPACT=1`（關 M10 compaction）/ `ICCAD_NO_REFINE=1` /
->    `ICCAD_NO_PUSH=1`（關 M14-M16 HPWL push）/ `ICCAD_NO_BND_PUSH=1`（關 M15 boundary-axis,
->    退回 M14 free-single only）/ `ICCAD_NO_SWAP=1`（關 M16 swap, 退回 M15）/ `ICCAD_PUSH_PASSES=N` /
+>    `ICCAD_NO_PUSH=1`（關 M14-M16+M24 HPWL push）/ `ICCAD_NO_BND_PUSH=1`（關 M15 boundary-axis,
+>    退回 M14 free-single only）/ `ICCAD_NO_SWAP=1`（關 M16 swap, 退回 M15）/
+>    `ICCAD_NO_JUMP=1`（關 M24 jump, 退回 M16）/ `ICCAD_PUSH_PASSES=N` /
 >    `ICCAD_WIRE_TIEBREAK=1`（M17 pack-order: bscore 同類內 total_wire 大者先放）/
 >    `ICCAD_WIRE_BFS=1`（M18 pack-order: bscore 類內 BFS-connectivity greedy attachment
 >    重排，可疊 WT/frame knob）/ `ICCAD_BFS_PIN=1`（M19: BFS seed attachment 加 p2b

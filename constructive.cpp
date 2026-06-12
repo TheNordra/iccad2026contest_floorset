@@ -900,6 +900,7 @@ static vector<XYWH> compact_layout(const vector<XYWH>& base){
 static bool PUSH = true;
 static bool PUSH_BND = true;     // M15 boundary-axis slide (ICCAD_NO_BND_PUSH=1 -> M14 only)
 static bool PUSH_SWAP = true;    // M16 same-size swap (ICCAD_NO_SWAP=1 -> M15 only)
+static bool PUSH_JUMP = true;    // M24 cross-obstacle rip-and-reinsert (ICCAD_NO_JUMP=1 -> M16 only)
 static int PUSH_PASSES = 8;
 static double wmedian(vector<pair<double,double>>& t){   // weighted L1 median
     if (t.empty()) return 0.0;
@@ -967,6 +968,63 @@ static void hpwl_push(vector<XYWH>& p){
         if (fabs(ny-p[i].y)>TOL && hwire(i,p[i].x,ny)<hwire(i,p[i].x,p[i].y)-TOL){ p[i].y=ny; return true; }
         return false;
     };
+    // ── M24 jump: rip a single out and re-insert it at the best non-overlapping
+    // slot inside the frozen bbox. The slides above only move a block within its
+    // own void interval (they can never cross an obstacle) and the M16 swap only
+    // fires on bit-identical partners, so a block whose weighted median lies
+    // beyond a blocking rect keeps its full HPWL detour forever. Candidates: the
+    // 8 corner-aligned abutment slots against every other rect + the 4 bbox
+    // corners, clamped into the frozen bbox, deduped; strict per-block HPWL
+    // decrease only (sorted by score, first feasible = best). Downside-free by
+    // the slide argument: targets stay inside the frozen bbox (area non-
+    // increasing; satisfied boundary blocks co-define their edges so bv cannot
+    // rise), no cluster member moves (gf), dims unchanged (mib). Boundary
+    // singles jump 1-D along their free axis only (pinned coordinate kept ->
+    // edge-contact preserved).
+    auto fits=[&](int i,double x,double y)->bool{
+        double w=p[i].w, h=p[i].h;
+        for (int j=0;j<N;j++){ if (j==i) continue;
+            if (x<p[j].x+p[j].w-TOL && p[j].x<x+w-TOL &&
+                y<p[j].y+p[j].h-TOL && p[j].y<y+h-TOL) return false; }
+        return true;
+    };
+    auto try_jump=[&](int i,bool free_xy)->bool{
+        if (b2b_adj[i].empty() && p2b_adj[i].empty()) return false;
+        double w=p[i].w, h=p[i].h;
+        vector<pair<double,double>> cands;
+        auto add=[&](double x,double y){
+            cands.push_back({min(max(x,xmin),xmax-w), min(max(y,ymin),ymax-h)}); };
+        if (free_xy){
+            cands.reserve(8*(size_t)N+4);
+            add(xmin,ymin); add(xmax-w,ymin); add(xmin,ymax-h); add(xmax-w,ymax-h);
+            for (int j=0;j<N;j++){ if (j==i) continue;
+                double jx=p[j].x, jy=p[j].y, jw=p[j].w, jh=p[j].h;
+                add(jx+jw,jy); add(jx+jw,jy+jh-h); add(jx-w,jy); add(jx-w,jy+jh-h);
+                add(jx,jy+jh); add(jx+jw-w,jy+jh); add(jx,jy-h); add(jx+jw-w,jy-h);
+            }
+        } else if (blocks[i].boundary&(B_LEFT|B_RIGHT)){     // x pinned: jump along y
+            add(p[i].x,ymin); add(p[i].x,ymax-h);
+            for (int j=0;j<N;j++){ if (j==i) continue;
+                add(p[i].x,p[j].y+p[j].h); add(p[i].x,p[j].y-h); }
+        } else {                                             // y pinned: jump along x
+            add(xmin,p[i].y); add(xmax-w,p[i].y);
+            for (int j=0;j<N;j++){ if (j==i) continue;
+                add(p[j].x+p[j].w,p[i].y); add(p[j].x-w,p[i].y); }
+        }
+        sort(cands.begin(),cands.end());
+        cands.erase(unique(cands.begin(),cands.end()),cands.end());
+        double hcur=hwire(i,p[i].x,p[i].y);
+        vector<tuple<double,double,double>> scored; scored.reserve(cands.size());
+        for (auto&c:cands) scored.push_back(make_tuple(hwire(i,c.first,c.second),c.first,c.second));
+        sort(scored.begin(),scored.end());
+        for (auto&s:scored){
+            double hc=get<0>(s), x=get<1>(s), y=get<2>(s);
+            if (hc>=hcur-TOL) break;                         // sorted: nothing better left
+            if (fabs(x-p[i].x)<=TOL && fabs(y-p[i].y)<=TOL) continue;
+            if (fits(i,x,y)){ p[i].x=x; p[i].y=y; return true; }
+        }
+        return false;
+    };
     // M16 swap groups: exact (w,h,boundary) over non-preplaced non-cluster blocks.
     // dims never change inside the push loop, so build once.
     vector<vector<int>> swap_groups;
@@ -1000,6 +1058,10 @@ static void hpwl_push(vector<XYWH>& p){
             else                                          { if (slide_x(i)) moved=true; }
         }
         for (int i:freeb){ if (slide_x(i)) moved=true; if (slide_y(i)) moved=true; }
+        if (PUSH_JUMP){
+            for (int i:freeb) if (try_jump(i,true))  moved=true;
+            if (PUSH_BND) for (int i:bndb) if (try_jump(i,false)) moved=true;
+        }
         if (PUSH_SWAP && swap_pass()) moved=true;
         if (!moved) break;
     }
@@ -1309,6 +1371,7 @@ int main() {
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;
     if (getenv("ICCAD_NO_BND_PUSH")) PUSH_BND=false;
     if (getenv("ICCAD_NO_SWAP")) PUSH_SWAP=false;
+    if (getenv("ICCAD_NO_JUMP")) PUSH_JUMP=false;
     if (const char* e=getenv("ICCAD_PUSH_PASSES")){ int v=atoi(e); if (v>=0) PUSH_PASSES=v; }
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
     if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }

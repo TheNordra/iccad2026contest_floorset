@@ -64,6 +64,7 @@ ENABLE_CLUSTER = False   # category 3: rigid free-cluster slide -- REJECTED (see
                          # off by default so a plain run reproduces the shipped M15 result
 ENABLE_VIOLATING = False  # category 4: violating-boundary repair -- DEAD END (see above)
 ENABLE_SWAP = True       # category 5 (M16): same-size single swap, see below
+ENABLE_JUMP = True       # category 6 (M24 candidate): cross-obstacle rip-and-reinsert
 # 5. SAME-SIZE SINGLE SWAP (M16): swap the positions of two non-preplaced,
 #    non-cluster blocks with EXACTLY equal (w, h) and equal boundary code. The
 #    geometry multiset is unchanged -> bbox/area identical, overlap-free stays
@@ -72,6 +73,20 @@ ENABLE_SWAP = True       # category 5 (M16): same-size single swap, see below
 #    HPWL changes; a swap is accepted only on strict decrease. Soft blocks with
 #    equal area and equal boundary code get bit-identical dims from
 #    default_soft_dim, so exact-equality grouping finds real swap partners.
+# 6. JUMP (M24): the slides (1)/(2) move a block only inside its own void
+#    interval -- they can never cross an obstacle -- and the M16 swap only fires
+#    on bit-identical (w,h,boundary) partners. So a free single whose weighted
+#    median lies beyond a blocking rect keeps its full HPWL detour forever. The
+#    jump rips it out and re-inserts it at the best non-overlapping slot inside
+#    the FROZEN bbox: candidates = the 8 corner-aligned abutment slots against
+#    every other rect + the 4 bbox corners, clamped into the bbox, deduped,
+#    scored by the block's own pairwise HPWL (sorted, first feasible = best),
+#    strict decrease only. Downside-free by the same argument as (1): targets
+#    stay inside the frozen bbox -> bbox/area non-increasing; satisfied boundary
+#    blocks co-define their edges so bv cannot rise; no cluster member moves
+#    (gf), dims unchanged (mib). Boundary singles with exactly one pinned axis
+#    get the 1-D variant along their free axis (constrained coordinate kept ->
+#    edge-contact preserved, same argument as (2)).
 
 
 def _bbox(pos):
@@ -108,6 +123,9 @@ def _wmedian(targets):
         if acc >= total / 2.0:
             return t
     return targets[-1][0]
+
+
+JUMP_STATS = [0, 0]      # accepted [free 2-D, boundary 1-D] jumps across all cases
 
 
 def push(pos, codes, clus, pre, b2b, p2b, pins, n):
@@ -317,6 +335,86 @@ def push(pos, codes, clus, pre, b2b, p2b, pins, n):
                         pos[i][1], pos[j][1] = pos[j][1], pos[i][1]
         return moved
 
+    def _fits(i, x, y):
+        """True iff block i placed at (x, y) overlaps no other block."""
+        w_, h_ = pos[i][2], pos[i][3]
+        for j in range(n):
+            if j == i:
+                continue
+            if (x < pos[j][0] + pos[j][2] - TOL and pos[j][0] < x + w_ - TOL and
+                    y < pos[j][1] + pos[j][3] - TOL and pos[j][1] < y + h_ - TOL):
+                return False
+        return True
+
+    def jump_free(i):
+        """Category 6: rip free single i out, re-insert at the best slot in the
+        frozen bbox (cross-obstacle). Strict per-block HPWL decrease only."""
+        if not ba[i] and not pa[i]:
+            return False
+        w_, h_ = pos[i][2], pos[i][3]
+        cands = {(xmin, ymin), (xmax - w_, ymin), (xmin, ymax - h_), (xmax - w_, ymax - h_)}
+        for j in range(n):
+            if j == i:
+                continue
+            jx, jy, jw, jh = pos[j]
+            for x, y in ((jx + jw, jy), (jx + jw, jy + jh - h_),
+                         (jx - w_, jy), (jx - w_, jy + jh - h_),
+                         (jx, jy + jh), (jx + jw - w_, jy + jh),
+                         (jx, jy - h_), (jx + jw - w_, jy - h_)):
+                cands.add((min(max(x, xmin), xmax - w_), min(max(y, ymin), ymax - h_)))
+        h_cur = hpwl_blk(i, pos[i][0], pos[i][1])
+        for hc, x, y in sorted((hpwl_blk(i, x, y), x, y) for x, y in cands):
+            if hc >= h_cur - TOL:
+                break                                   # sorted: nothing better left
+            if abs(x - pos[i][0]) <= TOL and abs(y - pos[i][1]) <= TOL:
+                continue
+            if _fits(i, x, y):
+                pos[i][0], pos[i][1] = x, y
+                return True
+        return False
+
+    def jump_boundary(i):
+        """Category 6, 1-D variant: boundary single with exactly one pinned axis
+        jumps along its free axis only (constrained coordinate untouched)."""
+        code = codes[i]
+        has_lr = bool(code & (B_LEFT | B_RIGHT))
+        has_tb = bool(code & (B_TOP | B_BOTTOM))
+        if has_lr == has_tb:                            # corner block (or none): skip
+            return False
+        if not ba[i] and not pa[i]:
+            return False
+        w_, h_ = pos[i][2], pos[i][3]
+        h_cur = hpwl_blk(i, pos[i][0], pos[i][1])
+        if has_lr:                                      # x pinned, jump along y
+            cands = {ymin, ymax - h_}
+            for j in range(n):
+                if j != i:
+                    cands.add(min(max(pos[j][1] + pos[j][3], ymin), ymax - h_))
+                    cands.add(min(max(pos[j][1] - h_, ymin), ymax - h_))
+            for hc, y in sorted((hpwl_blk(i, pos[i][0], y), y) for y in cands):
+                if hc >= h_cur - TOL:
+                    break
+                if abs(y - pos[i][1]) <= TOL:
+                    continue
+                if _fits(i, pos[i][0], y):
+                    pos[i][1] = y
+                    return True
+        else:                                           # y pinned, jump along x
+            cands = {xmin, xmax - w_}
+            for j in range(n):
+                if j != i:
+                    cands.add(min(max(pos[j][0] + pos[j][2], xmin), xmax - w_))
+                    cands.add(min(max(pos[j][0] - w_, xmin), xmax - w_))
+            for hc, x in sorted((hpwl_blk(i, x, pos[i][1]), x) for x in cands):
+                if hc >= h_cur - TOL:
+                    break
+                if abs(x - pos[i][0]) <= TOL:
+                    continue
+                if _fits(i, x, pos[i][1]):
+                    pos[i][0] = x
+                    return True
+        return False
+
     def shift_cluster(mem, axis):
         """Rigid translation of free cluster `mem` along axis 0=x / 1=y."""
         mset = set(mem)
@@ -388,6 +486,14 @@ def push(pos, codes, clus, pre, b2b, p2b, pins, n):
         for i in free_single:
             if move_free(i):
                 moved = True
+        if ENABLE_JUMP:
+            for i in free_single:
+                if jump_free(i):
+                    moved = True; JUMP_STATS[0] += 1
+            if ENABLE_BOUNDARY:
+                for i in bnd_single:
+                    if jump_boundary(i):
+                        moved = True; JUMP_STATS[1] += 1
         if ENABLE_SWAP and swap_pass():
             moved = True
         if not moved:
@@ -430,6 +536,8 @@ def main():
     print(f"Total Score: orig={totC0/totW:.4f}  pushed={totC1/totW:.4f}  "
           f"delta={100*(totC1-totC0)/totC0:+.2f}%")
     print(f"regressions: {nreg}/100 cases ; cases with bv/gf increase: {nviol}/100")
+    if ENABLE_JUMP:
+        print(f"jumps accepted: free={JUMP_STATS[0]} boundary={JUMP_STATS[1]}")
     print(f"{'case':>4} {'n':>4} {'wt%':>5} {'cost0':>6} {'cost1':>6} "
           f"{'hg0':>6} {'hg1':>6} {'ag0':>6} {'ag1':>6} {'bv':>9} {'gf':>9} {'feas':>5}")
     rows.sort(key=lambda r: -(r[2] * (r[3] - r[4])))
