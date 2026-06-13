@@ -128,6 +128,46 @@ Cost 公式：`Cost = (1 + α·(HPWL_gap + Area_gap)) × exp(β·V_soft)`
 profile，M26）**。確定性（無 randomness/限時 → run-to-run 一致，可精確 A/B；
 官方 eval 1.3843）。
 
+**M27（本 session，2026-06-13，接續 M26）= 全域 packer（sequence-pair）天花板探測 →
+❌❌ 重大負結果：global-packer 重寫死路，greedy 已在 (area, HPWL) 可達前緣，agap 0.23
+是結構性的（HPWL-耦合 + cluster/preplaced 幾何強迫），非 packing 品質缺陷。無 C++ 改動，
+分數不變 1.3843。本 session 最大戰略結論：placer-核心「更好的 packer」面（a）封死。**
+- **動機**：M26 結論「只剩 placer 核心」→ 用戶選全域 packer 重寫（B*-tree/sequence-pair）。
+  紀律：先量天花板再寫 C++（比照 oracle-perm 探測先於封卷 ordering）。
+- **🔑 工具 `dbg_seqpair.py`（新，離線）**：把每案 greedy 佈局的矩形用 **sequence-pair**
+  全域重排（Fenwick longest-path O(n log n) packing，可移植 C++），對 evaluate_solution
+  的 cost-proxy（area+hw·hpwl，gap 公式，vrel 釘在 greedy 值以隔離 area+HPWL 問題）做
+  退火。兩探測：**L1**（greedy SP seed 確定性爬山）+ **L2**（退火天花板）。
+  **RELAXED/樂觀上限**：clusters 打散成獨立 module、preplaced 不釘、boundary 不計 →
+  真實受約束 packer 只會更差，故負結果更強。
+- **🔑 SP recovery 正確性**：pairwise L/R/B/A 關係**會循環**（117→13 topo fallback，
+  實測），因為對角分離對未加 overlap 條件。正解 = **overlap-conditioned 邊**（H-left 需
+  y-overlap、V-below 需 x-overlap），對角對自由 → 兩約束圖無環 → topo 唯一。修正後
+  **SP-of-greedy 完美重現 greedy**（area 0.99×、hpwl 1.00×，自我驗證）。
+- **結果（5 dense 90/95/96/98/99 + 3 hard 62/85/89，退火器健康：shelf bad-seed 5.02→
+  1.71 證明會爬）**：
+  - **greedy seed + 20k 局部 move 退火 = 0 改善**（best est == SP-of-greedy seed，逐案
+    位元相同）。dense area 0.989-1.000×、hpwl 1.00×。
+  - **shelf bad-seed 退火**：收斂到 greedy **area**（1.006×）但 **hpwl 更差**（1.49×）→
+    退火器能獨立重現 greedy 的 area，但**拿不到 greedy 的 (area, HPWL) 聯合點**。
+  - hard cases ~1-2% est 改善，但**幾乎全來自 trivial LB-compaction**（SP-of-greedy 已
+    0.97-0.99×，C++ compaction 早已大半捕捉），退火再加 ~0；且 bv 升到 11-14（LB 把
+    boundary block 擠離邊）→ 真實 vrel 會吃掉這點假象增益。
+- **🔑 根因**：greedy 的 wire-driven 擺放**花 area 換低 HPWL**；SP 縮 area 必抬 HPWL →
+  聯合更差。agap 不是「鬆散可重排」，而是**與 hgap 耦合 + cluster/preplaced 強迫的
+  結構性 void**。這延伸 M26 oracle-perm（pack order 無用）→ 現證 **global arrangement
+  也無 headroom**。對應舊 SA「BL packer 是天花板（3.27）」，現對 constructive 的
+  area+HPWL 前緣同樣證實。
+- **封卷**：global-packer 重寫（B*-tree/sequence-pair/skyline）**不值得做**。placer-核心
+  面（a）「更好的 packer 降 agap」死；面（b）hard case 也非 packing 品質問題（62/85/89
+  全域重排同樣 ≤2% 樂觀、且假象）→ 是 constraint 強迫（preplaced boundary 幾何，
+  M13 已證），非 packer 能解。
+- ⚠️ **唯一剩餘 headroom 方向 = reconstruction（還原 baseline 原圖，~1.1 理論上限）**，
+  需 connectivity/constraint 反推原佈局，非更強 optimizer。次要未測小 lever：per-block
+  **free-aspect**（soft block ±1% area 內選 aspect，packing 時一起搜）— 與 global packer
+  正交，gate 的 stretch，留待未來 session（期望低，dims 已被 boundary-aspect + LR/TB
+  profile 大半覆蓋）。`dbg_seqpair.py` 保留（負結果工具，比照 dbg_vio_stats.py）。
+
 **M26（本 session，2026-06-13，接續 M25）= GUIDE_MED 候選注入（攻 placer 核心）+ 1 個新
 profile + 1 個就地升級（38→39），驗證 -0.14%（1.3862→1.3843，100/100 feasible）+ **reframe
 死路** + **oracle-perm 探測封卷 ordering/ML 整個分支**（本 session 最大戰略結論）。**
@@ -623,8 +663,9 @@ M22: OS16 移植無 PIN 排序 + 2 profiles (57-prof) 1.3987 →
 M23: ORDER_MOVE relocation 軸 + 1 profile (58-prof) 1.3983 →
 M24: HPWL jump (跨障礙拔插, default-on) 1.3862 →
 M25: 池審計剪枝 (56→38-prof, 分數不變 runtime -27%) 1.3862 →
-**M26: GUIDE_MED 候選注入 (38→39-prof) 1.3843**（M26 session **-0.14%**；
-M4 起累計 **-38.5%**）。
+M26: GUIDE_MED 候選注入 (38→39-prof) 1.3843（M26 session -0.14%）→
+**M27: 全域 packer (sequence-pair) 天花板探測 → ❌❌ 死路, greedy 已在 (area,HPWL)
+前緣, agap 結構性, 分數不變 1.3843**（M4 起累計 **-38.5%**）。
 
 **下一步（→ 繼續壓低天花板，當前 1.3862）**：proxy 已 = oracle ceiling（M13 起連續
 驗證；M25 審計模擬 = live 位元吻合）。post-placement 微調家族（M14/15/16/24）與
@@ -652,14 +693,19 @@ pack-order 軸（M17-M23）皆已收割。按預估 ROI：
    僅 +0.002% 類內 / +0.005% 全域 → placer 才是瓶頸，非 pack order → refinement
    pair-relocation / order-LNS / ML ranking 全不值得做。oracle_perm_probe.py +
    ICCAD_ORDER_FILE）。
-4. **🔑 下一步 = placer 核心結構（唯一剩餘方向）**：knob/後處理/order 三類 micro-lever
-   全枯竭（M14-M26）。增益只能來自 placer 核心：(a) **更好的 packer**（greedy 留 ~27%
-   void → 更聰明 greedy / B*-tree / sequence-pair 降 agap 0.23）、(b) **硬 case**（89/85/62
-   preplaced boundary 撐壞 outline，需 packer 能 pack tight — M13 證 greedy 做不到）。
-   GUIDE_MED（攻 placer 候選集）是這方向第一個小勝，可續探更多 placer-核心 knob
-   （但注意 oracle-perm 已證 order 不是瓶頸 → 別再碰排序）。
-5. ~~runtime 候補~~ ❌ **M25 作廢**（M24 jump 吃掉賣點；懲罰比 (t1/t2)^0.3 與 median 無關）。
-6. **殘留 case（M26 後）**：89 **1.7936**（仍最高殘留）、85 1.6091、62 1.5227、
+4. ~~**placer 核心結構：更好的 packer**（B*-tree/sequence-pair 降 agap）~~ ❌❌ **M27 封死**：
+   `dbg_seqpair.py` 全域 SP 重排天花板探測 = greedy 已在 (area, HPWL) 可達前緣。greedy
+   seed + 20k 退火 0 改善；shelf bad-seed 收斂到 greedy area 但 HPWL 更差（拿不到聯合
+   點）；hard case ≤2% 樂觀且幾乎全是 trivial LB-compaction 假象。**這是 RELAXED 上限
+   （clusters 打散/preplaced 不釘/boundary 不計）→ 真實只會更差。** 根因：agap 與 hgap
+   耦合（wire-driven 花 area 換低 HPWL）+ cluster/preplaced 強迫 void → 結構性，非 packing
+   品質。面（b）hard case 同樣非 packer 能解（M13 + M27）。
+5. **🔑 下一步 = reconstruction（唯一剩餘 headroom 方向，~1.1 理論上限）**：所有
+   optimization lever（knob/後處理/order/global-packer）枯竭。真天花板需用 connectivity +
+   constraints **反推 baseline 原佈局**，非更強 optimizer（見頂部「範式轉移」）。次要未測
+   小 lever：per-block free-aspect（soft ±1% area 內搜 aspect，與 packer 正交，期望低）。
+6. ~~runtime 候補~~ ❌ **M25 作廢**（M24 jump 吃掉賣點；懲罰比 (t1/t2)^0.3 與 median 無關）。
+7. **殘留 case（M27 後，純 optimization 已榨乾）**：89 **1.7936**（仍最高殘留）、85 1.6091、62 1.5227、
    88 1.4354、87 **1.3505**（M26 GUIDE_MED+OM8 大降）、79 1.4121、91 **1.3481**（M26）、66 1.3981。
 次大殘留：硬 case（89、85）多為 preplaced boundary 撐壞 outline。
 violation 殘留結構（M16 量測）：202 violating boundary block = 123 cluster member + 45
@@ -874,6 +920,7 @@ violations、或 tournament SA）。
 | 2026-06-13 M26 reframe (compact 後實測 bbox seed frame 重跑, ICCAD_REFRAME) | **死路, code 保留 gated off** ← alone 0.001% / +bfs 0.035% (case 97) / +tall 0.000%, 無一過 0.05%; base frame loop 已挑最佳 aspect → measured bbox 近最佳, pass2 複製 pass1; 與 portfolio aspect 多樣性結構性冗餘; run_pipeline lambda 重構保留 (default-off 位元一致 1.4992) |
 | 2026-06-13 M26 oracle-perm 探測 (注入完美 fp_sol 排序, oracle_perm_probe.py + ICCAD_ORDER_FILE) | **ordering/ML 永久封卷** ← bscore 類內 +0.002% / 全域 +0.005%; 完美排序也幾乎零增益 → placer 才是瓶頸非 pack order; 現有 WT/BFS/PIN/OS/OM 已榨乾排序; refinement pair-reloc / order-LNS / ML ranking 全不值得做 (對應舊 SA 3.27 天花板, 現對 constructive 證實) |
 | **2026-06-13 constructive M26 (GUIDE_MED 候選注入 + gm_om8_pin 就地升級/gm_bfs_wt_wire, 39-prof)** | **1.3843** ← -0.14% vs M25; item_candidates 加 connectivity 加權 L1-median 候選 (wire-最佳點, abutment 槽缺的, 便宜); GUIDE_MED 就地加到 M23 om8_pin → **case 87 大跳 (1.4106→1.3505, n=108)** + 82 (~免費, OM8 runtime 已付); gm_bfs_wt_wire +0.036% case 91 (不重疊); 100/100 feasible; 8.78s/case (< M23 已 ship 9.49s). runtime 決策: gm_om8 單獨新增 (第2個OM8, 9.22s, +4.7% RF) 與 gm+frame 變體 (<0.015%) 皆否決 |
+| 2026-06-13 M27 全域 packer (sequence-pair) 天花板探測 (dbg_seqpair.py, 離線) | **❌❌ 死路, 重大負結果, 分數不變 1.3843** ← greedy 已在 (area,HPWL) 可達前緣; SP-of-greedy 完美重現 (area 0.99× hpwl 1.00×, 自驗證); greedy seed+20k 退火 **0 改善** (5 dense+3 hard); shelf bad-seed 收斂到 greedy area 但 hpwl 1.49× (拿不到聯合點); hard case ≤2% 樂觀且幾乎全 trivial LB-compaction 假象. **RELAXED 上限** (clusters 打散/preplaced 不釘/boundary 不計→真實更差). 根因: agap 與 hgap 耦合 (wire 花 area 換低 HPWL)+cluster/preplaced 強迫 void=結構性. **global-packer 重寫封死, 唯一剩 reconstruction**. SP recovery 正解=overlap-conditioned 邊 (pairwise L/R/B/A 會循環) |
 | 【外部驗證】組員 my_optimizer.py 餵我們 evaluator | 1.7429 ← 確認架構可移植 |
 | 2026-05-31 oracle shape only (sanity)  | 3.4199 ← **shape ML 死** (改善 0.3%) |
 | 2026-05-31 oracle shape + oracle perm | 3.3672 ← 鎖死 shape 反害 SA |
@@ -1157,6 +1204,13 @@ FloorSet/
 │                              排序 (per-block (y,x) key from tp) via ICCAD_ORDER_FILE,
 │                              逐案比 portfolio 算 oracle-min; PROBE_GLOBAL/PROBE_KEY 變體.
 │                              結論: +0.002%(類內)/+0.005%(全域) → ordering/ML 封卷
+├── dbg_seqpair.py          ← 🆕 M27 全域 packer 天花板探測 (離線 only): sequence-pair
+│                              Fenwick longest-path packing (O(n log n), 可移植 C++) +
+│                              退火 (area+hw·hpwl proxy, vrel 釘 greedy 隔離). RELAXED 上限
+│                              (clusters 打散/preplaced 不釘). SP recovery=overlap-conditioned
+│                              邊 topo (pairwise L/R/B/A 會循環). 結論: greedy 已在 (area,HPWL)
+│                              前緣, global-packer 重寫死路 → reconstruction 才有 headroom.
+│                              modes: describe/sp/l2; SP_ITERS/SP_SEEDMODE/SP_DEBUG env
 ├── dbg_hpwl_push.py        ← 🆕 M14-M16+M24 HPWL push Python 原型: 對 portfolio JSON positions
 │                              滑 free single (x,y) + boundary single (free 軸) + same-size swap
 │                              + M24 jump (跨障礙拔插) + cluster-rigid (停用) + violating 修復
