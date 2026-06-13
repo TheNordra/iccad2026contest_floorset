@@ -86,6 +86,13 @@ static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
+static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
+                                   // frame loop from the measured compacted bbox aspect (a
+                                   // shape the blocks already fit) and re-run once; the single
+                                   // output is arbitrated by the wrapper proxy (M26)
+static bool GUIDE_MED = false;     // ICCAD_GUIDE_MED: add the connectivity-weighted L1-median of
+                                   // an item's placed/guide neighbours as an extra greedy candidate
+                                   // origin (a wire-optimal seed the abutment slots miss) (M26)
 static vector<double> area_targets;
 static vector<Edge>   b2b_edges, p2b_edges;
 static vector<pair<double,double>> pins;
@@ -466,6 +473,8 @@ static bool rect_touches_any(double x,double y,double w,double h,const vector<XY
     return false;
 }
 
+static double wmedian(vector<pair<double,double>>&);  // defined below (used by GUIDE_MED)
+
 // greedy pack of items into frame
 static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<XYWH>& out){
     out=pos; vector<XYWH> rects; bbox_reset();
@@ -533,6 +542,33 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         bool any_done=false; for (int b:it.blocks) if(done[b]){ any_done=true; break; }
         if (any_done) continue;                       // partial: leave to other items/frames
         auto cands=item_candidates(it,fw,fh,rects);
+        if (GUIDE_MED){
+            // Connectivity-weighted L1-median of this item's neighbours (placed, or
+            // their guide positions during refinement) as an extra candidate seed:
+            // a wire-optimal origin the geometric abutment slots don't include. The
+            // existing scoring overlap-checks and ranks it, so it's downside-safe.
+            vector<pair<double,double>> xs, ys;
+            for (size_t k=0;k<it.blocks.size();k++){
+                int b=it.blocks[k];
+                for (auto& nb:b2b_adj[b]){
+                    double ncx,ncy;
+                    if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
+                    else if (use_prev){ ncx=prev_pos[nb.first].x+prev_pos[nb.first].w/2; ncy=prev_pos[nb.first].y+prev_pos[nb.first].h/2; }
+                    else continue;
+                    xs.push_back({ncx,nb.second}); ys.push_back({ncy,nb.second});
+                }
+                for (auto& pn:p2b_adj[b]){
+                    xs.push_back({pins[pn.first].first,pn.second});
+                    ys.push_back({pins[pn.first].second,pn.second});
+                }
+            }
+            if (!xs.empty()){
+                double mx=wmedian(xs), my=wmedian(ys);
+                double gx=min(max(0.0,mx-it.w/2),max(0.0,fw-it.w));
+                double gy=min(max(0.0,my-it.h/2),max(0.0,fh-it.h));
+                cands.push_back({gx,gy});
+            }
+        }
         double best=1e300, bx=0, by=0; bool found=false;
         for (auto&c:cands){
             double x=c.first,y=c.second;
@@ -1206,6 +1242,26 @@ static void solve() {
         }
     }
 
+    // Oracle-perm probe (OFFLINE only, never shipped). If ICCAD_ORDER_FILE is set,
+    // reorder items by an externally supplied per-block key (computed offline from
+    // fp_sol). ICCAD_ORDER_GLOBAL ignores bscore (pure global sweep); otherwise the
+    // key is a within-bscore-class tiebreak. Measures the ordering ceiling: decides
+    // whether pack-order still has ore (>=0.5%) or is permanently closed (<0.2%).
+    if (const char* of=getenv("ICCAD_ORDER_FILE")){
+        vector<double> okey(N, 1e18);
+        if (FILE* fp=fopen(of,"r")){
+            int id; double k;
+            while (fscanf(fp,"%d %lf",&id,&k)==2) if (id>=0&&id<N) okey[id]=k;
+            fclose(fp);
+        }
+        auto ik=[&](const Item& it){ double m=1e18; for(int b:it.blocks) m=min(m,okey[b]); return m; };
+        bool global = getenv("ICCAD_ORDER_GLOBAL")!=nullptr;
+        stable_sort(items.begin(),items.end(),[&](const Item& a,const Item& b){
+            if (!global && a.bscore!=b.bscore) return a.bscore>b.bscore;
+            return ik(a)<ik(b);
+        });
+    }
+
     vector<int> order; for(int i=0;i<N;i++) if(!blocks[i].is_preplaced) order.push_back(i);
 
     auto frames=frame_candidates();
@@ -1222,9 +1278,12 @@ static void solve() {
         final_single_edge_escape(out);
         return true;
     };
+    vector<Item> items_base=items;   // original sorted order, captured once (reframe reuses it)
+    // M26 reframe: wrap the whole frames -> best(compacted+pushed) pipeline as a
+    // reusable unit so it can be re-run on a measured-bbox-seeded frame set.
+    auto run_pipeline=[&](const vector<pair<double,double>>& frms)->vector<XYWH>{
     vector<XYWH> best; bool have_best=false; double best_score=1e300; int trials=0;
-    vector<Item> items_base=items;   // per-frame order experiments stay isolated
-    for (auto& f:frames){
+    for (auto& f:frms){
         items=items_base;
         vector<XYWH> c1, dummy;
         if (!run_frame(f.first,f.second,false,dummy,c1)) continue;
@@ -1316,10 +1375,38 @@ static void solve() {
     // into remaining void. Downside-free (area/bv/gf/mib unchanged), attacks the
     // dominant hgap. Must run after compaction (its frame-face packs spread wire).
     hpwl_push(best);
+    return best;
+    };  // run_pipeline
+
+    vector<XYWH> best = run_pipeline(frames);
+    if (REFRAME){
+        // Measure the compacted bbox; seed a small frame set at that aspect (a shape
+        // the blocks demonstrably fit, unlike the dead M13 preplaced-frame attempt)
+        // and re-run the pipeline. Output the single result -- NO internal cross-
+        // layout selection (that was the dead M17 per-frame-csc path); the wrapper
+        // proxy arbitrates this profile against the others.
+        double x0=1e18,y0=1e18,x1=-1e18,y1=-1e18;
+        for (auto&q:best){x0=min(x0,q.x);y0=min(y0,q.y);x1=max(x1,q.x+q.w);y1=max(y1,q.y+q.h);}
+        double wc=max(x1-x0,1.0), hc=max(y1-y0,1.0);
+        double max_iw=1,max_ih=1,pre_w=0,pre_h=0;
+        for (int i=0;i<N;i++){ max_iw=max(max_iw,dims[i].first); max_ih=max(max_ih,dims[i].second);
+            if (placed[i]){ pre_w=max(pre_w,pos[i].x+pos[i].w); pre_h=max(pre_h,pos[i].y+pos[i].h);} }
+        vector<pair<double,double>> seeds; set<pair<long long,long long>> seen;
+        for (double s:{1.00,1.02,1.05}) for (double am:{1.0,1.12,0.89}){
+            double w=wc*s*am, h=hc*s/am;
+            w=max(w,max(pre_w+MARGIN,max_iw+MARGIN)); h=max(h,max(pre_h+MARGIN,max_ih+MARGIN));
+            auto key=make_pair((long long)llround(w*1e6),(long long)llround(h*1e6));
+            if (seen.insert(key).second) seeds.push_back({w,h});
+        }
+        sort(seeds.begin(),seeds.end(),[](const pair<double,double>&A,const pair<double,double>&B){
+            double aa=A.first*A.second,ab=B.first*B.second;
+            if (fabs(aa-ab)>TOL) return aa<ab; return max(A.first,A.second)<max(B.first,B.second);});
+        best = run_pipeline(seeds);
+    }
 
     if (getenv("CONSTRUCTIVE_DEBUG"))
-        fprintf(stderr,"[dbg] N=%d frames=%d ok=%d shelf=%d bv=%d gf=%d\n",
-                N,(int)frames.size(),trials,have_best?0:1,
+        fprintf(stderr,"[dbg] N=%d frames=%d reframe=%d bv=%d gf=%d\n",
+                N,(int)frames.size(),REFRAME?1:0,
                 count_boundary_violations(best),count_group_fragments(best));
     // Baseline-free proxy metrics for the portfolio selector (read from stderr).
     {
@@ -1384,6 +1471,8 @@ int main() {
     if (const char* e=getenv("ICCAD_ORDER_SWAP")){ int v=atoi(e); if (v>0) ORDER_SWAP=v; }
     if (const char* e=getenv("ICCAD_ORDER_MOVE")){ int v=atoi(e); if (v>0) ORDER_MOVE=v; }
     if (const char* e=getenv("ICCAD_CLUSTER_ORD")){ int v=atoi(e); if (v==1||v==2) CLUSTER_ORD=v; }
+    if (getenv("ICCAD_REFRAME")) REFRAME=true;
+    if (getenv("ICCAD_GUIDE_MED")) GUIDE_MED=true;
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;

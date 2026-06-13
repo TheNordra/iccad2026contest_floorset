@@ -200,7 +200,25 @@ _PROFILES: List[Dict[str, str]] = [
     # OM8+OS16 stacked +0.070% dominated by the two leads; OM8 on BFS+tight
     # 0.000%; CLUSTER_ORD (compound cluster first/last in bscore class) dead on
     # both orderings tried (0.000%).
-    {"ICCAD_ORDER_MOVE": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},   # om8_pin_wt_wire
+    {"ICCAD_GUIDE_MED": "1", "ICCAD_ORDER_MOVE": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},   # gm_om8_pin_wt_wire (M26: GUIDE_MED added in-place to M23 om8_pin; case 87->1.3505 + 82, ~free runtime since OM8 already paid)
+    # M26: GUIDE_MED candidate injection — add the connectivity-weighted L1-median of
+    # an item's placed/guide neighbours as an extra greedy candidate origin (a wire-
+    # optimal seed the geometric abutment slots miss; cheap, one extra candidate per
+    # item, no extra packs). Shipped two ways:
+    #  (1) GUIDE_MED added IN-PLACE to the M23 om8_pin_wt_wire above (gm_om8_pin_wt_wire):
+    #      wins the high-weight case 87 deep (1.4106->1.3505, OM8 relocation + median
+    #      seed compound) + case 82. Added in-place (not as a 2nd OM8 profile) so the
+    #      OM8 runtime is already paid -> ~free; a separate ADD cost +1.3s/case for a
+    #      +4.7% RuntimeFactor premium (M22/M23/M25 runtime discipline) and was rejected.
+    #  (2) gm_bfs_wt_wire below (no PIN): wins the disjoint case 91 (1.3569->1.3481).
+    # Scanned but NOT added (all <0.05% incremental, M25 lean-pool discipline): gm on
+    # tight/tall/narrow frames (<=0.015%); a separate ADD of gm_om8 (+1.3s runtime).
+    # The other two M26 candidates were DEAD (see CLAUDE.md M26): reframe (re-seed the
+    # frame loop from the measured compacted bbox) <=0.035%, redundant with the
+    # portfolio's aspect diversity; the oracle-perm ordering probe ceiling was
+    # 0.002-0.005% (injecting the PERFECT fp_sol order gains nothing -> the placer, not
+    # the pack order, is the bottleneck -> ordering/ML ranking permanently closed).
+    {"ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                        # gm_bfs_wt_wire (case 91)
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
