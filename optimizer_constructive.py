@@ -67,6 +67,8 @@ _PROFILES: List[Dict[str, str]] = [
     {},                                                                       # base
     {"ICCAD_FREE_ASPECT": "1"},                                               # free_aspect (M29: per-block interior-single aspect search; wins n=118/97/82 large cases)
     {"ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_MULT": "2.0"},                     # free_aspect_wire
+    {"ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # free_gm_wt_wire (M29: +0.159% over 1.3814)
+    {"ICCAD_FREE_ASPECT": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # free_tight_wire (M29: +0.148% over 1.3814)
     {"ICCAD_WIRE_MULT": "2.0"},                                               # wire_hi
     {"ICCAD_ANCHOR_W": "0.04"},                                               # anc_lo
     {"ICCAD_WIRE_MULT": "0.5", "ICCAD_ANCHOR_W": "0.20"},                     # area_lean
