@@ -83,7 +83,11 @@ M28「headroom 全在 quality」+ M29「原圖 X=B\*-tree、用非方形 aspect�
 - **全域 `ICCAD_SOFT_ASPECT`（先試的粗版）只動小 case**（1.6/0.62 各 ~0.11% oracle-min，wContr≈0）→ 留旋鈕但未進 portfolio。
 - **per-candidate（`ICCAD_FREE_ASPECT=1`）攻動大 case**：base+free oracle-min **0.184%**，case 97 n=118 1.269→1.253（wContr 0.109%）、76/61/57/67…。
 - **4 個 free profile 進 portfolio（43-prof）→ realized 1.3843→1.3787（−0.41%）、10.16s、100/100**：`free_aspect`、`free_aspect_wire`、`free_gm_wt_wire`（+GUIDE_MED+BFS+WT，+0.159%）、`free_tight_wire`（+frame_tight，+0.148%）。組合疊加因不同案贏不同 profile。free+boundary-aspect 只 0.034%（跳過）。GM/BFS/WT/frame 都不乘 packing → 牆-安全。
-- **後續**（未做，⚠️ runtime 已 10.16s 逼近 11s 上緣→加 profile 前先看牆，或先 M25-式審計剪舊被 free 版蓋過的 profile 騰預算）：finer/wider FREE_RATIOS（會抬牆，慎）、延伸到 cluster 成員/boundary 塊（目前只 interior single）。
+- **下一步計畫（M30 候選，依 ROI 排序；⚠️ 約束 = runtime 已 10.16s 逼近 11s 上緣，加 profile 前必看牆）**：
+  1. **profile 審計騰預算（先做，ROI 最高、不抬牆反降牆）**：跑 `profile_audit.py`（M25 win-tally/LOO/cpu）找被 free 版支配的舊 profile（疑似：`free_gm_wt_wire` 蓋過 `gm_om8_pin`/`gm_bfs_wt_wire`；`free_tight_wire` 蓋過 `frame_tight`），剪掉零貢獻項 → 降 contention + 騰 runtime（目標回 ~9s），再塞更多 free combo = 淨增益、不抬牆。剪除用 `[M30-pruned]` 註解可復原（仿 M25）。
+  2. **更多牆-安全 free combo**：`profile_vs_portfolio.py ICCAD_FREE_ASPECT=1 <knobs>` 篩 >0.05%；只配**不乘 packing** 的旋鈕（GM/BFS/WT/PIN/frame/anchor/boundary-aspect）。**避開 ORDER_SWAP/ORDER_MOVE**（乘 K× packing，free 的 5× 再 ×16 會爆牆）。
+  3. **finer/wider FREE_RATIOS**（如補 2.5/0.4 極端、或 1.25/0.8 細化）：**會抬牆**（更多 aspect 樣本），預算夠才做；改 `constructive.cpp` 的 `FREE_RATIOS` 重編後 A/B。
+  4. **延伸 free-aspect 到 cluster 成員 / boundary 塊**（現只 interior single）：code 改動較大 + 抬牆，最後做；boundary 塊要與 LR/TB_ASPECT 互動測試。
 
 ### 3. 精度 / 數值（持續遵守）
 任何新加的、會被 shapely 評分的幾何輸出都要保持精確 abutment + `%.17g`（見 Gotchas）。
