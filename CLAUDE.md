@@ -47,22 +47,34 @@ M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M
 
 1. **ordering / ML 整分支永久封卷**（M26 oracle-perm，`oracle_perm_probe.py` + `ICCAD_ORDER_FILE`）：注入**完美 fp_sol 排序**，placer 只多拿 **+0.002%（類內）/ +0.005%（全域）** → **瓶頸是 placer（greedy+compact+push），不是 pack order**。⇒ refinement pair-relocation / order-LNS / 監督式 ML ranking **全不值得做**。（對應舊 SA oracle-perm 3.27 天花板，現對 constructive 證實。）
 2. **「更好的 packer」面封死**（M27 global-packer，`dbg_seqpair.py`）：把 greedy 佈局用 **sequence-pair** 全域重排 + 退火（RELAXED 樂觀上限：clusters 打散、preplaced 不釘、boundary 不計 → 真實只會更差）。greedy seed + 20k 退火 **0 改善**；shelf bad-seed 收斂到 greedy area 但 HPWL 1.49×（**拿不到 (area,HPWL) 聯合點**）；hard case ≤2% 樂觀且幾乎全是 trivial LB-compaction 假象。**根因：agap 與 hgap 耦合（wire-driven 花 area 換低 HPWL）+ cluster/preplaced 強迫 void = 結構性**，非 packing 品質 → B*-tree/SP/skyline 重寫不值得。（SP recovery 正解 = overlap-conditioned 邊，pairwise L/R/B/A 會循環。）
-3. **唯一剩餘 headroom = reconstruction**（見下節「未來發展方向」）。
+3. **唯一剩餘 headroom = reconstruction，M28 已量測並 verdict=GREEN**（`reconstruct_probe.py`）：headroom **+0.276**（=M13後所有增益的~7×），**100% 在 quality（hpwl+area），violation 已贏 oracle**；目標 = 插入式 slicing tree（112/112 乾淨）+ free aspect；connectivity 有 2× 結構訊號但非決定性。M27 沒封死這條（它只重排 greedy 固定矩形，未建 netlist-driven slicing placer）。詳見下節。
 
 ## 未來發展方向
 
 > 所有 optimization lever 已枯竭（上節兩次天花板探測 + 下方死路 ledger）。剩餘方向依 ROI：
 
-### 1. Reconstruction（唯一真正的 frontier，~1.1 理論上限）
-從「optimization（壓 area/hpwl/violation）」轉成「還原 baseline 原圖」——gap≈0 才能逼近 Cost=1.0。需用 b2b/p2b connectivity + constraints 反推「原圖怎麼擺」。
-- ⚠️ **明顯的子路徑都已封死**，reconstruction 需要全新想法，不是把現有 placer 餵更好的 order/start：
-  - ML ranking / pack-order：M26 oracle-perm 證實 placer 是天花板（完美排序僅 +0.005%）
-  - supervised MSE 對 fp_sol 絕對位置：v2 失敗（ill-posed 一對多，疊在中間）
-  - 全域重排（sequence-pair / B*-tree）：M27 證實 greedy 已在 (area,HPWL) 前緣
-- 可能的新角度（未驗證）：(a) 研究組員純演算法怎麼用 constraint+connectivity 反推佈局；(b) 預測**相對結構 / 接觸圖**（哪些 block 該 abut）而非絕對位置，再用 placer 實現該接觸關係；(c) 整合 *global* tiling/structure 訊號（contact graph、outline aspect）而非 per-block local feature。
+### 1. Reconstruction（唯一真正的 frontier）— **M28 已量測天花板拆解，verdict = GREEN**
 
-### 2. per-block free-aspect（次要未測小 lever）
-soft block 在 ±1% area 內選 aspect，packing 時一起搜。與 global packer 正交。期望低（dims 已被 boundary-aspect + LR/TB profile 大半覆蓋），但是唯一還沒碰過的 placer-層 knob。
+**M28 reconstruction ceiling probe（`reconstruct_probe.py`，offline，2026-06-14）**：輸出 fp_sol verbatim 過官方 evaluator，拆解天花板。決定性結果：
+- **Oracle = 1.1079（再確認）；headroom = 1.3843−1.1079 = +0.2764**，是 M13 以來所有 optimization 增益總和（1.4231→1.3843=0.039）的 **~7×**。
+- **headroom 100% 在 quality（hpwl+area），violation 已贏**：our quality factor 1.274（hgap 0.328 + agap 0.221）vs oracle 1.000；our Vrel 0.040 **低於** oracle 0.050。⇒ reconstruction = 「擺出和原圖一樣緊（低 area）又短（低 HPWL）的 feasible 佈局」，**violation 面不用碰**。
+- **1.1 floor 是原圖自身的 boundary V_rel，焊死在資料裡**（90/100 案 oracle boundary>0）→ 真天花板 ~1.106 不可再降；但與我們無關（我們已在 floor 之下做 violation）。
+- **100/100 feasible、block 全矩形**（max polygon 頂點=5）→ fp_sol 可用矩形 verbatim 輸出 → reconstruction 是**位置/品質還原**（非 metric-only 的難級跳）。
+- **headroom 高度集中**：top-15 案（全 n=103–120 + 硬案 89/85）佔 68.9% → tractable，非散落。
+- **目標表徵 = 插入式 slicing tree**：`tree_sol` shape `(n−1)×3` = (anchor=col0, 新block=col1, cut_dir=col2∈{0,1})，**112/112 layouts 結構乾淨**（col1=非seed的排列、col0=已置 block）。原圖是從這棵樹生成的 slicing floorplan。
+- **connectivity 帶結構訊號但非決定性**：tree-attached pair 有 **38.2%** 是 b2b 直接相連 vs random **19.9%**（~2×）→ 可學，但**一對多是真的**（62% 非直接邊，無法用單純 min-cut 唯一還原）。
+
+**為何 M27 沒封死這條**：M27 只「重排 greedy 的固定矩形」（SP-repack，固定 dims、打散 cluster）；**從沒建過 netlist-driven 的 slicing-tree placer + free aspect**。原圖的 (area,HPWL) 優勢來自**全域 slicing 結構 + 非方形 aspect**，是我們 skyline-greedy 架構結構性產不出的點 → 換 placer **架構**（slicing-tree constructive）才碰得到，與死路 ledger 的「SP/B*-tree 重排 greedy」正交。
+
+**⚠️ 已封死的子路徑（勿重試）**：ML ranking/pack-order（M26 oracle-perm +0.005%）；supervised MSE 對絕對位置（v2 ill-posed）；SP/B*-tree 重排 greedy 矩形（M27）。
+
+**GREEN 下一步（先 ceiling-probe 再寫 C++，遵守團隊紀律）**：
+1. **tree→layout geometric decoder**：把插入式 slicing tree 解成幾何，驗證能重現 fp_sol 位置（確認懂生成器幾何）。
+2. **connectivity-driven tree BUILDER**（無 label：遞迴 min-cut / 連通性導向插入 + free aspect）→ layout → 量 cost，對比 1.3843。這是真正的 reconstruction 嘗試；用 1M tree label 驗證/訓練 builder。
+3. 若 builder 拿到顯著 headroom（哪怕一半 = 1.38→~1.24）→ 投入；若連 oracle-tree-fed 都還不到 → RED。
+
+### 2. per-block free-aspect（M28 後升級為 GREEN 路徑的一部分，非獨立小 lever）
+soft block 在 ±1% area 內選 aspect。**M28 證實 headroom 全在 quality**，原圖正是用非方形 aspect 才同時壓低 area+HPWL → free-aspect 應與 slicing-tree builder **一起搜**（不再是孤立 knob）。
 
 ### 3. 精度 / 數值（持續遵守）
 任何新加的、會被 shapely 評分的幾何輸出都要保持精確 abutment + `%.17g`（見 Gotchas）。
@@ -125,7 +137,7 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - `profile_vs_portfolio.py KEY=VAL`（新 profile 候選逐案比 portfolio 算 oracle-min 增益，>0.05% 才加）
 - `rh_sweep.py`（真值快取 + 掃 _RH/proxy）、`portfolio_ceiling.py`（oracle 天花板）、`proxy_dbg.py`、`profile_audit.py`（M25 池審計：win tally/LOO/cpu）
 - `dbg_area.py`（area density）、`dbg_boundary.py` / `dbg_vio_stats.py`（violation 分類）、`dbg_compact.py` / `dbg_compact_cmp.py`、`dbg_hpwl_push.py`（push 原型）
-- 負結果工具（保留）：`oracle_perm_probe.py`（M26 ordering 探測）、`dbg_seqpair.py`（M27 global-packer 探測）
+- 探測工具（保留）：`oracle_perm_probe.py`（M26 ordering 天花板）、`dbg_seqpair.py`（M27 global-packer 天花板）、`reconstruct_probe.py`（M28 reconstruction 天花板拆解：oracle 1.1079、headroom 100% quality、tree_sol 解碼；快取 `reconstruct_probe_cache.json`）
 
 ## 檔案結構（要點）
 - `constructive.cpp` 🏆 — placer，含 M9-M26 全部行為（見 env 旋鈕）+ METRICS stderr
