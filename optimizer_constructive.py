@@ -65,6 +65,8 @@ _BIN = Path(os.environ.get("ICCAD_CONSTRUCTIVE_BIN", str(_DIR / "constructive.ex
 # pruning cheap knob profiles trims total CPU/contention, not the wall model.
 _PROFILES: List[Dict[str, str]] = [
     {},                                                                       # base
+    {"ICCAD_FREE_ASPECT": "1"},                                               # free_aspect (M29: per-block interior-single aspect search; wins n=118/97/82 large cases)
+    {"ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_MULT": "2.0"},                     # free_aspect_wire
     {"ICCAD_WIRE_MULT": "2.0"},                                               # wire_hi
     {"ICCAD_ANCHOR_W": "0.04"},                                               # anc_lo
     {"ICCAD_WIRE_MULT": "0.5", "ICCAD_ANCHOR_W": "0.20"},                     # area_lean

@@ -84,6 +84,11 @@ static int ORDER_SWAP = 0;         // ICCAD_ORDER_SWAP=K: before refinement, gre
                                    // pairwise, re-pack once, keep a swap iff layout_score improves
 static double LR_ASPECT = 2.50; // w/h for LEFT/RIGHT-only boundary blocks (env)
 static double TB_ASPECT = 0.40; // w/h for TOP/BOTTOM-only boundary blocks (env)
+static double SOFT_ASPECT = 1.0; // M29 free-aspect: w/h for INTERIOR (code==0) soft
+                                 // blocks; default 1.0 = square = unchanged (env)
+static int FREE_ASPECT = 0;      // M29 ICCAD_FREE_ASPECT>0: per-block aspect SEARCH for
+                                 // single interior movable blocks (0=off=unchanged)
+static const vector<double> FREE_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // w/h tried
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
@@ -142,7 +147,7 @@ static double soft_ratio(int code) {
     bool tb = (code & (B_TOP | B_BOTTOM)) != 0;
     if (lr && !tb) return LR_ASPECT;
     if (tb && !lr) return TB_ASPECT;
-    return 1.0;
+    return SOFT_ASPECT;
 }
 static pair<double,double> default_soft_dim(double area, int code) {
     double r = soft_ratio(code), w = sqrt(area * r);
@@ -541,6 +546,61 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         if (all_done) continue;                       // already placed in first-pass
         bool any_done=false; for (int b:it.blocks) if(done[b]){ any_done=true; break; }
         if (any_done) continue;                       // partial: leave to other items/frames
+        // M29 free-aspect: single interior movable block -> search its own aspect
+        // (±exact area) jointly with position; self-contained, then continue. The
+        // generic path below is untouched, so FREE_ASPECT=0 is bit-identical.
+        if (FREE_ASPECT>0 && it.blocks.size()==1){
+            int sb=it.blocks[0];
+            if (!blocks[sb].is_fixed && !blocks[sb].is_preplaced && blocks[sb].mib==0
+                && blocks[sb].boundary==0 && blocks[sb].area>0){
+                double A=blocks[sb].area;
+                double best=1e300, bx=0, by=0, bw=0, bh=0; bool found=false;
+                for (double r:FREE_RATIOS){
+                    double IW=sqrt(A*r), IH=A/IW;
+                    Item t=it; t.w=IW; t.h=IH;        // single: offs[0]=(0,0)
+                    auto cands=item_candidates(t,fw,fh,rects);
+                    if (GUIDE_MED){
+                        vector<pair<double,double>> xs, ys;
+                        for (auto& nb:b2b_adj[sb]){
+                            double ncx,ncy;
+                            if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
+                            else if (use_prev){ ncx=prev_pos[nb.first].x+prev_pos[nb.first].w/2; ncy=prev_pos[nb.first].y+prev_pos[nb.first].h/2; }
+                            else continue;
+                            xs.push_back({ncx,nb.second}); ys.push_back({ncy,nb.second});
+                        }
+                        for (auto& pn:p2b_adj[sb]){ xs.push_back({pins[pn.first].first,pn.second}); ys.push_back({pins[pn.first].second,pn.second}); }
+                        if (!xs.empty()){ double mx=wmedian(xs), my=wmedian(ys);
+                            double gx=min(max(0.0,mx-IW/2),max(0.0,fw-IW));
+                            double gy=min(max(0.0,my-IH/2),max(0.0,fh-IH));
+                            cands.push_back({gx,gy}); }
+                    }
+                    for (auto&c:cands){
+                        double x=c.first,y=c.second;
+                        if (x<-TOL||y<-TOL||x+IW>fw+TOL||y+IH>fh+TOL) continue;
+                        bool ov=false;
+                        for (const XYWH&rr:rects) if (rect_overlap(x,y,IW,IH,rr.x,rr.y,rr.w,rr.h)){ ov=true; break; }
+                        if (ov) continue;
+                        double cx=x+IW/2, cy=y+IH/2;
+                        double ad=it.aw>0?fabs(cx-it.ax)+fabs(cy-it.ay):0.0;
+                        double area=bbox_area_with(x,y,IW,IH), wire=0.0;
+                        for (auto& nb:b2b_adj[sb]){
+                            double ncx,ncy;
+                            if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
+                            else if (use_prev){ ncx=prev_pos[nb.first].x+prev_pos[nb.first].w/2; ncy=prev_pos[nb.first].y+prev_pos[nb.first].h/2; }
+                            else continue;
+                            wire+=nb.second*(fabs(cx-ncx)+fabs(cy-ncy));
+                        }
+                        for (auto& pn:p2b_adj[sb])
+                            wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
+                        double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+1e-3*y+1e-4*x;
+                        if (score<best){ best=score; bx=x; by=y; bw=IW; bh=IH; found=true; }
+                    }
+                }
+                if (!found) return false;
+                out[sb]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh}); bbox_add(bx,by,bw,bh); done[sb]=1;
+                continue;
+            }
+        }
         auto cands=item_candidates(it,fw,fh,rects);
         if (GUIDE_MED){
             // Connectivity-weighted L1-median of this item's neighbours (placed, or
@@ -1453,6 +1513,8 @@ int main() {
     if (const char* e=getenv("ICCAD_ANCHOR_W"))  { double v=atof(e); if (v>=0) ANCHOR_W=v; }
     if (const char* e=getenv("ICCAD_LR_ASPECT"))  { double v=atof(e); if (v>0) LR_ASPECT=v; }
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
+    if (const char* e=getenv("ICCAD_SOFT_ASPECT")){ double v=atof(e); if (v>0) SOFT_ASPECT=v; }
+    if (const char* e=getenv("ICCAD_FREE_ASPECT")){ int v=atoi(e); if (v>0) FREE_ASPECT=v; }
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;
