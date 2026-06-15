@@ -50,13 +50,14 @@ def pname(prof):
     short = {"ICCAD_WIRE_MULT": "W", "ICCAD_ANCHOR_W": "anc", "ICCAD_LR_ASPECT": "LR",
              "ICCAD_TB_ASPECT": "", "ICCAD_FRAME_ASPECTS": "fa", "ICCAD_FRAME_SCALES": "fs",
              "ICCAD_WIRE_TIEBREAK": "WT", "ICCAD_WIRE_BFS": "BFS", "ICCAD_BFS_PIN": "PIN",
-             "ICCAD_ORDER_SWAP": "OS", "ICCAD_ORDER_MOVE": "OM"}
+             "ICCAD_ORDER_SWAP": "OS", "ICCAD_ORDER_MOVE": "OM",
+             "ICCAD_FREE_ASPECT": "FREE", "ICCAD_GUIDE_MED": "GM"}
     parts = []
     for k, v in prof.items():
         s = short.get(k, k)
         if s == "":
             continue
-        if s in ("WT", "BFS", "PIN"):
+        if s in ("WT", "BFS", "PIN", "FREE", "GM"):
             parts.append(s)
         elif s in ("fa", "fs"):
             parts.append(f"{s}{v.split(',')[0]}-{v.split(',')[-1]}")

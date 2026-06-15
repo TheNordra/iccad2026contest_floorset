@@ -23,7 +23,7 @@
 
 ## 目前狀態
 
-### 🏆 最佳：Total Score = 1.3787（M29 free-aspect, 43-prof, 2026-06-14；10.16s/case, 100/100 feasible）
+### 🏆 最佳：Total Score = 1.3694（M30 free+PIN combos, 38-prof, 2026-06-15；~9.2s/case clean, 100/100 feasible）
 
 `constructive.cpp`（C++ 建構式定框 placer，B 路線重寫組員架構）+ `optimizer_constructive.py`（portfolio wrapper）。**確定性**（無 randomness/限時 → run-to-run 一致，可精確 A/B）、100/100 feasible、8.78s/case。**proxy 自 M13 起 = oracle ceiling**（完美選擇，加 profile 全額 realize → selection 不再是瓶頸）。
 
@@ -35,13 +35,13 @@
 5. **後處理**：compaction（M10）→ wire refinement（M9）→ HPWL push/slide/swap/jump（M14-16/24）
 
 ### Portfolio 層
-平行跑 39 deterministic profile（env 旋鈕變體），用 **baseline-free proxy** 選最佳：
+平行跑 38 deterministic profile（env 旋鈕變體），用 **baseline-free proxy** 選最佳：
 - proxy = `(area/Â + _RH·hpwl/hmin)·exp(2·vrel)`，Â=1.035·ΣblockArea，hmin=該 case 各 profile 最小 hpwl，**_RH=1.4**（補償 hmin/hbase≈1.3-1.4 對 hpwl 項的低估）
 - ⚠️ **vrel 必須用 shapely 算**（wrapper `_proxy_metrics`），不可用 C++ union-find（1e-3 tol，34/100 案不一致 → 退到 1.6x）
 - 下檔保護：無用 profile 不被選、不傷分（只花 runtime）
 
 ### 演進里程碑（deterministic A/B；M4 起累計 -38.5%）
-M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored cluster 1.7045 → M6-8 portfolio(7→13) 1.5659 → M9 wire refinement 1.5375 → **M10 %.17g 精度修正 + compaction 1.4528** → M11 迭代 compaction 1.4502 → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14 HPWL push(free single) 1.4253 → M15 boundary-axis slide 1.4236 → M16 same-size swap 1.4231 → M17 WIRE_TIEBREAK 1.4202 → M18 WIRE_BFS 1.4138 → M19 BFS_PIN 1.4105 → M20 ORDER_SWAP 1.4080 → M21 OS 組合(K=16) 1.3998 → M22 OS16 移植 1.3987 → M23 ORDER_MOVE 1.3983 → **M24 HPWL jump(跨障礙) 1.3862** → M25 池審計剪枝(56→38, runtime -27%, 分數不變) → **M26 GUIDE_MED(39-prof) 1.3843** → M27 global-packer 探測 = 死路 → M28 reconstruction 天花板 probe（GREEN）→ M29 tree decoder 拆解（X=B\*-tree 100% 精確）+ 從零 builder = 死路 → **M29 per-block free-aspect ship（base+wire+GM+tight 共 4 profile，43-prof）1.3787**（M26 以來首個動分數 lever，−0.41%，攻動 n=118 大 case；10.16s）。
+M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored cluster 1.7045 → M6-8 portfolio(7→13) 1.5659 → M9 wire refinement 1.5375 → **M10 %.17g 精度修正 + compaction 1.4528** → M11 迭代 compaction 1.4502 → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14 HPWL push(free single) 1.4253 → M15 boundary-axis slide 1.4236 → M16 same-size swap 1.4231 → M17 WIRE_TIEBREAK 1.4202 → M18 WIRE_BFS 1.4138 → M19 BFS_PIN 1.4105 → M20 ORDER_SWAP 1.4080 → M21 OS 組合(K=16) 1.3998 → M22 OS16 移植 1.3987 → M23 ORDER_MOVE 1.3983 → **M24 HPWL jump(跨障礙) 1.3862** → M25 池審計剪枝(56→38, runtime -27%, 分數不變) → **M26 GUIDE_MED(39-prof) 1.3843** → M27 global-packer 探測 = 死路 → M28 reconstruction 天花板 probe（GREEN）→ M29 tree decoder 拆解（X=B\*-tree 100% 精確）+ 從零 builder = 死路 → **M29 per-block free-aspect ship（base+wire+GM+tight 共 4 profile，43-prof）1.3787**（M26 以來首個動分數 lever，−0.41%，攻動 n=118 大 case；10.16s） → **M30 free+PIN combo family（剪 9、加 4 free，38-prof）1.3694**（−0.67% 本 session；`free_pin_tight`/`free_gm_pin` 為全池 LOO 前二，case 95 n=116→**1.1967**、98 n=119→**1.3323**；OS16 仍不可剪、牆結構性；~9.2s clean）。
 
 ## 🔑 戰略結論：packer/order lever 枯竭，但 aspect lever M29 重開（M26-M29）
 
@@ -78,16 +78,18 @@ M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M
 ### 1b. connectivity→tree ML map（探索，低優先；M29 後保留為唯一「reconstruction-specific」路）
 學「連通性 → B\*-tree 結構」以還原 X（Y 序仍須另解）。但 M28 訊號弱（**2×、一對多**），且本環境**禁訓練**（需 GPU 環境，見 ML 節）。在 free-aspect 拿到正向訊號前不投入。
 
-### 2. per-block free-aspect — ✅ **M29 SHIPPED：1.3843→1.3814（−0.21%）**
+### 2. per-block free-aspect — ✅ **M29 SHIPPED 1.3787 → M30 free+PIN family 1.3694**
 M28「headroom 全在 quality」+ M29「原圖 X=B\*-tree、用非方形 aspect」⇒ free-aspect 是**唯一未試、不需 tree 的 GREEN lever**。實作 = `constructive.cpp` 候選評分裡為 **single interior movable block** 在 ±1% area（精確同面積）內搜 aspect（`FREE_RATIOS={1.0,1.5,0.6667,2.0,0.5}`），gated `ICCAD_FREE_ASPECT`，自包含分支 + `continue` → FREE_ASPECT=0 bit-identical。
 - **全域 `ICCAD_SOFT_ASPECT`（先試的粗版）只動小 case**（1.6/0.62 各 ~0.11% oracle-min，wContr≈0）→ 留旋鈕但未進 portfolio。
 - **per-candidate（`ICCAD_FREE_ASPECT=1`）攻動大 case**：base+free oracle-min **0.184%**，case 97 n=118 1.269→1.253（wContr 0.109%）、76/61/57/67…。
-- **4 個 free profile 進 portfolio（43-prof）→ realized 1.3843→1.3787（−0.41%）、10.16s、100/100**：`free_aspect`、`free_aspect_wire`、`free_gm_wt_wire`（+GUIDE_MED+BFS+WT，+0.159%）、`free_tight_wire`（+frame_tight，+0.148%）。組合疊加因不同案贏不同 profile。free+boundary-aspect 只 0.034%（跳過）。GM/BFS/WT/frame 都不乘 packing → 牆-安全。
-- **下一步計畫（M30 候選，依 ROI 排序；⚠️ 約束 = runtime 已 10.16s 逼近 11s 上緣，加 profile 前必看牆）**：
-  1. **profile 審計騰預算（先做，ROI 最高、不抬牆反降牆）**：跑 `profile_audit.py`（M25 win-tally/LOO/cpu）找被 free 版支配的舊 profile（疑似：`free_gm_wt_wire` 蓋過 `gm_om8_pin`/`gm_bfs_wt_wire`；`free_tight_wire` 蓋過 `frame_tight`），剪掉零貢獻項 → 降 contention + 騰 runtime（目標回 ~9s），再塞更多 free combo = 淨增益、不抬牆。剪除用 `[M30-pruned]` 註解可復原（仿 M25）。
-  2. **更多牆-安全 free combo**：`profile_vs_portfolio.py ICCAD_FREE_ASPECT=1 <knobs>` 篩 >0.05%；只配**不乘 packing** 的旋鈕（GM/BFS/WT/PIN/frame/anchor/boundary-aspect）。**避開 ORDER_SWAP/ORDER_MOVE**（乘 K× packing，free 的 5× 再 ×16 會爆牆）。
-  3. **finer/wider FREE_RATIOS**（如補 2.5/0.4 極端、或 1.25/0.8 細化）：**會抬牆**（更多 aspect 樣本），預算夠才做；改 `constructive.cpp` 的 `FREE_RATIOS` 重編後 A/B。
-  4. **延伸 free-aspect 到 cluster 成員 / boundary 塊**（現只 interior single）：code 改動較大 + 抬牆，最後做；boundary 塊要與 LR/TB_ASPECT 互動測試。
+- **M29：4 個 free profile 進 portfolio（43-prof）→ 1.3843→1.3787（−0.41%）**：`free_aspect`、`free_aspect_wire`、`free_gm_wt_wire`、`free_tight_wire`。
+- **M30 SHIPPED（2026-06-15）：1.3787→1.3694（−0.67% 本 session）、~9.2s clean、100/100、38-prof**。三步（詳見 `optimizer_constructive.py` 註解 + `audit_M30.txt`）：
+  1. **Phase B 審計剪枝（`profile_audit.py`，score-neutral）**：剪 5 個 wins==0 ∧ |LOO|<1e-12（`wire_hi`/`tall_anclo`/`narrow_wire_anc`/`os_bfs_wt_wire`/`gm_bfs_wt_wire`，標 `[M30-pruned]`）。⚠️ **核心假設「free 偷走 OS16 wins → 剪 OS16 降牆」= False**：OS16（~21s max）牆主宰全部存活、各賺各案（5/2/8 wins）→ est_wall 7.39 不變，剪枝只降 contention 不降牆。
+  2. **加 4 個 wall-safe free combo（`profile_vs_portfolio.py`，>0.05% 才加）**：r1 `free_pin_wt_wire`（+0.233%，case 98/95/89）、`free_gm_tight_wire`（+0.134%，case 95/65/40）；r2 `free_pin_tight_wire`（+0.405% 增量，case 95 n=116 **1.2400→1.1967**、73/87）、`free_gm_pin_wt_wire`（+0.284%，case 98 n=119 **1.3704→1.3323**）。**r2 兩個是全池 LOO 前二（+0.0041/+0.0028）**。皆單趟 packing ~9s max → 藏 OS16 天花板下、牆-安全。
+  3. **round-2 審計再剪 4（被 free 強版蓋過、score-neutral）**：`anc_lo`/`area_lean`/`tight_wire`/`wtb_wire`（標 `[M30r2-pruned]`）。
+  - **飽和訊號（停手點）**：r3 全合併 `free+GM+PIN+tight` 僅 **+0.006%** → free+PIN family 榨乾。`free+tall`（只贏 89、與 PIN 重疊）、`free+narrow`（0%）已死。
+  - **proxy 滑移觀察（潛在未來 lever）**：case 95 portfolio 一度選 1.2400，但 pool 內 `free_gm_tight` 其實能做 1.2329 → 現有 profile set 仍有未 realize 的 headroom（**proxy 選擇/_RH 可調**），屬另一條軸，本 session 未碰。
+- **剩餘 free-aspect 方向（未做，依 ROI；皆會抬牆，需先確認 runtime 預算）**：① finer/wider `FREE_RATIOS`（補 2.5/0.4 或 1.25/0.8）—改 `constructive.cpp:91` 重編後 A/B；② 延伸 free-aspect 到 cluster 成員 / boundary 塊（現只 interior single）—最大 code 改動，最後做，boundary 塊要與 LR/TB_ASPECT 互動測試。
 
 ### 3. 精度 / 數值（持續遵守）
 任何新加的、會被 shapely 評分的幾何輸出都要保持精確 abutment + `%.17g`（見 Gotchas）。
@@ -141,7 +143,7 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - 預設：`ICCAD_BP_WEIGHT`=30000、`ICCAD_WIRE_MULT`=×1、`ICCAD_ANCHOR_W`=0.10、`ICCAD_LR_ASPECT`/`ICCAD_TB_ASPECT`
 - 關後處理：`NO_COMPACT` / `NO_REFINE` / `NO_PUSH`（關 M14-16+24）/ `NO_BND_PUSH`（退 M14）/ `NO_SWAP`（退 M15）/ `NO_JUMP`（退 M16）；`PUSH_PASSES=N`、`COMPACT_ITERS=N`、`REFINE_ITERS=N`
 - pack-order 軸：`WIRE_TIEBREAK`、`WIRE_BFS`、`BFS_PIN`、`ORDER_SWAP=K`、`ORDER_MOVE=K`、`GUIDE_MED`（M26 ship）
-- **aspect 軸（M29）**：`ICCAD_FREE_ASPECT=1`（per-block：single interior movable 在 ±1% area 搜 aspect，**M29 ship 1.3787**，4 profile 進 portfolio：base/+wire/+GM-wt-wire/+tight-wire）；`ICCAD_SOFT_ASPECT=r`（全域 interior aspect，預設 1.0；粗版只動小 case，未進 portfolio）
+- **aspect 軸（M29/M30）**：`ICCAD_FREE_ASPECT=1`（per-block：single interior movable 在 ±1% area 搜 aspect，**M30 ship 1.3694**，8 free profile 進 portfolio：base/+wire/+GM-wt-wire/+tight-wire（M29）+ **+PIN-wt-wire/+GM-tight-wire/+PIN-tight-wire/+GM-PIN-wt-wire（M30，後二 `free_pin_tight`/`free_gm_pin` 為全池 LOO 前二）**）；`ICCAD_SOFT_ASPECT=r`（全域 interior aspect，預設 1.0；粗版只動小 case，未進 portfolio）
 - 死路（code 保留 gated off，勿重掃）：`BFS_NORM`、`CLUSTER_ORD=1/2`、`REFRAME`
 - 離線探測（永不 ship）：`ORDER_FILE=path` + `ORDER_GLOBAL=1`（oracle-perm）
 - `ICCAD_CONSTRUCTIVE_SINGLE=1` 退單 base profile（1.7045）

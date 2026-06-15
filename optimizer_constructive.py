@@ -69,9 +69,13 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_MULT": "2.0"},                     # free_aspect_wire
     {"ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # free_gm_wt_wire (M29: +0.159% over 1.3814)
     {"ICCAD_FREE_ASPECT": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # free_tight_wire (M29: +0.148% over 1.3814)
-    {"ICCAD_WIRE_MULT": "2.0"},                                               # wire_hi
-    {"ICCAD_ANCHOR_W": "0.04"},                                               # anc_lo
-    {"ICCAD_WIRE_MULT": "0.5", "ICCAD_ANCHOR_W": "0.20"},                     # area_lean
+    {"ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # free_pin_wt_wire (M30: +0.233% oracle-min; wins high-weight 98 n=119 / 95 / 89; pin-seeded BFS order + free interior aspect, wall-safe ~8s max)
+    {"ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # free_gm_tight_wire (M30: +0.134% oracle-min; case 95 n=116 1.2534->1.2329 + 65/40; GM median-seed + tight frame + free, wall-safe)
+    {"ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # free_pin_tight_wire (M30 r2: +0.405% incr over the 40-prof pool; case 95 n=116 1.2400->1.1967 (0.248%) + 73 n=94 + 87 n=108; PIN-seeded BFS order + tight frame + free aspect, single-pass wall-safe)
+    {"ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # free_gm_pin_wt_wire (M30 r2: +0.284% incr; case 98 n=119 1.3704->1.3323 (0.280%); GM median-seed + PIN order + free, complements free_pin_tight (95 vs 98))
+    # [M30-pruned: 0 wins, LOO 0] {"ICCAD_WIRE_MULT": "2.0"},                  # wire_hi
+    # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_ANCHOR_W": "0.04"},               # anc_lo
+    # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_WIRE_MULT": "0.5", "ICCAD_ANCHOR_W": "0.20"},  # area_lean
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286"},                   # aspect_hi
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},                    # aspect_xhi
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
@@ -92,7 +96,7 @@ _PROFILES: List[Dict[str, str]] = [
     # {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},   # tight_asp5  [M25-pruned]
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "3.0"},  # asp7_wirex3
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},  # tall_asp10  [M25-pruned]
-    {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_ANCHOR_W": "0.04"},            # tall_anclo
+    # [M30-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_ANCHOR_W": "0.04"},  # tall_anclo
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp5_all
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10", "ICCAD_WIRE_MULT": "3.0"},  # asp10_wirex3  [M25-pruned]
     # {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp7_all  [M25-pruned]
@@ -105,13 +109,13 @@ _PROFILES: List[Dict[str, str]] = [
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp7_all  [M25-pruned]
     {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20",  "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp5_all
     # {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},  # tight_asp7_wire  [M25-pruned]
-    {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},                            # tight_wire
+    # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # tight_wire
     # M13: narrower-than-frame_tall outlines (aspect 0.55-0.28) attack the systematic
     # horizontal dead space (dbg_area: w/wb~1.3-1.5, h/hb~1.0 -> we pack too wide).
     # Wins the highest-weight cases 98 (n=119) and 87 that frame_tall (0.67-0.33)
     # didn't reach. Downside-protected by the proxy.
     {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28"},                                                     # narrow
-    {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_WIRE_MULT": "2.0", "ICCAD_ANCHOR_W": "0.04"}, # narrow_wire_anc
+    # [M30-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_WIRE_MULT": "2.0", "ICCAD_ANCHOR_W": "0.04"}, # narrow_wire_anc
     # {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_WIRE_MULT": "2.0"},                         # narrow_wire  [M25-pruned]
     # {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_ANCHOR_W": "0.04"},                         # narrow_anc  [M25-pruned]
     # M17: WIRE_TIEBREAK pack-order axis — boundary priority (bscore) intact, but
@@ -122,7 +126,7 @@ _PROFILES: List[Dict[str, str]] = [
     # 1.706->1.597, the worst single-case hgap) + 89/53/16; wtb_wire wins the
     # highest-weight case 98 (1.4502->1.4413) + 63. Other combos (narrow/LR5/W3)
     # were dominated by these two and are not worth the runtime.
-    {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                                             # wtb_wire
+    # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},             # wtb_wire
     {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"}, # wtb_tall_wire
     # M18: WIRE_BFS pack-order axis — bscore classes intact, but inside each class
     # items are emitted greedily by largest edge weight into the already-ordered
@@ -158,7 +162,7 @@ _PROFILES: List[Dict[str, str]] = [
     # case 85 (1.6606->1.6255) + 42/40. Wins are near-disjoint. OS12 (+0.157%)
     # and OS16+tall (+0.056%) were dominated by these three; OS8+WT+tall +0.016%.
     {"ICCAD_ORDER_SWAP": "16", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # os16_pin_wt_wire
-    {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                        # os_bfs_wt_wire
+    # [M30-pruned: 0 wins, LOO 0; frees ~2s cpu] {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # os_bfs_wt_wire
     {"ICCAD_ORDER_SWAP": "8", "ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},       # os_bfs_tight_wire
     # M22: K-axis follow-up. On the strongest (PIN+WT) order K saturates at 16
     # for the high-weight cases (98/79/82 absent from both OS24 and OS32 wins);
@@ -222,7 +226,7 @@ _PROFILES: List[Dict[str, str]] = [
     # portfolio's aspect diversity; the oracle-perm ordering probe ceiling was
     # 0.002-0.005% (injecting the PERFECT fp_sol order gains nothing -> the placer, not
     # the pack order, is the bottleneck -> ordering/ML ranking permanently closed).
-    {"ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                        # gm_bfs_wt_wire (case 91)
+    # [M30-pruned: 0 wins, LOO 0; superseded by free_gm_wt_wire] {"ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # gm_bfs_wt_wire (case 91)
 ]
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
