@@ -23,7 +23,7 @@
 
 ## 目前狀態
 
-### 🏆 最佳：Total Score = 1.3694（M30 free+PIN combos, 38-prof, 2026-06-15；~9.2s/case clean, 100/100 feasible）
+### 🏆 最佳：Total Score = 1.3667（M32 decoupled boundary-aspect, 39-prof, 2026-06-19；est_wall 8.03s/case, 100/100 feasible）
 
 `constructive.cpp`（C++ 建構式定框 placer，B 路線重寫組員架構）+ `optimizer_constructive.py`（portfolio wrapper）。**確定性**（無 randomness/限時 → run-to-run 一致，可精確 A/B）、100/100 feasible、8.78s/case。**proxy 自 M13 起 = oracle ceiling**（完美選擇，加 profile 全額 realize → selection 不再是瓶頸）。
 
@@ -35,13 +35,13 @@
 5. **後處理**：compaction（M10）→ wire refinement（M9）→ HPWL push/slide/swap/jump（M14-16/24）
 
 ### Portfolio 層
-平行跑 38 deterministic profile（env 旋鈕變體），用 **baseline-free proxy** 選最佳：
+平行跑 39 deterministic profile（env 旋鈕變體），用 **baseline-free proxy** 選最佳：
 - proxy = `(area/Â + _RH·hpwl/hmin)·exp(2·vrel)`，Â=1.035·ΣblockArea，hmin=該 case 各 profile 最小 hpwl，**_RH=1.4**（補償 hmin/hbase≈1.3-1.4 對 hpwl 項的低估）
 - ⚠️ **vrel 必須用 shapely 算**（wrapper `_proxy_metrics`），不可用 C++ union-find（1e-3 tol，34/100 案不一致 → 退到 1.6x）
 - 下檔保護：無用 profile 不被選、不傷分（只花 runtime）
 
 ### 演進里程碑（deterministic A/B；M4 起累計 -38.5%）
-M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored cluster 1.7045 → M6-8 portfolio(7→13) 1.5659 → M9 wire refinement 1.5375 → **M10 %.17g 精度修正 + compaction 1.4528** → M11 迭代 compaction 1.4502 → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14 HPWL push(free single) 1.4253 → M15 boundary-axis slide 1.4236 → M16 same-size swap 1.4231 → M17 WIRE_TIEBREAK 1.4202 → M18 WIRE_BFS 1.4138 → M19 BFS_PIN 1.4105 → M20 ORDER_SWAP 1.4080 → M21 OS 組合(K=16) 1.3998 → M22 OS16 移植 1.3987 → M23 ORDER_MOVE 1.3983 → **M24 HPWL jump(跨障礙) 1.3862** → M25 池審計剪枝(56→38, runtime -27%, 分數不變) → **M26 GUIDE_MED(39-prof) 1.3843** → M27 global-packer 探測 = 死路 → M28 reconstruction 天花板 probe（GREEN）→ M29 tree decoder 拆解（X=B\*-tree 100% 精確）+ 從零 builder = 死路 → **M29 per-block free-aspect ship（base+wire+GM+tight 共 4 profile，43-prof）1.3787**（M26 以來首個動分數 lever，−0.41%，攻動 n=118 大 case；10.16s） → **M30 free+PIN combo family（剪 9、加 4 free，38-prof）1.3694**（−0.67% 本 session；`free_pin_tight`/`free_gm_pin` 為全池 LOO 前二，case 95 n=116→**1.1967**、98 n=119→**1.3323**；OS16 仍不可剪、牆結構性；~9.2s clean）。
+M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored cluster 1.7045 → M6-8 portfolio(7→13) 1.5659 → M9 wire refinement 1.5375 → **M10 %.17g 精度修正 + compaction 1.4528** → M11 迭代 compaction 1.4502 → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14 HPWL push(free single) 1.4253 → M15 boundary-axis slide 1.4236 → M16 same-size swap 1.4231 → M17 WIRE_TIEBREAK 1.4202 → M18 WIRE_BFS 1.4138 → M19 BFS_PIN 1.4105 → M20 ORDER_SWAP 1.4080 → M21 OS 組合(K=16) 1.3998 → M22 OS16 移植 1.3987 → M23 ORDER_MOVE 1.3983 → **M24 HPWL jump(跨障礙) 1.3862** → M25 池審計剪枝(56→38, runtime -27%, 分數不變) → **M26 GUIDE_MED(39-prof) 1.3843** → M27 global-packer 探測 = 死路 → M28 reconstruction 天花板 probe（GREEN）→ M29 tree decoder 拆解（X=B\*-tree 100% 精確）+ 從零 builder = 死路 → **M29 per-block free-aspect ship（base+wire+GM+tight 共 4 profile，43-prof）1.3787**（M26 以來首個動分數 lever，−0.41%，攻動 n=118 大 case；10.16s） → **M30 free+PIN combo family（剪 9、加 4 free，38-prof）1.3694**（−0.67% 本 session；`free_pin_tight`/`free_gm_pin` 為全池 LOO 前二，case 95 n=116→**1.1967**、98 n=119→**1.3323**；OS16 仍不可剪、牆結構性；~9.2s clean）→ M31 aspect-ratio + proxy/_RH 雙軸再探=死路（分數不變 1.3694）→ **M32 decoupled boundary-aspect（高 LR + TB 留 default 0.40；加 4 解耦、剪 3 冗餘，39-prof）1.3667**（−0.20% 本 session；硬案 85 n=106 1.6091→**1.5364**(LR4.5)、71 n=92→**1.2760**(LR3.0)；per-block FREE_BOUNDARY=0.000% 死路 → boundary-aspect win 須 UNIFORM profile 非 per-block；est_wall 8.03s、feasible 100/100）。
 
 ## 🔑 戰略結論：packer/order lever 枯竭，但 aspect lever M29 重開（M26-M29）
 
@@ -89,7 +89,29 @@ M28「headroom 全在 quality」+ M29「原圖 X=B\*-tree、用非方形 aspect�
   3. **round-2 審計再剪 4（被 free 強版蓋過、score-neutral）**：`anc_lo`/`area_lean`/`tight_wire`/`wtb_wire`（標 `[M30r2-pruned]`）。
   - **飽和訊號（停手點）**：r3 全合併 `free+GM+PIN+tight` 僅 **+0.006%** → free+PIN family 榨乾。`free+tall`（只贏 89、與 PIN 重疊）、`free+narrow`（0%）已死。
   - ~~**proxy 滑移觀察（潛在未來 lever）**~~：**M31 證偽**——「case 95 選 1.2400 vs pool 1.2329」是 M30 中間態，最終池 `free_pin_tight` 已把 95 拉到 1.1967 且 proxy 正選 → 38-prof oracle-min==proxy(_RH=1.4)==1.3694，選擇器完美、零 headroom（見死路 ledger）。
-- **剩餘 free-aspect 方向**：① ~~finer/wider `FREE_RATIOS`~~ **M31 死路**（9-wide 整池 oracle 僅 −0.044% 且抬牆 max 29.6s，見死路 ledger）；② 延伸 free-aspect 到 cluster 成員 / boundary 塊（現只 interior single，**唯一未試**）—最大 code 改動、最後做，boundary 塊要與 LR/TB_ASPECT 互動測試，且同會抬牆需先確認 runtime 預算。
+- **M32 SHIPPED（2026-06-19）：1.3694→1.3667（−0.20% 本 session）、est_wall 8.03s、100/100、39-prof**。lever = **decoupled UNIFORM boundary aspect**（既有 `ICCAD_LR_ASPECT`/`ICCAD_TB_ASPECT` 旋鈕，零 C++ code）。三步：
+  1. **Phase 0 pre-probe（`profile_vs_portfolio`，全域 LR/TB sweep）**：既有 `aspect_*` profile 全把高 LR 配低 TB（兩軸一起壓），漏掉 TB 想留 default 0.40 的案。解耦掃出 **LR=4.5 +0.186%**（硬案 85 n=106 1.6091→**1.5364**，共振非單調：3.5→0.101%、4.0→0.009%、4.5→0.186%、5.0→0.014%）、LR=3.0（case 71→1.2760）、TB=0.8（49）、TB=0.667（67/52）。
+  2. **加 4 解耦 profile（`{LR:4.5}`/`{LR:3.0}`/`{TB:0.8}`/`{TB:0.667}`，全 keeper wins>0∧LOO>0）+ 審計剪 3 被吸收的 coupled profile（`tall_asp5_wire`/`wtb_tall_wire`/`bfs_tall_wire`，標 `[M32-pruned]`，score-neutral）**。
+  3. **飽和訊號（停手點）**：stack/fine-ratio（LR4.5+wire、LR4.6、TB0.8+wire…）全 <0.05% bar；boundary-aspect lever 榨乾。
+- ❌ **per-block FREE_BOUNDARY = 死路（M32，0.000% oracle-min）**：greedy 局部 area 項偏好窄塊（寬 LR 塊右擴大 bbox）→ 與 edge-capacity 需要的「統一變扁」反向 → win 須 **UNIFORM**（profile 級）aspect，非 per-block。code 已 revert（見死路 ledger）。
+- **剩餘 free-aspect 方向**：① ~~finer/wider `FREE_RATIOS`~~ **M31 死路**；② ~~boundary per-block~~ **M32 死路**（uniform 版已 ship）；③ **cluster 成員 = 唯一未試**（↓ 下節 NEXT SESSION 詳述）。
+
+### 📋 NEXT SESSION 計畫：cluster-member free-aspect（M32 後唯一剩餘 in-env lever）
+
+**動機**：interior single free-aspect（M29）成功、boundary 解耦 uniform（M32）成功；唯一沒碰 = **cluster 成員形狀**。cluster build（純 movable→複合 item，3 ordering×5 layout）目前用 `apply_safe_mib_dims`/`default_soft_dim` 給成員方形/固定 dims，**從未搜過成員 aspect**。
+
+**⚠️ 期望值先驗（M32 後下修，但未死）**：
+- per-block boundary free-aspect 剛死（M32：greedy 局部 area 與 edge-capacity 反向）→ per-member greedy 有**同類風險**。**但** cluster 成員 aspect 是「複合內部 packing」的**局部**收益（較像成功的 interior，非失敗 boundary 的下游 uniform 效應）→ 不必然死。
+- 「cluster 無 slack（100 案僅 1 個能動）」是針對**事後平移**；**build 時定 aspect 是不同軸**（複合未固定前重塑），未必受限。
+- 最大 code 改動；free-search ∝ n，**先確認 est_wall <11s**（M31 抬牆教訓）。
+
+**probe-first 步驟**：
+1. **加全域 `ICCAD_CLUSTER_ASPECT` 粗旋鈕（~10 行，pre-probe 用）**：mirror `SOFT_ASPECT`（constructive.cpp:87-89）。在純 movable cluster 成員的 dims 指派處（`solve()` 內 `blocks[i].cluster>0 && !MIB` 分支，constructive.cpp:1185 附近）套 aspect r（w=√(A·r), h=A/w），預設 1.0=方形=**bit-identical**；env parse 在 line ~1517。
+2. **sweep pre-probe**：`profile_vs_portfolio.py ICCAD_CLUSTER_ASPECT=r`（r∈{0.6,0.8,1.25,1.5,2.0}）。任一 >0.05% oracle-min → 有 headroom 進 step 3；全 <0.05% → **ledger「cluster uniform aspect 死」收工**（如同 M32 boundary 用 uniform 解、per-block 死的反面，這裡先測 uniform）。
+3. **若 uniform 有 headroom**：①最簡 = 直接加幾個 `ICCAD_CLUSTER_ASPECT` profile 進 portfolio（如 M32 boundary 的解法，零額外 code）。②再試 per-member 搜尋（gated `ICCAD_FREE_CLUSTER`，自包含、預設 bit-identical，mirror M29 FREE_ASPECT 結構 constructive.cpp:552-602），**scoring 用 cluster layout-key 非純 greedy-area**（避開 boundary 失敗模式）。
+4. **整合**：>0.05% 才加；`profile_audit.py` 確認 est_wall <11s + 剪被吸收 profile；全 eval 確認 feasible 100/100、score。
+5. **死路出口**：pre-probe 全 <0.05% → cluster aspect 軸死 → free-aspect 三軸（ratio/boundary/cluster）全封 → 回 RED reconstruction（已知重寫 placer，見上）或收束本題。
+- **關鍵檔案**：`constructive.cpp`（cluster 成員 dims:1185 + cluster build layout 迴圈 + env parse:1517）、`optimizer_constructive.py`（profile）、`profile_vs_portfolio.py`/`profile_audit.py`（測試）。
 
 ### 3. 精度 / 數值（持續遵守）
 任何新加的、會被 shapely 評分的幾何輸出都要保持精確 abutment + `%.17g`（見 Gotchas）。
@@ -102,7 +124,8 @@ M28「headroom 全在 quality」+ M29「原圖 X=B\*-tree、用非方形 aspect�
 - **violating boundary 修復**：202 violating = 123 cluster + 45 preplaced + **34 single 全 BLOCKED** → 真值 0 個可修（`dbg_vio_stats.py`）。**residual vBd 只能靠 packing 階段擺對**
 - **per-frame compaction + csc 重估 frame**：csc 固定 hw 跨 outline 失準（拿 vCl 換 vBd），單 base 退步；跨 layout 選擇是 wrapper shapely proxy 的工作
 - **reframe**（compact 後實測 bbox seed frame 重跑，`ICCAD_REFRAME`）：base frame loop 已挑最佳 aspect，pass2 複製 pass1；與 portfolio aspect 多樣性結構性冗餘（code 保留 gated off）
-- **env knob 軸**：WIRE_MULT 4/6、LR+W、ANCHOR 0.30、ultra-narrow frame、WT/BFS/NORM/PIN knob 組合、CLUSTER_ORD、OM×tight — 全 ≤0.063%
+- **env knob 軸**：WIRE_MULT 4/6、LR+W、ANCHOR 0.30、ultra-narrow frame、WT/BFS/NORM/PIN knob 組合、CLUSTER_ORD、OM×tight — 全 ≤0.063%（⚠️ **M32 例外**：「LR+W ≤0.063%」是因把 LR 綁 W / 低 TB；**pure decoupled LR**（高 LR + TB 留 default 0.40）一直沒試 → LR=4.5 +0.186% 攻硬案 85，已 ship）
+- **per-block boundary free-aspect（`ICCAD_FREE_BOUNDARY`，M32）**：0.000% oracle-min。greedy 局部 score 的 area 項偏好窄塊（寬 LR 塊往內擴 bbox）→ 與 edge-capacity 要的「統一變扁」**反向**、per-block 主動選錯 aspect ⇒ boundary-aspect win 結構性須 **UNIFORM**（profile 級設定），per-block 死。code 已 revert（0.000% 不留 dead code）。uniform decoupled 版 = M32 SHIPPED
 - **OS K>16 / OM K 組合**：K=16 飽和（高權重案 jump 紅利已拿光），更大 K 只撿中型案渣且 runtime 不划算
 - **compaction 方向偏好 / pack 向 connectivity 重心**：compact_layout 已對稱試 4 單向+8 兩步組合由 csc 仲裁（方向偏好是嚴格子集）；wire 項已是 placed+guide 動態重心
 - **runtime 候補 om16/os24/os32**：M24 jump 吃掉賣點（96/66/89 headline 已被超越），自身 wall 主導每案 → 懲罰比永遠不划算

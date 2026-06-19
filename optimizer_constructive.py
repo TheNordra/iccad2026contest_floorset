@@ -78,6 +78,20 @@ _PROFILES: List[Dict[str, str]] = [
     # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_WIRE_MULT": "0.5", "ICCAD_ANCHOR_W": "0.20"},  # area_lean
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286"},                   # aspect_hi
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},                    # aspect_xhi
+    # M32 (2026-06-19): DECOUPLED boundary aspect — high LR with TB left at the
+    # DEFAULT 0.40. The coupled aspect_* profiles above always pair a high LR with a
+    # low TB, which over-squishes the TOP/BOTTOM blocks and misses cases whose TB
+    # blocks want to stay near 0.40. profile_vs_portfolio oracle-min vs the 38-prof
+    # pool: LR=4.5 alone +0.186% (hard case 85 n=106 1.6091->1.5364 + 71/43); LR=3.0
+    # owns case 71 (->1.2760); TB=0.8 +0.029% (case 49 ->1.6144); TB=0.667 (67/52).
+    # NOTE: per-block FREE_BOUNDARY aspect SEARCH was DEAD (0.000%) — the greedy local
+    # area term avoids the wide LR shape that edge-capacity needs, so the win requires
+    # a UNIFORM (profile-level) aspect, not a per-block one. Cheap (no free/OS search)
+    # -> wall-safe; downside-protected by the proxy.
+    {"ICCAD_LR_ASPECT": "4.5"},                                               # lr45 (M32: hard case 85 + 71/43)
+    {"ICCAD_LR_ASPECT": "3.0"},                                               # lr30 (M32: case 71 ->1.2760)
+    {"ICCAD_TB_ASPECT": "0.8"},                                               # tb08 (M32: case 49)
+    {"ICCAD_TB_ASPECT": "0.667"},                                             # tb0667 (M32: case 67/52)
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},                   # aspect_v7
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},                 # aspect_v10  [M25-pruned]
@@ -100,7 +114,7 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp5_all
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10", "ICCAD_WIRE_MULT": "3.0"},  # asp10_wirex3  [M25-pruned]
     # {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp7_all  [M25-pruned]
-    {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp5_wire
+    # [M32-pruned: 0 wins, LOO 0; subsumed by decoupled lr45/lr30] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp5_wire
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp7_wire  [M25-pruned]
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04"},   # tall_asp5_anc  [M25-pruned]
     {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04"},  # tall_asp7_anc
@@ -127,7 +141,7 @@ _PROFILES: List[Dict[str, str]] = [
     # highest-weight case 98 (1.4502->1.4413) + 63. Other combos (narrow/LR5/W3)
     # were dominated by these two and are not worth the runtime.
     # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},             # wtb_wire
-    {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"}, # wtb_tall_wire
+    # [M32-pruned: 0 wins, LOO 0; subsumed by decoupled lr45/lr30] {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"}, # wtb_tall_wire
     # M18: WIRE_BFS pack-order axis — bscore classes intact, but inside each class
     # items are emitted greedily by largest edge weight into the already-ordered
     # set + preplaced blocks (BFS over the connectivity graph), so the greedy wire
@@ -137,7 +151,7 @@ _PROFILES: List[Dict[str, str]] = [
     # with ZERO overlap (79 1.597->1.525, 86/74/97/89). wtb_tall_anc adds the
     # otherwise-uncovered case 87 (+0.071%). Plain BFS/BFS+narrow were dominated.
     {"ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                      # bfs_wt_wire
-    {"ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_WIRE_MULT": "2.0"},      # bfs_tall_wire
+    # [M32-pruned: 0 wins, LOO 0; subsumed by decoupled lr45/lr30] {"ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_WIRE_MULT": "2.0"},      # bfs_tall_wire
     # {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_ANCHOR_W": "0.04"}, # wtb_tall_anc  [M25-pruned] (case 87 superseded since M18)
     # M19: BFS_PIN seeds the BFS attachment with p2b pin weights too (pins are
     # fixed anchors exactly like preplaced blocks). bfs_pin_wt_wire +0.269%
