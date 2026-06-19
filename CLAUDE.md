@@ -88,8 +88,8 @@ M28「headroom 全在 quality」+ M29「原圖 X=B\*-tree、用非方形 aspect�
   2. **加 4 個 wall-safe free combo（`profile_vs_portfolio.py`，>0.05% 才加）**：r1 `free_pin_wt_wire`（+0.233%，case 98/95/89）、`free_gm_tight_wire`（+0.134%，case 95/65/40）；r2 `free_pin_tight_wire`（+0.405% 增量，case 95 n=116 **1.2400→1.1967**、73/87）、`free_gm_pin_wt_wire`（+0.284%，case 98 n=119 **1.3704→1.3323**）。**r2 兩個是全池 LOO 前二（+0.0041/+0.0028）**。皆單趟 packing ~9s max → 藏 OS16 天花板下、牆-安全。
   3. **round-2 審計再剪 4（被 free 強版蓋過、score-neutral）**：`anc_lo`/`area_lean`/`tight_wire`/`wtb_wire`（標 `[M30r2-pruned]`）。
   - **飽和訊號（停手點）**：r3 全合併 `free+GM+PIN+tight` 僅 **+0.006%** → free+PIN family 榨乾。`free+tall`（只贏 89、與 PIN 重疊）、`free+narrow`（0%）已死。
-  - **proxy 滑移觀察（潛在未來 lever）**：case 95 portfolio 一度選 1.2400，但 pool 內 `free_gm_tight` 其實能做 1.2329 → 現有 profile set 仍有未 realize 的 headroom（**proxy 選擇/_RH 可調**），屬另一條軸，本 session 未碰。
-- **剩餘 free-aspect 方向（未做，依 ROI；皆會抬牆，需先確認 runtime 預算）**：① finer/wider `FREE_RATIOS`（補 2.5/0.4 或 1.25/0.8）—改 `constructive.cpp:91` 重編後 A/B；② 延伸 free-aspect 到 cluster 成員 / boundary 塊（現只 interior single）—最大 code 改動，最後做，boundary 塊要與 LR/TB_ASPECT 互動測試。
+  - ~~**proxy 滑移觀察（潛在未來 lever）**~~：**M31 證偽**——「case 95 選 1.2400 vs pool 1.2329」是 M30 中間態，最終池 `free_pin_tight` 已把 95 拉到 1.1967 且 proxy 正選 → 38-prof oracle-min==proxy(_RH=1.4)==1.3694，選擇器完美、零 headroom（見死路 ledger）。
+- **剩餘 free-aspect 方向**：① ~~finer/wider `FREE_RATIOS`~~ **M31 死路**（9-wide 整池 oracle 僅 −0.044% 且抬牆 max 29.6s，見死路 ledger）；② 延伸 free-aspect 到 cluster 成員 / boundary 塊（現只 interior single，**唯一未試**）—最大 code 改動、最後做，boundary 塊要與 LR/TB_ASPECT 互動測試，且同會抬牆需先確認 runtime 預算。
 
 ### 3. 精度 / 數值（持續遵守）
 任何新加的、會被 shapely 評分的幾何輸出都要保持精確 abutment + `%.17g`（見 Gotchas）。
@@ -110,6 +110,8 @@ M28「headroom 全在 quality」+ M29「原圖 X=B\*-tree、用非方形 aspect�
 - **試更多 frame**：all-frames → 2.42（layout_score 150000·bv 在大池 overshoot）。4-5 frame 最佳
 - **wire ×50000** → 1.93 反彈；**wire_order**（wire 當第一鍵）→ vBd 390
 - **ML：shape / perm ranking**：oracle 上限實驗 = BL packer 是天花板（perm+SA 3.27、shape only 3.42）→ 都被 placer 架構 cap 住
+- **FREE_RATIOS 加寬**（M31，2026-06-19）：補 2.5/0.4+1.25/0.8（9-wide）→ 整池 oracle 僅 **−0.044%**（1.3694→1.3688）；單 profile `profile_vs_portfolio` 探針亮眼（free_pin_tight +0.31%、free_gm_pin +0.086% 含 hard case 66 1.3936→1.3429）但**幾乎全是與其他 7 個 free profile 的重疊**（rh_sweep 整池 oracle 才是真相）。且抬牆 max 21→**29.63s**（6 案>21s 超 OS16），score 增益與 runtime 全集中在 n>110 大案（free 搜尋 ∝ n²）→ **結構耦合不可解**。7-ratio 子集更小且仍抬牆 → 全軸死。proxy 在 wide 池仍完美（1.3689 vs oracle 1.3688）
+- **proxy/_RH 選擇**（M31 再確認）：38-prof 池 oracle-min==proxy(_RH=1.4)==**1.3694**，選擇器零漏分（M30「case 95 滑移」是中間態，已被最終池 `free_pin_tight` 修正 95→1.1967）→ _RH 非 live lever，要降分須降 oracle 本身（剩 cluster/boundary free-aspect 或 RED reconstruction）
 
 ## 殘留 case（純 optimization 已榨乾）
 89 **1.7936**（最高，preplaced boundary 撐壞 outline）、85 1.6091、62 1.5227、88 1.4354、79 1.4121、87 1.3505、91 1.3481、66 1.3981。硬 case（89/85/62）= preplaced boundary 幾何強迫，需 packer pack tight（M13+M27 證實非 packer 能解）。
