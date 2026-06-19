@@ -89,6 +89,9 @@ static double SOFT_ASPECT = 1.0; // M29 free-aspect: w/h for INTERIOR (code==0) 
 static int FREE_ASPECT = 0;      // M29 ICCAD_FREE_ASPECT>0: per-block aspect SEARCH for
                                  // single interior movable blocks (0=off=unchanged)
 static const vector<double> FREE_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // w/h tried
+static double CLUSTER_ASPECT = 1.0; // M33 ICCAD_CLUSTER_ASPECT: w/h for pure-movable
+                                    // INTERIOR cluster members (1.0 = square = unchanged)
+static int FREE_CLUSTER = 0;        // M33 ICCAD_FREE_CLUSTER>0: per-member aspect SEARCH
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
@@ -1185,6 +1188,15 @@ static void solve() {
         else dims[i]=default_soft_dim(blocks[i].area, blocks[i].boundary);
     }
     apply_safe_mib_dims();
+    // M33 cluster-member uniform aspect: reshape pure-movable INTERIOR cluster members
+    // before make_group_item reads dims. boundary!=0 keep their LR/TB aspect; mib!=0 keep
+    // the unified shape. Default 1.0 -> skipped -> bit-identical.
+    if (CLUSTER_ASPECT != 1.0)
+        for (int i=0;i<N;i++)
+            if (blocks[i].cluster>0 && blocks[i].mib==0 && blocks[i].boundary==0
+                && !blocks[i].is_preplaced && !blocks[i].is_fixed && blocks[i].area>0){
+                double A=blocks[i].area, w=sqrt(A*CLUSTER_ASPECT); dims[i]={w, A/w};
+            }
     estimate_anchors();
 
     b2b_adj.assign(N,{}); p2b_adj.assign(N,{});
@@ -1515,6 +1527,8 @@ int main() {
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
     if (const char* e=getenv("ICCAD_SOFT_ASPECT")){ double v=atof(e); if (v>0) SOFT_ASPECT=v; }
     if (const char* e=getenv("ICCAD_FREE_ASPECT")){ int v=atoi(e); if (v>0) FREE_ASPECT=v; }
+    if (const char* e=getenv("ICCAD_CLUSTER_ASPECT")){ double v=atof(e); if (v>0) CLUSTER_ASPECT=v; }
+    if (const char* e=getenv("ICCAD_FREE_CLUSTER")){ int v=atoi(e); if (v>0) FREE_CLUSTER=v; }
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;

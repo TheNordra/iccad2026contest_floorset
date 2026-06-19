@@ -64,7 +64,7 @@ _BIN = Path(os.environ.get("ICCAD_CONSTRUCTIVE_BIN", str(_DIR / "constructive.ex
 # per-case wall is dominated by the OS16 profiles' own runtime (max term), so
 # pruning cheap knob profiles trims total CPU/contention, not the wall model.
 _PROFILES: List[Dict[str, str]] = [
-    {},                                                                       # base
+    # [M33-pruned: 0 wins, LOO 0; cluster/free stacks dominate the empty base] {},  # base
     {"ICCAD_FREE_ASPECT": "1"},                                               # free_aspect (M29: per-block interior-single aspect search; wins n=118/97/82 large cases)
     {"ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_MULT": "2.0"},                     # free_aspect_wire
     {"ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # free_gm_wt_wire (M29: +0.159% over 1.3814)
@@ -92,23 +92,54 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_LR_ASPECT": "3.0"},                                               # lr30 (M32: case 71 ->1.2760)
     {"ICCAD_TB_ASPECT": "0.8"},                                               # tb08 (M32: case 49)
     {"ICCAD_TB_ASPECT": "0.667"},                                             # tb0667 (M32: case 67/52)
-    {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
+    # M33 (2026-06-19): cluster-member UNIFORM aspect — reshape pure-movable INTERIOR
+    # cluster members to a fixed w/h before make_group_item packs the compound, attacking
+    # cases whose cluster-internal packing wants non-square members. profile_vs_portfolio
+    # oracle-min vs the 39-prof pool: ca2.0 +0.139% (case 85 n=106 1.5364->1.5096 + 59/64),
+    # ca0.6 +0.094% (case 96 n=117 1.3112->1.3005), ca1.25 +0.063% (case 82 n=103 ->1.4197).
+    # Complementary on distinct high-weight cases (85/96/82). Cheap (no search) -> wall-safe.
+    {"ICCAD_CLUSTER_ASPECT": "2.0"},                                          # ca_wide (M33: case 85 + 59/64/89)
+    {"ICCAD_CLUSTER_ASPECT": "0.6"},                                          # ca_tall (M33: case 96 n=117)
+    {"ICCAD_CLUSTER_ASPECT": "1.25"},                                         # ca_125 (M33: case 82 n=103)
+    # M33 r2: stack cluster-aspect with the free_pin order family — cluster reshape +
+    # interior-single free aspect + PIN-seeded BFS order + wire compounds like M30's
+    # free_pin (+0.327% incr over the 42-prof pool). FREE_ASPECT adds per-block search
+    # (~n) but stays under the OS16 wall -> verify est_wall via profile_audit.
+    {"ICCAD_CLUSTER_ASPECT": "2.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # ca_free_pin_wt_wire (M33 r2: +0.327%)
+    {"ICCAD_CLUSTER_ASPECT": "0.6", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # ca_tall_free_pin_wt_wire (M33 r3: +0.226% incr over the wide stack; tall members complement wide on distinct cases)
+    # M33 r4: tight-frame + GM variants of the cluster stacks (mirrors M30's free_pin_tight
+    # being the dominant single + free_gm_pin the complement). Tight frame = fewer/tighter
+    # scales -> not slower (~9s max, wall-safe). wide-tight is the biggest single (+0.582%).
+    {"ICCAD_CLUSTER_ASPECT": "2.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # ca_free_pin_tight_wire (M33 r4: +0.582% incr; wide members + tight frame)
+    {"ICCAD_CLUSTER_ASPECT": "0.6", "ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # ca_tall_free_gm_pin_wt_wire (M33 r4: +0.157% incr; tall members + GM seed, complements wide-tight)
+    # M33 r5: WIDER cluster ratios in the tight-stack context are far stronger than the
+    # uniform-sweep 2.0 cap suggested (stacking with tight+free+pin AMPLIFIES the aspect
+    # effect). ca3.0 is a sharp resonant peak (+1.105% incr; 3.5/4.0/5.0 only 0.3-0.4%):
+    # concentrated on the highest-weight large cases — 89 n=110 1.7292->1.6142, 98 n=119,
+    # 90 n=111, 87 n=108. ca0.4 extreme-tall (+0.253%) complements on distinct cases.
+    {"ICCAD_CLUSTER_ASPECT": "3.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # ca3_free_pin_tight_wire (M33 r5: +1.105% incr; wide 3:1 members crack case 89/98/90/87)
+    {"ICCAD_CLUSTER_ASPECT": "0.4", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # ca_xtall_free_pin_tight_wire (M33 r5: +0.253% incr; extreme-tall members)
+    # M33 r6: GM-seed variant of the dominant ca3.0 stack — GM median-seed hits different
+    # cases than PIN order (like M30's free_gm_pin vs free_pin), +0.173% incr. Saturation:
+    # adjacent ratios (2.5/3.25/0.33) were <0.12% and overlap ca3.0/ca0.4 -> stopped here.
+    {"ICCAD_CLUSTER_ASPECT": "3.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # ca3_free_gm_pin_tight_wire (M33 r6: +0.173% incr; GM complements PIN on ca3.0)
+    # [M33-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},                   # aspect_v7
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},                 # aspect_v10  [M25-pruned]
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},  # asp7_wire
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04"},   # asp5_anclo
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"},                           # frame_tall  [M25-pruned] (its combos below carry the axis)
-    {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20"},                            # frame_tight
-    {"ICCAD_FRAME_SCALES": "1.04,1.07,1.10,1.13,1.16,1.35,1.65,2.10"},        # frame_fine
+    # [M33-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20"},  # frame_tight
+    # [M33-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_SCALES": "1.04,1.07,1.10,1.13,1.16,1.35,1.65,2.10"},  # frame_fine
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10", "ICCAD_WIRE_MULT": "2.0"},  # asp10_wire  [M25-pruned]
-    {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},  # tall_asp5
+    # [M33-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},  # tall_asp5
     # {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_WIRE_MULT": "2.0"},   # asp5_wire  [M25-pruned]
-    {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_WIRE_MULT": "2.0"},            # tall_wire
+    # [M33-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_WIRE_MULT": "2.0"},  # tall_wire
     # {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04"},  # asp7_anclo  [M25-pruned]
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_ANCHOR_W": "0.04"},  # asp_anclo
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},  # tall_asp7  [M25-pruned]
     # {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},   # tight_asp5  [M25-pruned]
-    {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "3.0"},  # asp7_wirex3
+    # [M33-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "3.0"},  # asp7_wirex3
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},  # tall_asp10  [M25-pruned]
     # [M30-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_ANCHOR_W": "0.04"},  # tall_anclo
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp5_all
@@ -128,7 +159,7 @@ _PROFILES: List[Dict[str, str]] = [
     # horizontal dead space (dbg_area: w/wb~1.3-1.5, h/hb~1.0 -> we pack too wide).
     # Wins the highest-weight cases 98 (n=119) and 87 that frame_tall (0.67-0.33)
     # didn't reach. Downside-protected by the proxy.
-    {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28"},                                                     # narrow
+    # [M33-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28"},  # narrow
     # [M30-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_WIRE_MULT": "2.0", "ICCAD_ANCHOR_W": "0.04"}, # narrow_wire_anc
     # {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_WIRE_MULT": "2.0"},                         # narrow_wire  [M25-pruned]
     # {"ICCAD_FRAME_ASPECTS": "0.55,0.45,0.35,0.28", "ICCAD_ANCHOR_W": "0.04"},                         # narrow_anc  [M25-pruned]
@@ -150,7 +181,7 @@ _PROFILES: List[Dict[str, str]] = [
     # highest-weight case 98 1.4413->1.4221 plus 95/91/50); bfs_tall_wire +0.251%
     # with ZERO overlap (79 1.597->1.525, 86/74/97/89). wtb_tall_anc adds the
     # otherwise-uncovered case 87 (+0.071%). Plain BFS/BFS+narrow were dominated.
-    {"ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},                      # bfs_wt_wire
+    # [M33-pruned: 0 wins, LOO 0; subsumed by the cluster+free+pin stacks] {"ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # bfs_wt_wire
     # [M32-pruned: 0 wins, LOO 0; subsumed by decoupled lr45/lr30] {"ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_WIRE_MULT": "2.0"},      # bfs_tall_wire
     # {"ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_ANCHOR_W": "0.04"}, # wtb_tall_anc  [M25-pruned] (case 87 superseded since M18)
     # M19: BFS_PIN seeds the BFS attachment with p2b pin weights too (pins are
@@ -158,7 +189,7 @@ _PROFILES: List[Dict[str, str]] = [
     # oracle-min: re-breaks case 95 (1.2995->1.2767) and takes 94 (1.3656->1.3411)
     # + 64. bfs_tight_wire +0.061%: case 91 (1.3848->1.3712, untouched by PIN)
     # + small-n cases. BFS+anc/PIN+W2/PIN+tall were dominated by these two.
-    {"ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # bfs_pin_wt_wire
+    # [M33-pruned: 0 wins, LOO 0; subsumed by the cluster+free+pin stacks] {"ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # bfs_pin_wt_wire
     {"ICCAD_WIRE_BFS": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},       # bfs_tight_wire
     # M20: ORDER_SWAP=K — before refinement, greedy pair-swap hill-climb on the
     # pack order over the top-K total_wire items (pack-once comparisons, strict
