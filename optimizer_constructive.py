@@ -77,7 +77,7 @@ _PROFILES: List[Dict[str, str]] = [
     # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_ANCHOR_W": "0.04"},               # anc_lo
     # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_WIRE_MULT": "0.5", "ICCAD_ANCHOR_W": "0.20"},  # area_lean
     {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286"},                   # aspect_hi
-    {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},                    # aspect_xhi
+    # [M34-pruned: 0 wins, LOO 0; per-member FREE_CLUSTER wide ratios reach its hard cases] {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20"},  # aspect_xhi
     # M32 (2026-06-19): DECOUPLED boundary aspect — high LR with TB left at the
     # DEFAULT 0.40. The coupled aspect_* profiles above always pair a high LR with a
     # low TB, which over-squishes the TOP/BOTTOM blocks and misses cases whose TB
@@ -89,7 +89,7 @@ _PROFILES: List[Dict[str, str]] = [
     # a UNIFORM (profile-level) aspect, not a per-block one. Cheap (no free/OS search)
     # -> wall-safe; downside-protected by the proxy.
     {"ICCAD_LR_ASPECT": "4.5"},                                               # lr45 (M32: hard case 85 + 71/43)
-    {"ICCAD_LR_ASPECT": "3.0"},                                               # lr30 (M32: case 71 ->1.2760)
+    # [M34-pruned: 0 wins, LOO 0; case 71 now won by fc_pin_tight ->1.2508] {"ICCAD_LR_ASPECT": "3.0"},  # lr30 (M32: case 71 ->1.2760)
     {"ICCAD_TB_ASPECT": "0.8"},                                               # tb08 (M32: case 49)
     {"ICCAD_TB_ASPECT": "0.667"},                                             # tb0667 (M32: case 67/52)
     # M33 (2026-06-19): cluster-member UNIFORM aspect — reshape pure-movable INTERIOR
@@ -123,10 +123,24 @@ _PROFILES: List[Dict[str, str]] = [
     # cases than PIN order (like M30's free_gm_pin vs free_pin), +0.173% incr. Saturation:
     # adjacent ratios (2.5/3.25/0.33) were <0.12% and overlap ca3.0/ca0.4 -> stopped here.
     {"ICCAD_CLUSTER_ASPECT": "3.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # ca3_free_gm_pin_tight_wire (M33 r6: +0.173% incr; GM complements PIN on ca3.0)
+    # M34 (2026-06-20): PER-MEMBER cluster free-aspect (ICCAD_FREE_CLUSTER) — search EACH
+    # pure-movable interior cluster member's aspect independently in make_group_item,
+    # arbitrated by the cluster layout-key (fragments,boundary_bad,area,aspect), instead of
+    # M33's single UNIFORM ratio per profile. The search is build-time (once per solve, not
+    # per-frame like FREE_ASPECT) -> widening the ratio set is wall-free, so it runs WIDE
+    # (0.333..4.0) and lets different members of one cluster go tall AND wide in a single
+    # profile. Per-member BEATS uniform on the hard high-weight cases: profile_vs_portfolio
+    # oracle-min vs the 39-prof M33 pool — PIN variant +0.466% (case 82 n=103 1.4197->1.3633,
+    # 89 n=110 1.5954->1.5640 [long-standing worst], 88/79/66), GM-seed variant +0.414%
+    # (case 80 n=101 1.4895->1.4024, 83/92/70 — complements PIN like M30's free_gm_pin).
+    # Top ratio 4.0 is the resonance (5.0 regressed +0.466->+0.367%). One per-member profile
+    # subsumes M33's separate ca3.0/ca0.4 uniform tall/wide profiles (search picks per member).
+    {"ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_pin_tight (M34: +0.466%; per-member aspect, cracks 89/88/82/79/66)
+    {"ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_gm_pin_tight (M34: +0.414%; GM-seed complement, owns 80/83/92/70)
     # [M33-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},                   # aspect_v7
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},                 # aspect_v10  [M25-pruned]
-    {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},  # asp7_wire
+    # [M34-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},  # asp7_wire
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04"},   # asp5_anclo
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33"},                           # frame_tall  [M25-pruned] (its combos below carry the axis)
     # [M33-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20"},  # frame_tight
@@ -142,7 +156,7 @@ _PROFILES: List[Dict[str, str]] = [
     # [M33-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "3.0"},  # asp7_wirex3
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},  # tall_asp10  [M25-pruned]
     # [M30-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_ANCHOR_W": "0.04"},  # tall_anclo
-    {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp5_all
+    # [M34-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp5_all
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10", "ICCAD_WIRE_MULT": "3.0"},  # asp10_wirex3  [M25-pruned]
     # {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # asp7_all  [M25-pruned]
     # [M32-pruned: 0 wins, LOO 0; subsumed by decoupled lr45/lr30] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp5_wire

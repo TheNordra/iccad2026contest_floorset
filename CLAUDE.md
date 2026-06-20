@@ -10,7 +10,7 @@
 - Cost = `(1 + 0.5·(HPWL_gap + Area_gap)) · exp(2·V_rel)`：gap=0 ∧ V_rel=0 → **Cost=1.0**（理論最小）。我們「找最佳解」永遠 HPWL_gap>0 → Cost>1；還原原圖才能 gap≈0。
 - 真天花板 ~1.1（`fp_sol` verbatim = **1.1079**）。組員 **1.0322 是 oracle**（讀本地 validation label，hidden test 退回 fallback → 不適用）；legit 上限 ~1.62（無 label portfolio）。
 - 訓練資料的 `fp_sol` = ground truth (w,h,x,y)。我們的無監督 loss（只看 HPWL+overlap）完全沒用它 → GNN 學的是「散開短連線」而非「原圖」。組員 v10-v12 各種 ML/clue 也全 <1% → per-block local ML 在這題很弱。
-- **現況：我們 1.3843 已反超組員所有 legit 版本（~14.6%）。所有 optimization lever（knob / 後處理 / order / global-packer）已枯竭 → 唯一剩餘 headroom = reconstruction**（用 connectivity + constraints 反推原佈局），需要的不是更強 optimizer。
+- **現況：我們 1.3325（M34）已反超組員所有 legit 版本（~17.7%）。packer/order lever 自 M26-27 枯竭，但 free-aspect 軸 M29 重開 → ratio/boundary/cluster-uniform/cluster-per-member 全 ship（M29-M34）。剩餘 headroom = reconstruction**（RED，M29 從零 builder 8.22 證偽），需要的是重寫 placer 架構而非更強 optimizer。
 
 ## 評分公式（2026-05-23 確認）
 
@@ -23,7 +23,7 @@
 
 ## 目前狀態
 
-### 🏆 最佳：Total Score = 1.3390（M33 cluster-member aspect, 39-prof, 2026-06-20；est_wall ~7.6s/case, avg 9.43s, 100/100 feasible）
+### 🏆 最佳：Total Score = 1.3325（M34 per-member cluster aspect, 37-prof, 2026-06-20；est_wall 7.54s/case, avg 9.21s, 100/100 feasible）
 
 `constructive.cpp`（C++ 建構式定框 placer，B 路線重寫組員架構）+ `optimizer_constructive.py`（portfolio wrapper）。**確定性**（無 randomness/限時 → run-to-run 一致，可精確 A/B）、100/100 feasible、8.78s/case。**proxy 自 M13 起 = oracle ceiling**（完美選擇，加 profile 全額 realize → selection 不再是瓶頸）。
 
@@ -35,13 +35,13 @@
 5. **後處理**：compaction（M10）→ wire refinement（M9）→ HPWL push/slide/swap/jump（M14-16/24）
 
 ### Portfolio 層
-平行跑 39 deterministic profile（env 旋鈕變體），用 **baseline-free proxy** 選最佳：
+平行跑 37 deterministic profile（env 旋鈕變體），用 **baseline-free proxy** 選最佳：
 - proxy = `(area/Â + _RH·hpwl/hmin)·exp(2·vrel)`，Â=1.035·ΣblockArea，hmin=該 case 各 profile 最小 hpwl，**_RH=1.4**（補償 hmin/hbase≈1.3-1.4 對 hpwl 項的低估）
 - ⚠️ **vrel 必須用 shapely 算**（wrapper `_proxy_metrics`），不可用 C++ union-find（1e-3 tol，34/100 案不一致 → 退到 1.6x）
 - 下檔保護：無用 profile 不被選、不傷分（只花 runtime）
 
 ### 演進里程碑（deterministic A/B；M4 起累計 -38.5%）
-M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored cluster 1.7045 → M6-8 portfolio(7→13) 1.5659 → M9 wire refinement 1.5375 → **M10 %.17g 精度修正 + compaction 1.4528** → M11 迭代 compaction 1.4502 → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14 HPWL push(free single) 1.4253 → M15 boundary-axis slide 1.4236 → M16 same-size swap 1.4231 → M17 WIRE_TIEBREAK 1.4202 → M18 WIRE_BFS 1.4138 → M19 BFS_PIN 1.4105 → M20 ORDER_SWAP 1.4080 → M21 OS 組合(K=16) 1.3998 → M22 OS16 移植 1.3987 → M23 ORDER_MOVE 1.3983 → **M24 HPWL jump(跨障礙) 1.3862** → M25 池審計剪枝(56→38, runtime -27%, 分數不變) → **M26 GUIDE_MED(39-prof) 1.3843** → M27 global-packer 探測 = 死路 → M28 reconstruction 天花板 probe（GREEN）→ M29 tree decoder 拆解（X=B\*-tree 100% 精確）+ 從零 builder = 死路 → **M29 per-block free-aspect ship（base+wire+GM+tight 共 4 profile，43-prof）1.3787**（M26 以來首個動分數 lever，−0.41%，攻動 n=118 大 case；10.16s） → **M30 free+PIN combo family（剪 9、加 4 free，38-prof）1.3694**（−0.67% 本 session；`free_pin_tight`/`free_gm_pin` 為全池 LOO 前二，case 95 n=116→**1.1967**、98 n=119→**1.3323**；OS16 仍不可剪、牆結構性；~9.2s clean）→ M31 aspect-ratio + proxy/_RH 雙軸再探=死路（分數不變 1.3694）→ **M32 decoupled boundary-aspect（高 LR + TB 留 default 0.40；加 4 解耦、剪 3 冗餘，39-prof）1.3667**（−0.20% 本 session；硬案 85 n=106 1.6091→**1.5364**(LR4.5)、71 n=92→**1.2760**(LR3.0)；per-block FREE_BOUNDARY=0.000% 死路 → boundary-aspect win 須 UNIFORM profile 非 per-block；est_wall 8.03s、feasible 100/100）→ **M33 cluster-member aspect（新 `ICCAD_CLUSTER_ASPECT` 旋鈕；6 輪 probe，加 10 cluster profile、剪 10 冗餘含 base，39-prof）1.3390**（**−2.03% 本 session，自早期 constructive 以來最大單 session 增益**；標準 sweep 2.0 僅 +0.14%，但 **ca-ratio stack tight+free+pin 放大效應、最優遠寬**：`ca3.0+free+pin+tight` +1.105%（共振峰、LOO +0.857% 全池最大），破長年最難 case 89 n=110 1.7292→**1.6142** + 98/90/87；est_wall ~7.6s、feasible 100/100；free-aspect 三軸 ratio/boundary/cluster 全 ship）。
+M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored cluster 1.7045 → M6-8 portfolio(7→13) 1.5659 → M9 wire refinement 1.5375 → **M10 %.17g 精度修正 + compaction 1.4528** → M11 迭代 compaction 1.4502 → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14 HPWL push(free single) 1.4253 → M15 boundary-axis slide 1.4236 → M16 same-size swap 1.4231 → M17 WIRE_TIEBREAK 1.4202 → M18 WIRE_BFS 1.4138 → M19 BFS_PIN 1.4105 → M20 ORDER_SWAP 1.4080 → M21 OS 組合(K=16) 1.3998 → M22 OS16 移植 1.3987 → M23 ORDER_MOVE 1.3983 → **M24 HPWL jump(跨障礙) 1.3862** → M25 池審計剪枝(56→38, runtime -27%, 分數不變) → **M26 GUIDE_MED(39-prof) 1.3843** → M27 global-packer 探測 = 死路 → M28 reconstruction 天花板 probe（GREEN）→ M29 tree decoder 拆解（X=B\*-tree 100% 精確）+ 從零 builder = 死路 → **M29 per-block free-aspect ship（base+wire+GM+tight 共 4 profile，43-prof）1.3787**（M26 以來首個動分數 lever，−0.41%，攻動 n=118 大 case；10.16s） → **M30 free+PIN combo family（剪 9、加 4 free，38-prof）1.3694**（−0.67% 本 session；`free_pin_tight`/`free_gm_pin` 為全池 LOO 前二，case 95 n=116→**1.1967**、98 n=119→**1.3323**；OS16 仍不可剪、牆結構性；~9.2s clean）→ M31 aspect-ratio + proxy/_RH 雙軸再探=死路（分數不變 1.3694）→ **M32 decoupled boundary-aspect（高 LR + TB 留 default 0.40；加 4 解耦、剪 3 冗餘，39-prof）1.3667**（−0.20% 本 session；硬案 85 n=106 1.6091→**1.5364**(LR4.5)、71 n=92→**1.2760**(LR3.0)；per-block FREE_BOUNDARY=0.000% 死路 → boundary-aspect win 須 UNIFORM profile 非 per-block；est_wall 8.03s、feasible 100/100）→ **M33 cluster-member aspect（新 `ICCAD_CLUSTER_ASPECT` 旋鈕；6 輪 probe，加 10 cluster profile、剪 10 冗餘含 base，39-prof）1.3390**（**−2.03% 本 session，自早期 constructive 以來最大單 session 增益**；標準 sweep 2.0 僅 +0.14%，但 **ca-ratio stack tight+free+pin 放大效應、最優遠寬**：`ca3.0+free+pin+tight` +1.105%（共振峰、LOO +0.857% 全池最大），破長年最難 case 89 n=110 1.7292→**1.6142** + 98/90/87；est_wall ~7.6s、feasible 100/100；free-aspect 三軸 ratio/boundary/cluster 全 ship）→ **M34 per-member cluster aspect（實作 `ICCAD_FREE_CLUSTER` + `ICCAD_FREE_CLUSTER_RATIOS` 旋鈕；2 互補 profile fc_pin_tight/fc_gm_pin、剪 4 冗餘 LR，37-prof）1.3325**（−0.49% 本 session；per-member 在硬案**勝過 M33 uniform**：最難 case 89 1.5954→**1.5640**、82 1.420→**1.363**、80 1.490→**1.402** + 88/79/66/83/92/70；ratio 共振峰 **4.0**（5.0 退步），**單一 profile 即讓同 cluster 成員異質 tall(0.333)+wide(4.0)**，取代 M33 分開的 ca0.4/ca3.0；2 profile 為全池 LOO 前二（13+6 wins）；est_wall 7.54s、avg 9.21s、feasible 100/100；free-aspect 四子軸 ratio/boundary/cluster-uniform/cluster-per-member 全 ship）。
 
 ## 🔑 戰略結論：packer/order lever 枯竭，但 aspect lever M29 重開（M26-M29）
 
@@ -94,25 +94,20 @@ M28「headroom 全在 quality」+ M29「原圖 X=B\*-tree、用非方形 aspect�
   2. **加 4 解耦 profile（`{LR:4.5}`/`{LR:3.0}`/`{TB:0.8}`/`{TB:0.667}`，全 keeper wins>0∧LOO>0）+ 審計剪 3 被吸收的 coupled profile（`tall_asp5_wire`/`wtb_tall_wire`/`bfs_tall_wire`，標 `[M32-pruned]`，score-neutral）**。
   3. **飽和訊號（停手點）**：stack/fine-ratio（LR4.5+wire、LR4.6、TB0.8+wire…）全 <0.05% bar；boundary-aspect lever 榨乾。
 - ❌ **per-block FREE_BOUNDARY = 死路（M32，0.000% oracle-min）**：greedy 局部 area 項偏好窄塊（寬 LR 塊右擴大 bbox）→ 與 edge-capacity 需要的「統一變扁」反向 → win 須 **UNIFORM**（profile 級）aspect，非 per-block。code 已 revert（見死路 ledger）。
-- **剩餘 free-aspect 方向**：① ~~finer/wider `FREE_RATIOS`~~ **M31 死路**；② ~~boundary per-block~~ **M32 死路**（uniform 版已 ship）；③ **cluster 成員 = 唯一未試**（↓ 下節 NEXT SESSION 詳述）。
+- **剩餘 free-aspect 方向（全部已結案）**：① ~~finer/wider `FREE_RATIOS`~~ **M31 死路**；② ~~boundary per-block~~ **M32 死路**（uniform 版已 ship）；③ ~~cluster 成員 uniform~~ **M33 ship**；④ ~~cluster 成員 per-member~~ **M34 ship**。**free-aspect 軸完全榨乾。**
 
-### ✅ cluster-member free-aspect = M33 SHIPPED（1.3667→1.3390，−2.03%）
+### ✅ cluster-member free-aspect = M33 uniform + M34 per-member SHIPPED（1.3667→1.3390→1.3325）
 
-uniform `ICCAD_CLUSTER_ASPECT` 旋鈕（reshape 純 movable interior cluster 成員）已 ship。**關鍵發現**：standalone sweep 訊號弱（2.0 +0.14%），真正大 win 是 **stack tight+FREE+PIN 把 aspect 放大、最優 ratio 遠寬**——`ca3.0+free+pin+tight` +1.105%（共振峰，LOO +0.857% 全池最大），破最難 case 89。詳見 milestone 行 + memory `[[m33-cluster-aspect]]`。free-aspect 三軸（ratio/boundary/cluster）**全 ship**。
+- **M33 uniform `ICCAD_CLUSTER_ASPECT`**（單一 ratio reshape 全部純 movable interior cluster 成員）：standalone sweep 訊號弱（2.0 +0.14%），真正大 win 是 **stack tight+FREE+PIN 放大、ratio 遠寬**——`ca3.0+free+pin+tight` +1.105%（共振峰，LOO +0.857%）。見 memory `[[m33-cluster-aspect]]`。
+- **M34 per-member `ICCAD_FREE_CLUSTER`**（各成員獨立搜 aspect，用既有 cluster layout-key 仲裁）：**per-member 在硬案勝過 uniform**——同案直接比贏 case 89 1.5954→**1.5640**、82→**1.363**、80→**1.402** + 88/79/66/83/92/70。ratio 共振峰 **4.0**（5.0 退步），build-time 搜尋（非 per-frame）→ widen 免抬牆，**單一 profile 即讓同 cluster 成員異質 tall(0.333)+wide(4.0)**，取代 M33 分開的 ca0.4/ca3.0。2 profile（fc_pin_tight +0.466%、fc_gm_pin +0.414%）為全池 LOO 前二。見 memory `[[m34-free-cluster]]`。
 
-### 📋 NEXT SESSION 計畫：per-member `FREE_CLUSTER` 搜尋（M33 後唯一剩餘 in-env free-aspect 子軸）
+### 📋 NEXT SESSION 計畫：free-aspect 全封 → 只剩 RED reconstruction 或收束
 
-**動機**：M33 只做 **uniform**（profile 級單一 ratio）cluster aspect；`ICCAD_FREE_CLUSTER` 旋鈕已宣告但**未實作**。per-member（各成員獨立搜 aspect）可能比 uniform 再榨一層——但風險同 M32 boundary（per-block greedy 局部 area 與全域反向）。
-
-**⚠️ 先驗**：M33 已證 cluster aspect 整體有料，但 uniform 已抓走大頭（ca3.0 共振）；per-member 增量可能小且重疊。**先 probe-first，別預設贏**。
-
-**probe-first 步驟**：
-1. **實作 `ICCAD_FREE_CLUSTER`**（gated、預設 bit-identical）：在 `make_group_item`（constructive.cpp:270-326）build 各 layout 前，為每個 interior 成員在 `FREE_RATIOS` 內搜 aspect，**用既有 cluster layout-key `(fragments, boundary_bad, area, aspect)` 仲裁**（非純 greedy-area → 避 M32 boundary 失敗模式）。mirror M29 FREE_ASPECT 結構（552-602）。
-2. **probe**：`profile_vs_portfolio.py ICCAD_FREE_CLUSTER=1`（± stack free_pin_tight）vs 現 1.3390 池。>0.05% 才進。
-3. **整合**：`profile_audit.py` est_wall <11s + 剪冗餘；全 eval 100/100。
-4. **死路出口**：<0.05% → cluster aspect 軸完全榨乾 → free-aspect 全封 → 只剩 **RED reconstruction**（重寫 placer，M29 從零 builder 8.22 證偽）或收束本題。
-- **關鍵檔案**：`constructive.cpp`（make_group_item:270 + FREE_ASPECT 範本:552-602 + env parse:1519）、`optimizer_constructive.py`（_PROFILES:66）、`profile_vs_portfolio.py`/`profile_audit.py`。
-- ⚠️ **eval 實際 ~17 分鐘**（100 案 serial × ~10s，非 CLAUDE.md 舊註的 3 分鐘）；background eval 會在 idle gap 靜默死掉，用 `Get-CimInstance Win32_Process` + JSON mtime 確認進度。
+**所有 in-env optimization lever 枯竭**：packer/order（M26-27 天花板）+ free-aspect 四子軸（ratio M31 / boundary M32 / cluster-uniform M33 / cluster-per-member M34）全 ship 或死路。proxy/_RH 完美（零漏分）。**要再降分只剩兩條**：
+1. **RED reconstruction**（重寫 placer 為 netlist-driven slicing-tree constructive + free aspect）：headroom 仍大（oracle 1.1079，剩 +0.225），但 **M29 從零 connectivity builder 已證偽 8.22 vs 1.38（0/100）** → 須重寫 constructive.cpp 全部約束機制（boundary/grouping/MIB/精度），非加 lever。ROI 極低、風險極高。
+2. **收束本題**：1.3325 已領先組員所有 legit 版本 ~17.7%，runtime 安全（avg 9.21s）。若無新 insight，這是合理停點。
+- **若仍要試 free-aspect 殘渣**（低優先，先驗皆弱）：per-member FREE_ASPECT 對 **mixed/anchored cluster** 成員（M34 只做 pure-movable interior）；但 anchored 成員貼 preplaced 牆、形狀自由度低 → 預期 <0.05%。
+- ⚠️ **eval 實際 ~15-17 分鐘**（100 案 serial，大案 n>110 每案 ~20-26s）；profile_audit 全 re-collect ~15 分。background 用 harness `run_in_background`（完成通知，比 detached 可靠）；`> file 2>&1` 在 PowerShell 對 native exe 會印 cosmetic `NativeCommandError`（無害，進度照跑）。
 
 ### 3. 精度 / 數值（持續遵守）
 任何新加的、會被 shapely 評分的幾何輸出都要保持精確 abutment + `%.17g`（見 Gotchas）。
@@ -127,7 +122,8 @@ uniform `ICCAD_CLUSTER_ASPECT` 旋鈕（reshape 純 movable interior cluster 成
 - **reframe**（compact 後實測 bbox seed frame 重跑，`ICCAD_REFRAME`）：base frame loop 已挑最佳 aspect，pass2 複製 pass1；與 portfolio aspect 多樣性結構性冗餘（code 保留 gated off）
 - **env knob 軸**：WIRE_MULT 4/6、LR+W、ANCHOR 0.30、ultra-narrow frame、WT/BFS/NORM/PIN knob 組合、CLUSTER_ORD、OM×tight — 全 ≤0.063%（⚠️ **M32 例外**：「LR+W ≤0.063%」是因把 LR 綁 W / 低 TB；**pure decoupled LR**（高 LR + TB 留 default 0.40）一直沒試 → LR=4.5 +0.186% 攻硬案 85，已 ship）
 - **per-block boundary free-aspect（`ICCAD_FREE_BOUNDARY`，M32）**：0.000% oracle-min。greedy 局部 score 的 area 項偏好窄塊（寬 LR 塊往內擴 bbox）→ 與 edge-capacity 要的「統一變扁」**反向**、per-block 主動選錯 aspect ⇒ boundary-aspect win 結構性須 **UNIFORM**（profile 級設定），per-block 死。code 已 revert（0.000% 不留 dead code）。uniform decoupled 版 = M32 SHIPPED
-- **cluster aspect 飽和邊界（M33，勿重掃）**：uniform `ICCAD_CLUSTER_ASPECT` standalone sweep 訊號弱（2.0=+0.14%、0.8/1.5 <0.03%）——真正 win 須 **stack tight+FREE+PIN 放大**。寬 ratio 共振峰在 **3.0**（+1.105%）；3.5/4.0/5.0 僅 0.3-0.4%、adjacent 2.5/3.25 <0.12%（重疊 ca3.0）；tall 0.4>0.6、0.33≈0.10%；wide-GM-tight 0.042% 死。已加 ca{2.0,0.6,1.25,0.4,3.0}×{plain/tight/GM} 過 0.05% 者。**未試＝per-member `FREE_CLUSTER`（見 NEXT SESSION）**
+- **cluster aspect 飽和邊界（M33，勿重掃）**：uniform `ICCAD_CLUSTER_ASPECT` standalone sweep 訊號弱（2.0=+0.14%、0.8/1.5 <0.03%）——真正 win 須 **stack tight+FREE+PIN 放大**。寬 ratio 共振峰在 **3.0**（+1.105%）；3.5/4.0/5.0 僅 0.3-0.4%、adjacent 2.5/3.25 <0.12%（重疊 ca3.0）；tall 0.4>0.6、0.33≈0.10%；wide-GM-tight 0.042% 死。已加 ca{2.0,0.6,1.25,0.4,3.0}×{plain/tight/GM} 過 0.05% 者。
+- **cluster aspect per-member 飽和邊界（M34，勿重掃）**：per-member `ICCAD_FREE_CLUSTER`（build-time 搜尋、widen 免抬牆）共振峰在 **4.0**（PIN stack +0.466%）；**5.0 退步**（+0.367%）、3.0 +0.348%、narrow(max2.0) 僅 +0.143%、standalone +0.135%。已加 fc_pin_tight + fc_gm_pin（GM 互補，+0.414%），剪 4 冗餘 LR（aspect_xhi/lr30/asp7_wire/asp5_all，被 per-member 寬 ratio 蓋過硬案）。**per-member 勝 uniform 於硬案**（89/82/80）。殘渣（anchored-cluster 成員、+OS）先驗皆弱、未試
 - **OS K>16 / OM K 組合**：K=16 飽和（高權重案 jump 紅利已拿光），更大 K 只撿中型案渣且 runtime 不划算
 - **compaction 方向偏好 / pack 向 connectivity 重心**：compact_layout 已對稱試 4 單向+8 兩步組合由 csc 仲裁（方向偏好是嚴格子集）；wire 項已是 placed+guide 動態重心
 - **runtime 候補 om16/os24/os32**：M24 jump 吃掉賣點（96/66/89 headline 已被超越），自身 wall 主導每案 → 懲罰比永遠不划算
@@ -139,7 +135,7 @@ uniform `ICCAD_CLUSTER_ASPECT` 旋鈕（reshape 純 movable interior cluster 成
 - **proxy/_RH 選擇**（M31 再確認）：38-prof 池 oracle-min==proxy(_RH=1.4)==**1.3694**，選擇器零漏分（M30「case 95 滑移」是中間態，已被最終池 `free_pin_tight` 修正 95→1.1967）→ _RH 非 live lever，要降分須降 oracle 本身（剩 cluster/boundary free-aspect 或 RED reconstruction）
 
 ## 殘留 case（純 optimization 已榨乾）
-89 **~1.614**（M33 ca3.0 從 1.7936 大降，仍最高；preplaced boundary 撐壞 outline）、85 ~1.536（M32 LR4.5）、62 1.5227、88 1.4354、79 1.4121、87 1.28（M33 ca3.0）、91 1.3481、66 1.3981。硬 case（89/85/62）= preplaced boundary 幾何強迫；**M33 證實 wide cluster 成員（ca3.0）+ tight frame 能顯著鬆動 89/85**（非 packer 架構問題，是 cluster 成員形狀）。
+89 **~1.564**（M34 per-member 從 M33 的 1.5954 再降，仍最高；preplaced boundary 撐壞 outline）、85 ~1.536（M32 LR4.5）、62 1.5227、88 **~1.412**（M34）、82 **~1.363**（M34）、79 **~1.247**（M34）、66 **~1.270**（M34）、91 1.3481。硬 case（89/85/62）= preplaced boundary 幾何強迫；**M33→M34 證實 cluster 成員形狀（wide/per-member aspect）+ tight frame 能顯著鬆動 89/82/88/79/66**（非 packer 架構問題，是 cluster 成員形狀；per-member 異質 aspect 又比 uniform 更鬆）。
 
 ## 環境 & 指令
 
@@ -171,7 +167,8 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - 關後處理：`NO_COMPACT` / `NO_REFINE` / `NO_PUSH`（關 M14-16+24）/ `NO_BND_PUSH`（退 M14）/ `NO_SWAP`（退 M15）/ `NO_JUMP`（退 M16）；`PUSH_PASSES=N`、`COMPACT_ITERS=N`、`REFINE_ITERS=N`
 - pack-order 軸：`WIRE_TIEBREAK`、`WIRE_BFS`、`BFS_PIN`、`ORDER_SWAP=K`、`ORDER_MOVE=K`、`GUIDE_MED`（M26 ship）
 - **aspect 軸（M29/M30）**：`ICCAD_FREE_ASPECT=1`（per-block：single interior movable 在 ±1% area 搜 aspect，**M30 ship 1.3694**，8 free profile 進 portfolio：base/+wire/+GM-wt-wire/+tight-wire（M29）+ **+PIN-wt-wire/+GM-tight-wire/+PIN-tight-wire/+GM-PIN-wt-wire（M30，後二 `free_pin_tight`/`free_gm_pin` 為全池 LOO 前二）**）；`ICCAD_SOFT_ASPECT=r`（全域 interior aspect，預設 1.0；粗版只動小 case，未進 portfolio）
-- **cluster aspect 軸（M33）**：`ICCAD_CLUSTER_ASPECT=r`（reshape 純 movable INTERIOR cluster 成員 w/h，預設 1.0=方形=bit-identical；套在 `solve()` `apply_safe_mib_dims()` 後、`make_group_item` 前）。**M33 ship 1.3390**，10 cluster profile 進 portfolio。⚠️ 標準 uniform sweep 訊號弱（2.0 +0.14%），真正大 win 是 **stack tight+FREE+PIN 放大、ratio 遠寬**：`ca3.0+free+pin+tight`=+1.105%（共振峰，3.5/4.0/5.0 僅 0.3-0.4%）、`ca2.0+...+tight`=+0.582%、tall `ca0.6/0.4`、GM 變體；`ICCAD_FREE_CLUSTER`（per-member 搜尋）已宣告但未實作（uniform profile 已足）
+- **cluster aspect 軸 uniform（M33）**：`ICCAD_CLUSTER_ASPECT=r`（reshape 純 movable INTERIOR cluster 成員 w/h，預設 1.0=方形=bit-identical；套在 `solve()` `apply_safe_mib_dims()` 後、`make_group_item` 前）。**M33 ship 1.3390**，cluster profile 進 portfolio。⚠️ 標準 uniform sweep 訊號弱（2.0 +0.14%），真正大 win 是 **stack tight+FREE+PIN 放大、ratio 遠寬**：`ca3.0+free+pin+tight`=+1.105%（共振峰）、`ca2.0+...+tight`=+0.582%、tall `ca0.6/0.4`、GM 變體
+- **cluster aspect 軸 per-member（M34）**：`ICCAD_FREE_CLUSTER=1`（各 INTERIOR 純 movable 成員獨立在 `FREE_CLUSTER_RATIOS` 搜 aspect，在 `make_group_item` 內座標下降、用既有 cluster layout-key 仲裁；預設 off=bit-identical）+ `ICCAD_FREE_CLUSTER_RATIOS=r1,r2,...`（搜尋集，預設 `1.0,1.5,0.6667,2.0,0.5`，env 覆寫）。**M34 ship 1.3325**，2 profile（fc_pin_tight/fc_gm_pin，用 wide set `0.333..4.0`）為全池 LOO 前二。**build-time 搜尋（非 per-frame）→ widen 免抬牆**；ratio 共振峰 **4.0**（5.0 退步）；**per-member 勝 uniform 於硬案**（89/82/80）。⚠️ 仲裁用 cluster layout-key（非 packing greedy-area）避 M32 per-block boundary 失敗模式
 - 死路（code 保留 gated off，勿重掃）：`BFS_NORM`、`CLUSTER_ORD=1/2`、`REFRAME`
 - 離線探測（永不 ship）：`ORDER_FILE=path` + `ORDER_GLOBAL=1`（oracle-perm）
 - `ICCAD_CONSTRUCTIVE_SINGLE=1` 退單 base profile（1.7045）

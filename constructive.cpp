@@ -91,7 +91,11 @@ static int FREE_ASPECT = 0;      // M29 ICCAD_FREE_ASPECT>0: per-block aspect SE
 static const vector<double> FREE_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // w/h tried
 static double CLUSTER_ASPECT = 1.0; // M33 ICCAD_CLUSTER_ASPECT: w/h for pure-movable
                                     // INTERIOR cluster members (1.0 = square = unchanged)
-static int FREE_CLUSTER = 0;        // M33 ICCAD_FREE_CLUSTER>0: per-member aspect SEARCH
+static int FREE_CLUSTER = 0;        // M34 ICCAD_FREE_CLUSTER>0: per-member aspect SEARCH
+                                    // for pure-movable INTERIOR cluster members (0=off)
+static vector<double> FREE_CLUSTER_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // M34 per-member
+                                    // search set; ICCAD_FREE_CLUSTER_RATIOS overrides (build-
+                                    // time search -> widening is wall-free, unlike FREE_ASPECT)
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
@@ -292,40 +296,79 @@ static Item make_group_item(const vector<int>& members) {
         for (size_t k=0;k<order.size();k++) it.offs[k]=off[order[k]];
         finalize_item(it); return it;
     };
-    vector<int> boundary_first=members;
-    sort(boundary_first.begin(),boundary_first.end(),[](int a,int b){
-        int ba=block_boundary_score(a), bb=block_boundary_score(b);
-        if (ba!=bb) return ba>bb;
-        return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
-    });
-    vector<int> by_w=members, by_h=members;
-    sort(by_w.begin(),by_w.end(),[](int a,int b){ return dims[a].first>dims[b].first; });
-    sort(by_h.begin(),by_h.end(),[](int a,int b){ return dims[a].second>dims[b].second; });
-    double tot=0; for(int b:members) tot+=dims[b].first*dims[b].second;
-    double base=sqrt(max(tot,1.0));
-    vector<Item> cands;
-    for (auto& order:{boundary_first, by_w, by_h}){
-        cands.push_back(build_shelf(order, 1e18));     // horizontal row
-        cands.push_back(build_shelf(order, 1e-9));     // vertical column
-        cands.push_back(build_shelf(order, base));     // square-ish shelf
-        cands.push_back(build_shelf(order, base*1.4)); // wide-ish shelf
-        if (order.size()>=3) cands.push_back(build_two_rows(order));
-    }
-    Item best; bool have=false;
-    int bfrag=0, bbad=0; double barea=0, baspect=0;   // best key so far
-    for (auto& c: cands){
-        int f=item_fragment_count(c), bd=item_boundary_bad(c);
-        double area=c.w*c.h, aspect=fabs(c.w-c.h);
-        bool take=!have;
-        if (!take){                                    // lexicographic min
-            if (f!=bfrag)                 take = f<bfrag;
-            else if (bd!=bbad)            take = bd<bbad;
-            else if (fabs(area-barea)>TOL)take = area<barea;
-            else                          take = aspect<baspect;
+    // Build all candidate internal layouts for the CURRENT dims[] and return the
+    // lex-best (fragments, boundary_bad, area, aspect). Orders depend on dims[], so
+    // this is re-evaluated per FREE_CLUSTER trial. With FREE_CLUSTER=0 it runs once
+    // on the return path and is byte-identical to the pre-M34 selection.
+    auto build_best = [&]()->Item{
+        vector<int> boundary_first=members;
+        sort(boundary_first.begin(),boundary_first.end(),[](int a,int b){
+            int ba=block_boundary_score(a), bb=block_boundary_score(b);
+            if (ba!=bb) return ba>bb;
+            return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
+        });
+        vector<int> by_w=members, by_h=members;
+        sort(by_w.begin(),by_w.end(),[](int a,int b){ return dims[a].first>dims[b].first; });
+        sort(by_h.begin(),by_h.end(),[](int a,int b){ return dims[a].second>dims[b].second; });
+        double tot=0; for(int b:members) tot+=dims[b].first*dims[b].second;
+        double base=sqrt(max(tot,1.0));
+        vector<Item> cands;
+        for (auto& order:{boundary_first, by_w, by_h}){
+            cands.push_back(build_shelf(order, 1e18));     // horizontal row
+            cands.push_back(build_shelf(order, 1e-9));     // vertical column
+            cands.push_back(build_shelf(order, base));     // square-ish shelf
+            cands.push_back(build_shelf(order, base*1.4)); // wide-ish shelf
+            if (order.size()>=3) cands.push_back(build_two_rows(order));
         }
-        if (take){ bfrag=f; bbad=bd; barea=area; baspect=aspect; best=c; have=true; }
+        Item best; bool have=false;
+        int bfrag=0, bbad=0; double barea=0, baspect=0;   // best key so far
+        for (auto& c: cands){
+            int f=item_fragment_count(c), bd=item_boundary_bad(c);
+            double area=c.w*c.h, aspect=fabs(c.w-c.h);
+            bool take=!have;
+            if (!take){                                    // lexicographic min
+                if (f!=bfrag)                 take = f<bfrag;
+                else if (bd!=bbad)            take = bd<bbad;
+                else if (fabs(area-barea)>TOL)take = area<barea;
+                else                          take = aspect<baspect;
+            }
+            if (take){ bfrag=f; bbad=bd; barea=area; baspect=aspect; best=c; have=true; }
+        }
+        return best;
+    };
+    // M34 per-member free-aspect (ICCAD_FREE_CLUSTER): greedily search each pure-
+    // movable interior member's aspect over FREE_CLUSTER_RATIOS, arbitrated by the
+    // SAME cluster layout-key above (NOT the packing greedy score, whose local area
+    // term made per-block FREE_BOUNDARY fail in M32). Each trial's key is read under
+    // that trial's dims and kept as scalars: item_fragment_count re-reads global
+    // dims[], so cross-trial comparisons must use stored keys, never re-evaluated
+    // Items. The winning dims are committed to the global dims[] because the packing
+    // output (~l.672) and finalize_item re-read dims[b]. FREE_CLUSTER=0 -> skipped
+    // -> bit-identical.
+    if (FREE_CLUSTER>0){
+        for (int m:members){
+            if (!(blocks[m].cluster>0 && blocks[m].mib==0 && blocks[m].boundary==0
+                  && !blocks[m].is_preplaced && !blocks[m].is_fixed && blocks[m].area>0)) continue;
+            double A=blocks[m].area;
+            pair<double,double> best_dim=dims[m];
+            Item c0=build_best();                          // baseline under current dims[m]
+            int bf=item_fragment_count(c0), bb=item_boundary_bad(c0);
+            double bar=c0.w*c0.h, bas=fabs(c0.w-c0.h);
+            for (double r:FREE_CLUSTER_RATIOS){
+                double w=sqrt(A*r); dims[m]={w, A/w};
+                Item c=build_best();
+                int f=item_fragment_count(c), bd=item_boundary_bad(c);
+                double ar=c.w*c.h, as=fabs(c.w-c.h);
+                bool take = (f!=bf) ? (f<bf)
+                          : (bd!=bb) ? (bd<bb)
+                          : (fabs(ar-bar)>TOL) ? (ar<bar)
+                          : (as<bas);
+                if (take){ bf=f; bb=bd; bar=ar; bas=as; best_dim=dims[m]; }
+            }
+            dims[m]=best_dim;                              // commit (global dims write-back)
+        }
     }
-    return best;
+    return build_best();
 }
 
 // ─── item anchor (connectivity centroid over members) ─────────────────────────
@@ -1560,6 +1603,11 @@ int main() {
     };
     parse_list("ICCAD_FRAME_ASPECTS", FRAME_ASPECTS);
     parse_list("ICCAD_FRAME_SCALES",  FRAME_SCALES);
+    if (getenv("ICCAD_FREE_CLUSTER_RATIOS")){            // M34: override per-member search set
+        FREE_CLUSTER_RATIOS.clear();
+        parse_list("ICCAD_FREE_CLUSTER_RATIOS", FREE_CLUSTER_RATIOS);
+        if (FREE_CLUSTER_RATIOS.empty()) FREE_CLUSTER_RATIOS={1.0,1.5,0.6667,2.0,0.5};
+    }
     solve();
     return 0;
 }
