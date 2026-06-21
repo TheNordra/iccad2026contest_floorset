@@ -99,7 +99,16 @@ static vector<double> FREE_CLUSTER_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // M34
 static int FREE_ANCHORED = 0;       // M35 PROBE ICCAD_FREE_ANCHORED>0: per-member aspect SEARCH
                                     // for movable members of ANCHORED (mixed preplaced+movable)
                                     // clusters in the wall-attach first-pass (0=off=unchanged).
-                                    // Reuses FREE_RATIOS; arbitrated by the packing greedy score.
+                                    // Arbitrated by the packing greedy score.
+static vector<double> FREE_ANCHORED_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // M36 probe: search
+                                    // set for FREE_ANCHORED; default == FREE_RATIOS so off/default
+                                    // = bit-identical. ICCAD_FREE_ANCHORED_RATIOS overrides. NOTE
+                                    // per-frame search (unlike build-time FREE_CLUSTER) -> widening
+                                    // MAY raise the wall (M31 per-frame precedent: 21->29.6s).
+static int FREE_ANCHORED_BND = 0;   // M36 probe ICCAD_FREE_ANCHORED_BND>0: also let BOUNDARY
+                                    // movable members of anchored clusters search aspect (default
+                                    // 0 = gate them out = bit-identical). M32 FREE_BOUNDARY analogy
+                                    // says DEAD, but M35 flipped the anchored analogy -> probe it.
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
@@ -564,10 +573,11 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
             // out[] only, never dims[], so each frame re-searches from the original
             // shape. Ineligible members / FREE_ANCHORED=0 use the sentinel ratio -1
             // -> original dims[b] -> single pass -> bit-identical.
-            bool elig = FREE_ANCHORED>0 && blocks[b].mib==0 && blocks[b].boundary==0
+            bool elig = FREE_ANCHORED>0 && blocks[b].mib==0
+                      && (blocks[b].boundary==0 || FREE_ANCHORED_BND>0)
                       && !blocks[b].is_fixed && !blocks[b].is_preplaced && blocks[b].area>0;
             double A=blocks[b].area;
-            vector<double> ratios = elig ? FREE_RATIOS : vector<double>{-1.0};
+            vector<double> ratios = elig ? FREE_ANCHORED_RATIOS : vector<double>{-1.0};
             double best=1e300, bx=0, by=0, bw=0, bh=0; bool found=false;
             for (double r:ratios){
                 double cw,ch;
@@ -1592,6 +1602,7 @@ int main() {
     if (const char* e=getenv("ICCAD_CLUSTER_ASPECT")){ double v=atof(e); if (v>0) CLUSTER_ASPECT=v; }
     if (const char* e=getenv("ICCAD_FREE_CLUSTER")){ int v=atoi(e); if (v>0) FREE_CLUSTER=v; }
     if (const char* e=getenv("ICCAD_FREE_ANCHORED")){ int v=atoi(e); if (v>0) FREE_ANCHORED=v; } // M35 probe
+    if (const char* e=getenv("ICCAD_FREE_ANCHORED_BND")){ int v=atoi(e); if (v>0) FREE_ANCHORED_BND=v; } // M36 probe
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;
@@ -1627,6 +1638,11 @@ int main() {
         FREE_CLUSTER_RATIOS.clear();
         parse_list("ICCAD_FREE_CLUSTER_RATIOS", FREE_CLUSTER_RATIOS);
         if (FREE_CLUSTER_RATIOS.empty()) FREE_CLUSTER_RATIOS={1.0,1.5,0.6667,2.0,0.5};
+    }
+    if (getenv("ICCAD_FREE_ANCHORED_RATIOS")){          // M36: override anchored search set
+        FREE_ANCHORED_RATIOS.clear();
+        parse_list("ICCAD_FREE_ANCHORED_RATIOS", FREE_ANCHORED_RATIOS);
+        if (FREE_ANCHORED_RATIOS.empty()) FREE_ANCHORED_RATIOS={1.0,1.5,0.6667,2.0,0.5};
     }
     solve();
     return 0;

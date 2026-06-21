@@ -151,6 +151,23 @@ _PROFILES: List[Dict[str, str]] = [
     # {89,65,52,69} ⊂ PIN, <= PIN on shared) -> add PIN only. Per-frame search (like FREE_ASPECT)
     # but anchored members are few and concentrated -> stays under the OS16 wall (verify est_wall).
     {"ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_anchored_pin_tight (M35: +0.111% oracle-min; anchored-member aspect search, cracks 89/65/52)
+    # M36 (2026-06-21): anchored free-aspect RESIDUAL — two wall-safe wins from the M35
+    # anchored axis that M35 left untried. (1) WIDE ratios: FREE_ANCHORED reused FREE_RATIOS
+    # (max 2.0); widening to the M34 cluster set (0.333..4.0, resonance 4.0) via the new
+    # ICCAD_FREE_ANCHORED_RATIOS knob is WALL-FREE here (anchored members are few -> a 1.6x
+    # search multiplier on a small base; n=120 4.3s, unchanged vs M35's 5-ratio). (2) UNGATE
+    # boundary: ICCAD_FREE_ANCHORED_BND=1 also lets BOUNDARY anchored members search aspect —
+    # PREDICTED DEAD by the M32 per-block FREE_BOUNDARY analogy, but the anchored score's bp +
+    # keep-connected terms FLIPPED it AGAIN (cf. M35). The two are COMPLEMENTARY: ungated owns
+    # hard case 97 n=118 1.2279->1.1988 (+75/78/65/53); gated owns case 88 n=109 1.4115->1.3852
+    # (+70) which UNGATED LOSES. profile_vs_portfolio vs the 38-prof pool: ungated +0.244%,
+    # gated +0.104%. DEAD ENDS (not added): OS16 x free-aspect (1c-OS) was +0.630% oracle-min
+    # but 48s on n=120 (4x OS16's 12s) — the gain IS the per-frame free search INSIDE the OS
+    # swap loop (OS16+PIN+tight WITHOUT free = +0.001%, the cheap part already covered) -> gain
+    # structurally coupled to 4x runtime, joins the OS24/OS32/om16 shelf. GM variants: gated+GM
+    # +0.008% (dead), ungated+GM +0.067% (only disjoint win case 64 < bar) -> PIN only (cf. M35).
+    {"ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_ANCHORED_BND": "1", "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_anchored_bnd_pin_tight (M36 lead: +0.244%; ungated boundary + wide anchored ratios, owns hard case 97 ->1.1988)
+    {"ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_anchored_wide_pin_tight (M36 complement: +0.104%; gated wide anchored ratios, owns case 88 ->1.3852 + 70 which ungated loses)
     # [M33-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},                   # aspect_v7
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},                 # aspect_v10  [M25-pruned]
@@ -180,7 +197,7 @@ _PROFILES: List[Dict[str, str]] = [
     # {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "3.0"},  # asp7_all_x3  [M25-pruned]
     {"ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20",  "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "3.0"},  # asp5_all_x3
     # {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp7_all  [M25-pruned]
-    {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20",  "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp5_all
+    # [M36-pruned: 0 wins, LOO 0; absorbed once the M36 anchored profiles took its cases] {"ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33", "ICCAD_LR_ASPECT": "5.0", "ICCAD_TB_ASPECT": "0.20",  "ICCAD_ANCHOR_W": "0.04", "ICCAD_WIRE_MULT": "2.0"},  # tall_asp5_all
     # {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143", "ICCAD_WIRE_MULT": "2.0"},  # tight_asp7_wire  [M25-pruned]
     # [M30r2-pruned: 0 wins, LOO 0] {"ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # tight_wire
     # M13: narrower-than-frame_tall outlines (aspect 0.55-0.28) attack the systematic
