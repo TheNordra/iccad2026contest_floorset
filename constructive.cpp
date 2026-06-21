@@ -96,6 +96,10 @@ static int FREE_CLUSTER = 0;        // M34 ICCAD_FREE_CLUSTER>0: per-member aspe
 static vector<double> FREE_CLUSTER_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // M34 per-member
                                     // search set; ICCAD_FREE_CLUSTER_RATIOS overrides (build-
                                     // time search -> widening is wall-free, unlike FREE_ASPECT)
+static int FREE_ANCHORED = 0;       // M35 PROBE ICCAD_FREE_ANCHORED>0: per-member aspect SEARCH
+                                    // for movable members of ANCHORED (mixed preplaced+movable)
+                                    // clusters in the wall-attach first-pass (0=off=unchanged).
+                                    // Reuses FREE_RATIOS; arbitrated by the packing greedy score.
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
@@ -553,33 +557,48 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         });
         for (int b:mov){
             if (done[b]) continue;
-            double bw=dims[b].first, bh=dims[b].second;
-            auto cands=adjacent_candidates_for_block(bw,bh,cluster_rects,fw,fh,blocks[b].boundary);
-            double best=1e300, bx=0, by=0; bool found=false;
-            for (auto&c:cands){
-                double x=c.first, y=c.second;
-                if (x<-TOL||y<-TOL||x+bw>fw+TOL||y+bh>fh+TOL) continue;
-                bool ov=false;
-                for (const XYWH&r:rects) if (rect_overlap(x,y,bw,bh,r.x,r.y,r.w,r.h)){ ov=true; break; }
-                if (ov) continue;
-                double cx=x+bw/2, cy=y+bh/2;
-                double ad=anchors[b].w>0?fabs(cx-anchors[b].x)+fabs(cy-anchors[b].y):0.0;
-                int bp=boundary_penalty_est(b,x,y,bw,bh,fw,fh);
-                double area=bbox_area_with(x,y,bw,bh), wire=0.0;
-                if (bp==0){
-                    for (auto& nb:b2b_adj[b]){
-                        double ncx,ncy;
-                        if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
-                        else if (use_prev){ ncx=prev_pos[nb.first].x+prev_pos[nb.first].w/2; ncy=prev_pos[nb.first].y+prev_pos[nb.first].h/2; }
-                        else continue;
-                        wire+=nb.second*(fabs(cx-ncx)+fabs(cy-ncy));
+            // M35 probe (ICCAD_FREE_ANCHORED): search this member's aspect over
+            // FREE_RATIOS jointly with the wall-attach position, arbitrated by the
+            // SAME packing greedy score below (anchored members have no cluster
+            // layout-key, unlike FREE_CLUSTER). Per-frame like FREE_ASPECT: commit
+            // out[] only, never dims[], so each frame re-searches from the original
+            // shape. Ineligible members / FREE_ANCHORED=0 use the sentinel ratio -1
+            // -> original dims[b] -> single pass -> bit-identical.
+            bool elig = FREE_ANCHORED>0 && blocks[b].mib==0 && blocks[b].boundary==0
+                      && !blocks[b].is_fixed && !blocks[b].is_preplaced && blocks[b].area>0;
+            double A=blocks[b].area;
+            vector<double> ratios = elig ? FREE_RATIOS : vector<double>{-1.0};
+            double best=1e300, bx=0, by=0, bw=0, bh=0; bool found=false;
+            for (double r:ratios){
+                double cw,ch;
+                if (r<0){ cw=dims[b].first; ch=dims[b].second; }
+                else    { cw=sqrt(A*r); ch=A/cw; }
+                auto cands=adjacent_candidates_for_block(cw,ch,cluster_rects,fw,fh,blocks[b].boundary);
+                for (auto&c:cands){
+                    double x=c.first, y=c.second;
+                    if (x<-TOL||y<-TOL||x+cw>fw+TOL||y+ch>fh+TOL) continue;
+                    bool ov=false;
+                    for (const XYWH&r2:rects) if (rect_overlap(x,y,cw,ch,r2.x,r2.y,r2.w,r2.h)){ ov=true; break; }
+                    if (ov) continue;
+                    double cx=x+cw/2, cy=y+ch/2;
+                    double ad=anchors[b].w>0?fabs(cx-anchors[b].x)+fabs(cy-anchors[b].y):0.0;
+                    int bp=boundary_penalty_est(b,x,y,cw,ch,fw,fh);
+                    double area=bbox_area_with(x,y,cw,ch), wire=0.0;
+                    if (bp==0){
+                        for (auto& nb:b2b_adj[b]){
+                            double ncx,ncy;
+                            if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
+                            else if (use_prev){ ncx=prev_pos[nb.first].x+prev_pos[nb.first].w/2; ncy=prev_pos[nb.first].y+prev_pos[nb.first].h/2; }
+                            else continue;
+                            wire+=nb.second*(fabs(cx-ncx)+fabs(cy-ncy));
+                        }
+                        for (auto& pn:p2b_adj[b])
+                            wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
                     }
-                    for (auto& pn:p2b_adj[b])
-                        wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
+                    double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
+                    if (!rect_touches_any(x,y,cw,ch,cluster_rects)) score+=7000.0; // keep group connected
+                    if (score<best){ best=score; bx=x; by=y; bw=cw; bh=ch; found=true; }
                 }
-                double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
-                if (!rect_touches_any(x,y,bw,bh,cluster_rects)) score+=7000.0; // keep group connected
-                if (score<best){ best=score; bx=x; by=y; found=true; }
             }
             if (found){
                 out[b]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh});
@@ -1572,6 +1591,7 @@ int main() {
     if (const char* e=getenv("ICCAD_FREE_ASPECT")){ int v=atoi(e); if (v>0) FREE_ASPECT=v; }
     if (const char* e=getenv("ICCAD_CLUSTER_ASPECT")){ double v=atof(e); if (v>0) CLUSTER_ASPECT=v; }
     if (const char* e=getenv("ICCAD_FREE_CLUSTER")){ int v=atoi(e); if (v>0) FREE_CLUSTER=v; }
+    if (const char* e=getenv("ICCAD_FREE_ANCHORED")){ int v=atoi(e); if (v>0) FREE_ANCHORED=v; } // M35 probe
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;

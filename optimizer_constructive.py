@@ -137,6 +137,20 @@ _PROFILES: List[Dict[str, str]] = [
     # subsumes M33's separate ca3.0/ca0.4 uniform tall/wide profiles (search picks per member).
     {"ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_pin_tight (M34: +0.466%; per-member aspect, cracks 89/88/82/79/66)
     {"ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_gm_pin_tight (M34: +0.414%; GM-seed complement, owns 80/83/92/70)
+    # M35 (2026-06-21): PER-MEMBER free-aspect for ANCHORED-cluster movable members
+    # (ICCAD_FREE_ANCHORED) — the LAST untried free-aspect residual. M34's FREE_CLUSTER only
+    # reshapes PURE-movable clusters; MIXED (preplaced+movable) clusters attach their movable
+    # members to the preplaced walls in pack_in_frame's first-pass, where they had kept a fixed
+    # square shape. FREE_ANCHORED searches each such member's aspect over FREE_RATIOS jointly
+    # with the wall-attach position. PREDICTED DEAD (same M32 FREE_BOUNDARY failure mode:
+    # arbitrated by the packing greedy score, no cluster layout-key for wall-attached members) —
+    # but the anchored score's extra bp (boundary-penalty) + keep-connected terms flipped it:
+    # stacked on fc_pin_tight it is +0.111% oracle-min (7 wins incl. the long-standing WORST case
+    # 89 1.5640->1.5538, 65 1.7325->1.6904, 52 1.4071->1.3613, 78). Standalone 0.000%
+    # (amplification-only, like M33/M34's cluster sweeps). GM-seed variant was REDUNDANT (wins
+    # {89,65,52,69} ⊂ PIN, <= PIN on shared) -> add PIN only. Per-frame search (like FREE_ASPECT)
+    # but anchored members are few and concentrated -> stays under the OS16 wall (verify est_wall).
+    {"ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_anchored_pin_tight (M35: +0.111% oracle-min; anchored-member aspect search, cracks 89/65/52)
     # [M33-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},                   # aspect_v7
     # {"ICCAD_LR_ASPECT": "10.0", "ICCAD_TB_ASPECT": "0.10"},                 # aspect_v10  [M25-pruned]
