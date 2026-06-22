@@ -167,6 +167,17 @@ _PROFILES: List[Dict[str, str]] = [
     # structurally coupled to 4x runtime, joins the OS24/OS32/om16 shelf. GM variants: gated+GM
     # +0.008% (dead), ungated+GM +0.067% (only disjoint win case 64 < bar) -> PIN only (cf. M35).
     {"ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_ANCHORED_BND": "1", "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_anchored_bnd_pin_tight (M36 lead: +0.244%; ungated boundary + wide anchored ratios, owns hard case 97 ->1.1988)
+    # M37 (2026-06-22): the LAST untried aspect sub-axis — MIB member shape. apply_safe_mib_dims
+    # unifies no-master MIB groups to a sqrt(avg) SQUARE; ICCAD_MIB_ASPECT=r reshapes that shared
+    # square to a shared rectangle of the SAME area (MIB violation stays 0, all-interior gated).
+    # 14/100 cases have a reshapeable group. PREDICTED WEAK (uniform, tiny groups) but — M35/M36
+    # lesson a THIRD time — it FLIPPED when stacked on the M36 anchored recipe at WIDE ratio 5.0:
+    # +0.110% oracle-min, cracking the long-standing WORST case 89 n=110 1.5538->1.5232 (the wide
+    # MIB block nestles into 89's preplaced-boundary geometry, same family as M34's wide cluster
+    # members) + case 61 1.3134->1.3030. Resonance at 5.0 (4.0=+0.098%, 6.0=+0.074% regress);
+    # pin_tight / gm_pin stacks DEAD (89 is won only via the anchored knobs -> MIB compounds there);
+    # tall side (0.25 -> case 79 +0.027%) below the 0.05% bar -> not added (build-time reshape, wall-free).
+    {"ICCAD_MIB_ASPECT": "5.0", "ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_ANCHORED_BND": "1", "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_anchored_mib_pin_tight (M37: +0.110% oracle-min; wide MIB reshape on the anchored recipe cracks worst case 89 ->1.5232 + 61)
     {"ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fc_anchored_wide_pin_tight (M36 complement: +0.104%; gated wide anchored ratios, owns case 88 ->1.3852 + 70 which ungated loses)
     # [M33-pruned: 0 wins, LOO 0] {"ICCAD_LR_ASPECT": "3.5", "ICCAD_TB_ASPECT": "0.286", "ICCAD_WIRE_MULT": "2.0"},  # asp_wire
     {"ICCAD_LR_ASPECT": "7.0", "ICCAD_TB_ASPECT": "0.143"},                   # aspect_v7

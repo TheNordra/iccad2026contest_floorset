@@ -91,6 +91,9 @@ static int FREE_ASPECT = 0;      // M29 ICCAD_FREE_ASPECT>0: per-block aspect SE
 static const vector<double> FREE_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // w/h tried
 static double CLUSTER_ASPECT = 1.0; // M33 ICCAD_CLUSTER_ASPECT: w/h for pure-movable
                                     // INTERIOR cluster members (1.0 = square = unchanged)
+static double MIB_ASPECT = 1.0;     // M37 probe ICCAD_MIB_ASPECT: w/h for no-master square-
+                                    // fallback MIB groups (shared shape, same area avg -> MIB
+                                    // violation stays 0). 1.0 = square = bit-identical.
 static int FREE_CLUSTER = 0;        // M34 ICCAD_FREE_CLUSTER>0: per-member aspect SEARCH
                                     // for pure-movable INTERIOR cluster members (0=off)
 static vector<double> FREE_CLUSTER_RATIOS = {1.0, 1.5, 0.6667, 2.0, 0.5}; // M34 per-member
@@ -222,7 +225,20 @@ static void apply_safe_mib_dims() {
         if (bad) continue;
         double avg=sa/mov.size(); bool okall=true;
         for (int i:mov) if (fabs(avg-blocks[i].area)/blocks[i].area>0.01){ okall=false; break; }
-        if (okall){ double side=sqrt(avg); for (int i:mov) dims[i]={side,side}; }
+        if (okall){
+            // M37 probe: reshape the shared square to a shared rectangle of the SAME area
+            // (avg) when ICCAD_MIB_ASPECT!=1.0 and every movable member is interior. Keeps
+            // one shared shape (MIB violation stays 0) and area avg (1% constraint preserved).
+            // Boundary members would distort edge capacity AND can't be reshaped as a subset
+            // of a shared shape -> gate on all-interior (mirrors the CLUSTER_ASPECT gate).
+            double w=sqrt(avg), h=sqrt(avg);
+            bool all_interior=true;
+            for (int i:mov) if (blocks[i].boundary!=0){ all_interior=false; break; }
+            if (all_interior && getenv("ICCAD_MIB_DBG"))
+                fprintf(stderr, "MIB_RESHAPEABLE group=%d size=%d avg=%.6g\n", kv.first, (int)mov.size(), avg);
+            if (MIB_ASPECT != 1.0 && all_interior){ w=sqrt(avg*MIB_ASPECT); h=avg/w; }
+            for (int i:mov) dims[i]={w,h};
+        }
     }
 }
 
@@ -1600,6 +1616,7 @@ int main() {
     if (const char* e=getenv("ICCAD_SOFT_ASPECT")){ double v=atof(e); if (v>0) SOFT_ASPECT=v; }
     if (const char* e=getenv("ICCAD_FREE_ASPECT")){ int v=atoi(e); if (v>0) FREE_ASPECT=v; }
     if (const char* e=getenv("ICCAD_CLUSTER_ASPECT")){ double v=atof(e); if (v>0) CLUSTER_ASPECT=v; }
+    if (const char* e=getenv("ICCAD_MIB_ASPECT")){ double v=atof(e); if (v>0) MIB_ASPECT=v; } // M37 probe
     if (const char* e=getenv("ICCAD_FREE_CLUSTER")){ int v=atoi(e); if (v>0) FREE_CLUSTER=v; }
     if (const char* e=getenv("ICCAD_FREE_ANCHORED")){ int v=atoi(e); if (v>0) FREE_ANCHORED=v; } // M35 probe
     if (const char* e=getenv("ICCAD_FREE_ANCHORED_BND")){ int v=atoi(e); if (v>0) FREE_ANCHORED_BND=v; } // M36 probe
