@@ -55,3 +55,9 @@ viz_results/
 
 # Cpp Executation Data
 *.exe
+
+# Probe/sweep scratch logs & caches (M37-M39 sessions)
+audit_cache.pkl
+eval_*.txt
+*_sweep_*.txt
+fcbnd_*.txt
