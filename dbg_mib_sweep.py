@@ -26,6 +26,13 @@ RECIPES = {
                   "ICCAD_FREE_CLUSTER":"1","ICCAD_FREE_CLUSTER_RATIOS":"0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
                   "ICCAD_FREE_ASPECT":"1","ICCAD_WIRE_BFS":"1","ICCAD_BFS_PIN":"1","ICCAD_WIRE_TIEBREAK":"1",
                   "ICCAD_FRAME_SCALES":"1.00,1.05,1.10,1.20","ICCAD_WIRE_MULT":"2.0"},
+    # M38 probe: GATED complement (= fc_anchored_wide_pin_tight, NO FREE_ANCHORED_BND) -- owns case 88.
+    # MIB was never swept on this gated recipe; may hit disjoint 88-family cases.
+    "anchored_gated": {"ICCAD_FREE_ANCHORED":"1",
+                  "ICCAD_FREE_ANCHORED_RATIOS":"0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+                  "ICCAD_FREE_CLUSTER":"1","ICCAD_FREE_CLUSTER_RATIOS":"0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+                  "ICCAD_FREE_ASPECT":"1","ICCAD_WIRE_BFS":"1","ICCAD_BFS_PIN":"1","ICCAD_WIRE_TIEBREAK":"1",
+                  "ICCAD_FRAME_SCALES":"1.00,1.05,1.10,1.20","ICCAD_WIRE_MULT":"2.0"},
 }
 recipe_name = sys.argv[1] if len(sys.argv) > 1 else "pin_tight"
 base = RECIPES[recipe_name]
