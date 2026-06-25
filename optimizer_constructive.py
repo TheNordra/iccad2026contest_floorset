@@ -449,6 +449,26 @@ class MyOptimizer(FloorplanOptimizer):
         )
         profiles = _PROFILES[:1] if self._single else _PROFILES
 
+        # M41: RuntimeFactor lever (the one scoring term the local harness hides).
+        # Official Cost multiplies EACH case by max(0.7,(runtime/median)^0.3)
+        # (iccad2026_evaluate.py:552), but the local harness forces RF=1.0
+        # (:924-940) -> the whole M1-M37 portfolio history is blind to runtime and
+        # 1.3269 is the RF=1.0 fiction. The ORDER_SWAP/ORDER_MOVE profiles set the
+        # 18-20s big-case wall (audit cpu max ~19s vs ~8s for every other profile),
+        # yet on big cases the proxy never selects them (the build-time aspect/
+        # cluster/anchored/MIB profiles win) -> they are pure RF dead weight. The
+        # RF-aware model (rf_score_model.py) shows dropping the 6 of them costs only
+        # +0.06% on the RF=1.0 local metric but improves the projected REAL total
+        # ~12% at the teammate-anchored median (1.4742->1.2904 @ M=11s), robust over
+        # median in [6,25]s and core count; 10/11 big cases lose ZERO quality (their
+        # selected winner is unchanged, only the wall drops). Default ON;
+        # ICCAD_ADAPTIVE_POOL=0 restores the full 40-profile pool (local 1.3269);
+        # ICCAD_ADAPTIVE_N=K caps only cases with block_count>K (0 = all cases).
+        if not self._single and os.environ.get("ICCAD_ADAPTIVE_POOL", "1") != "0":
+            if block_count > int(os.environ.get("ICCAD_ADAPTIVE_N", "0")):
+                profiles = [p for p in profiles if "ICCAD_ORDER_SWAP" not in p
+                            and "ICCAD_ORDER_MOVE" not in p]
+
         if len(profiles) == 1:
             positions_list = [_run_profile(profiles[0], inp, block_count)]
         else:

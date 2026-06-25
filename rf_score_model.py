@@ -1,0 +1,229 @@
+"""RF-aware projected-score model (OFFLINE, never shipped).
+
+The official Cost multiplies quality by max(0.7, (runtime/median)^0.3) PER CASE
+(iccad2026_evaluate.py:552), but the local harness forces RuntimeFactor=1.0
+(:924-940). So every A/B we ever ran is blind to the runtime term, and the
+1.3269 "score" is the RF=1.0 fiction. This tool restores RF.
+
+It reuses profile_audit.py's cache (audit_cache.pkl: per (case,profile) ->
+(positions, dt)) and its EXACT selection/wall model, so the FULL-pool RF=1.0
+total reproduces the official 1.3269 (sanity gate). It then:
+  - reports per-profile cpu (mean / max / max on big cases) to find the wall
+    setters (expected: the ORDER_SWAP / ORDER_MOVE profiles);
+  - defines size-adaptive CAP variants (for n > T drop the swap profiles, which
+    are wall-dominant; keep the build-time aspect/cluster/MIB profiles that carry
+    the M33-M37 big-case quality wall-free);
+  - projects the REAL total  Sigma w_i Q_i max(0.7,(t_i/M)^0.3) / Sigma w_i  over
+    a sweep of the unknown cross-submission median M, for FULL vs each CAP;
+  - prints the per-big-case median-INDEPENDENT decision  Q_cap/Q_full  vs
+    (t_full/t_cap)^0.3  (cap wins iff the former < the latter, no M needed).
+
+Run (after profile_audit.py has refreshed the cache for the current pool):
+  python -u rf_score_model.py
+"""
+import os, sys, math, pickle
+from pathlib import Path
+_DIR = Path(__file__).parent
+sys.path.insert(0, str(_DIR / "iccad2026contest")); sys.path.insert(0, str(_DIR))
+from iccad2026_evaluate import ContestEvaluator, evaluate_solution
+from optimizer_claude import _serialize_input, _parse_output
+from proxy_analysis import build_opt_target_pos
+import optimizer_constructive as oc
+
+RH = 1.4
+CORES = 12                       # physical cores -> wrapper wall = max(max_i, sum_i/CORES)
+GAMMA = 0.3                      # official runtime damping
+FLOOR = 0.7                      # official RF floor
+CACHE = _DIR / "audit_cache.pkl"
+
+# Must match profile_audit.py's cache key exactly (its PROFILES = live + OM16).
+OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
+        "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"}
+PROFILES = list(oc._PROFILES) + [OM16]
+N_LIVE = len(oc._PROFILES)       # OM16 (index N_LIVE) is a stand-by, NOT in the live pool
+FPR = repr(PROFILES)
+
+
+def pname(prof):
+    if not prof:
+        return "base"
+    short = {"ICCAD_WIRE_MULT": "W", "ICCAD_ANCHOR_W": "anc", "ICCAD_LR_ASPECT": "LR",
+             "ICCAD_TB_ASPECT": "TB", "ICCAD_FRAME_ASPECTS": "fa", "ICCAD_FRAME_SCALES": "fs",
+             "ICCAD_WIRE_TIEBREAK": "WT", "ICCAD_WIRE_BFS": "BFS", "ICCAD_BFS_PIN": "PIN",
+             "ICCAD_ORDER_SWAP": "OS", "ICCAD_ORDER_MOVE": "OM", "ICCAD_FREE_ASPECT": "FREE",
+             "ICCAD_GUIDE_MED": "GM", "ICCAD_FREE_CLUSTER": "FC", "ICCAD_FREE_ANCHORED": "FA",
+             "ICCAD_FREE_ANCHORED_BND": "FAbnd", "ICCAD_MIB_ASPECT": "MIB",
+             "ICCAD_CLUSTER_ASPECT": "CA"}
+    parts = []
+    for k, v in prof.items():
+        s = short.get(k, k)
+        if s in ("WT", "BFS", "PIN", "FREE", "GM", "FC", "FA", "FAbnd"):
+            parts.append(s)
+        elif s in ("fa", "fs"):
+            parts.append(f"{s}{v.split(',')[0]}")
+        elif "RATIOS" in k:
+            continue
+        else:
+            parts.append(f"{s}{v}")
+    return "+".join(parts)
+
+
+# ── dataset prep (mirrors profile_audit.py) ─────────────────────────────────
+ev = ContestEvaluator(data_path=str(_DIR), verbose=False); ev._load_dataset()
+CASES = []
+for idx in range(100):
+    s = ev.dataset[idx]; inp, lab = s["input"], s["label"]
+    at, b2b, p2b, pins, cons = inp
+    n = int((at != -1).sum().item())
+    base, tp = ev._extract_baseline(idx, lab, b2b, p2b, pins, n)
+    otp = build_opt_target_pos(tp, cons, n)
+    sumA = sum(max(0.0, float(at[i])) for i in range(n))
+    CASES.append(dict(idx=idx, n=n, A_hat=1.035 * max(sumA, 1e-9),
+                      w=math.exp(n / 12.0), base=base, tp=tp,
+                      at=at, b2b=b2b, p2b=p2b, pins=pins, cons=cons))
+
+# ── load cache (must be fresh for the current pool) ─────────────────────────
+if not CACHE.exists():
+    sys.exit("audit_cache.pkl missing -> run profile_audit.py first")
+c = pickle.load(open(CACHE, "rb"))
+if c.get("profiles") != FPR:
+    sys.exit("cache profile signature != current pool -> re-run profile_audit.py")
+data = c["data"]
+missing = [(ci, k) for ci in range(100) for k in range(len(PROFILES)) if (ci, k) not in data]
+if missing:
+    sys.exit(f"cache incomplete ({len(missing)} combos missing) -> profile_audit.py still running")
+
+# ── proxy metrics + lazy true cost (RF=1.0) ─────────────────────────────────
+PM = {}
+for c_ in CASES:
+    ci = c_["idx"]
+    for k in range(len(PROFILES)):
+        ps, _ = data[(ci, k)]
+        m = oc._proxy_metrics(ps, c_["at"], c_["b2b"], c_["p2b"], c_["pins"], c_["cons"], c_["n"])
+        PM[(ci, k)] = (m["area"], m["hpwl"], m["vrel"])
+
+_cost = {}
+
+
+def cost(ci, k):
+    if (ci, k) not in _cost:
+        c_ = CASES[ci]; ps, _ = data[(ci, k)]
+        tc = evaluate_solution({'positions': ps, 'runtime': 1.0}, c_["base"],
+                               c_["cons"][:c_["n"]], c_["b2b"], c_["p2b"], c_["pins"],
+                               c_["at"][:c_["n"]], target_positions=c_["tp"][:c_["n"]],
+                               median_runtime=1.0)
+        _cost[(ci, k)] = tc.cost
+    return _cost[(ci, k)]
+
+
+def select(ci, pool):
+    """Deployed _RH=1.4 proxy selector (wrapper parity)."""
+    hmin = min(PM[(ci, k)][1] for k in pool) or 1.0
+    A = CASES[ci]["A_hat"]
+    return min(pool, key=lambda k: (PM[(ci, k)][0] / A + RH * PM[(ci, k)][1] / hmin)
+               * math.exp(2 * PM[(ci, k)][2]))
+
+
+def wall(ci, pool, cores=CORES):
+    ts = [data[(ci, k)][1] for k in pool]
+    return max(max(ts), sum(ts) / cores)
+
+
+# ── pool variants (per-case profile subsets) ────────────────────────────────
+live = list(range(N_LIVE))
+SWAP = [k for k in live if "ICCAD_ORDER_SWAP" in PROFILES[k] or "ICCAD_ORDER_MOVE" in PROFILES[k]]
+
+
+def full(ci):
+    return live
+
+
+def cap(T, drop):
+    drop = set(drop)
+    def f(ci):
+        return [k for k in live if not (CASES[ci]["n"] > T and k in drop)]
+    return f
+
+
+totW = sum(c_["w"] for c_ in CASES)
+
+
+def local_total(pool_fn):
+    return sum(c_["w"] * cost(c_["idx"], select(c_["idx"], pool_fn(c_["idx"]))) for c_ in CASES) / totW
+
+
+def rf_total(pool_fn, M, cores=CORES):
+    s = 0.0
+    for c_ in CASES:
+        ci = c_["idx"]; pool = pool_fn(ci)
+        q = cost(ci, select(ci, pool))
+        rf = max(FLOOR, (wall(ci, pool, cores) / M) ** GAMMA)
+        s += c_["w"] * q * rf
+    return s / totW
+
+
+# ── report ──────────────────────────────────────────────────────────────────
+print(f"pool: {N_LIVE} live profiles + OM16 stand-by   cores={CORES}")
+loc_full = local_total(full)
+print(f"SANITY: full-pool RF=1.0 total = {loc_full:.4f}  (official M37 = 1.3269)\n")
+
+big = [c_ for c_ in CASES if c_["n"] >= 110]
+bigw = sum(c_["w"] for c_ in big) / totW
+print(f"big cases n>=110: {len(big)}  weight share = {bigw*100:.1f}%")
+
+# per-profile cpu, sorted by max-cpu on big cases (the wall setters)
+print(f"\n{'#':>3} {'cpuMean':>7} {'cpuMax':>7} {'cpuMaxBig':>9}  name")
+rows = []
+for k in live:
+    ts = [data[(c_['idx'], k)][1] for c_ in CASES]
+    tbig = [data[(c_['idx'], k)][1] for c_ in big]
+    rows.append((max(tbig), sum(ts)/len(ts), max(ts), k))
+for mb, mean, mx, k in sorted(rows, reverse=True):
+    tag = "  <- SWAP" if k in SWAP else ""
+    print(f"{k:>3} {mean:>7.2f} {mx:>7.2f} {mb:>9.2f}  {pname(PROFILES[k])}{tag}")
+
+print(f"\nSWAP profiles (drop candidates for big n): {SWAP}")
+print(f"full-pool wall: n>=110 mean = {sum(wall(c_['idx'],live) for c_ in big)/len(big):.1f}s  "
+      f"max = {max(wall(c_['idx'],live) for c_ in big):.1f}s")
+
+# ── variant sweep over the unknown median M ─────────────────────────────────
+variants = [("full", full)]
+for T in (0, 80, 85, 90, 95, 100, 105, 110):
+    variants.append((f"capSWAP>{T}", cap(T, SWAP)))
+# surgical: drop only the 3 OS16 + OM8 (keep the light OS8 #34/#36) for n>100
+OS16OM = [k for k in SWAP if "16" in PROFILES[k].get("ICCAD_ORDER_SWAP", "")
+          or "ICCAD_ORDER_MOVE" in PROFILES[k]]
+variants.append(("capOS16/OM>100", cap(100, OS16OM)))
+
+print(f"\nlocal (RF=1.0) totals  [quality cost of capping]:")
+for tag, fn in variants:
+    print(f"  {tag:<14} {local_total(fn):.4f}")
+
+print(f"\nprojected REAL total = Sigma w*Q*max(0.7,(t/M)^0.3)/Sigma w   (sweep median M):")
+hdr = "  M(s) " + "".join(f"{tag:>12}" for tag, _ in variants)
+print(hdr)
+for M in (6, 8, 9, 10, 11, 12, 14, 16, 20, 25):
+    row = f"  {M:>4} "
+    vals = [rf_total(fn, M) for _, fn in variants]
+    best = min(vals)
+    for v in vals:
+        mark = "*" if abs(v - best) < 1e-9 else " "
+        row += f"{v:>11.4f}{mark}"
+    print(row)
+
+# ── per-big-case median-INDEPENDENT decision (cap = capSWAP>100) ─────────────
+capfn = cap(100, SWAP)
+print(f"\nper-case median-INDEPENDENT check (cap = drop SWAP for n>100):")
+print(f"{'idx':>3} {'n':>4} {'Qfull':>7} {'Qcap':>7} {'tFull':>6} {'tCap':>6} "
+      f"{'(tF/tC)^.3':>10} {'Qc/Qf':>7}  win?")
+for c_ in sorted(big, key=lambda x: -x["w"]):
+    ci = c_["idx"]
+    pf, pc = full(ci), capfn(ci)
+    qf, qc = cost(ci, select(ci, pf)), cost(ci, select(ci, pc))
+    tf, tc = wall(ci, pf), wall(ci, pc)
+    ratio = (tf / tc) ** GAMMA if tc > 0 else 1.0
+    qrel = qc / qf if qf > 0 else 1.0
+    win = "WIN" if qrel < ratio else "lose"
+    print(f"{ci:>3} {c_['n']:>4} {qf:>7.4f} {qc:>7.4f} {tf:>6.1f} {tc:>6.1f} "
+          f"{ratio:>10.4f} {qrel:>7.4f}  {win}")
+print("\nRF MODEL DONE")
