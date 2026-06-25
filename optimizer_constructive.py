@@ -329,6 +329,22 @@ _PROFILES: List[Dict[str, str]] = [
     # the pack order, is the bottleneck -> ordering/ML ranking permanently closed).
     # [M30-pruned: 0 wins, LOO 0; superseded by free_gm_wt_wire] {"ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # gm_bfs_wt_wire (case 91)
 ]
+
+# M42 (2026-06-26): 2nd-order RuntimeFactor lever — indices into _PROFILES of the
+# BUILD-time profiles that are NEVER the selected winner on any case with n>100
+# (per-big-n redundancy; the M41 swap argument applied to the build profiles).
+# After M41 drops the 6 swap profiles, the big-case (n>=110, 60% weight) wall is
+# sum/cores-bound by the ~20 expensive (~8s) FREE/CA/FC profiles; these 21 win NO
+# n>100 case, so dropping them there is wall-only (rf_score_model.py: local RF=1.0
+# stays 1.3277 BIT-IDENTICALLY — every capped case keeps Qcap/Qbase=1.0000 — while
+# the n=120 wall halves 15.6->8.0s, projecting a FURTHER ~-11% real total @ M=11,
+# robust over median in [6,20]s and all 20 n>100 cases stay median-INDEPENDENT
+# WINs). The kept 13 build profiles are the cluster/anchored/MIB stacks that
+# structurally dominate big cases + a few aspect/free winners. REGENERATE after any
+# _PROFILES edit: rf_score_model.py M42 section prints the recommended set.
+_BIG_REDUNDANT_IDX = frozenset({0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 16, 20,
+                                24, 28, 29, 30, 31, 32, 33})
+
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
            # hbase; since we never beat baseline, hmin > hbase by ~hmin/hbase≈1.3-1.4,
@@ -449,25 +465,38 @@ class MyOptimizer(FloorplanOptimizer):
         )
         profiles = _PROFILES[:1] if self._single else _PROFILES
 
-        # M41: RuntimeFactor lever (the one scoring term the local harness hides).
+        # M41/M42: RuntimeFactor lever (the one scoring term the local harness hides).
         # Official Cost multiplies EACH case by max(0.7,(runtime/median)^0.3)
         # (iccad2026_evaluate.py:552), but the local harness forces RF=1.0
         # (:924-940) -> the whole M1-M37 portfolio history is blind to runtime and
-        # 1.3269 is the RF=1.0 fiction. The ORDER_SWAP/ORDER_MOVE profiles set the
-        # 18-20s big-case wall (audit cpu max ~19s vs ~8s for every other profile),
-        # yet on big cases the proxy never selects them (the build-time aspect/
-        # cluster/anchored/MIB profiles win) -> they are pure RF dead weight. The
-        # RF-aware model (rf_score_model.py) shows dropping the 6 of them costs only
-        # +0.06% on the RF=1.0 local metric but improves the projected REAL total
-        # ~12% at the teammate-anchored median (1.4742->1.2904 @ M=11s), robust over
-        # median in [6,25]s and core count; 10/11 big cases lose ZERO quality (their
-        # selected winner is unchanged, only the wall drops). Default ON;
-        # ICCAD_ADAPTIVE_POOL=0 restores the full 40-profile pool (local 1.3269);
-        # ICCAD_ADAPTIVE_N=K caps only cases with block_count>K (0 = all cases).
+        # 1.3269 is the RF=1.0 fiction. cost ∝ t^0.3, so trimming the big-case wall
+        # (n>=110 = 60% of weight) is a median-INDEPENDENT real-score gain whenever
+        # the dropped profiles don't change the selected winner there. Two tiers,
+        # both filtered by ORIGINAL _PROFILES index (robust to pool ordering):
+        #  M41 (ICCAD_ADAPTIVE_N, default 0): drop the 6 ORDER_SWAP/ORDER_MOVE
+        #    profiles (audit cpu max ~19s vs ~8s) — they set the 18-20s wall yet the
+        #    proxy never selects them on big cases. -0.06% RF=1.0 local, projected
+        #    real ~-12% @ M=11 (1.4742->1.2904), avg 9.89->5.90s.
+        #  M42 (ICCAD_ADAPTIVE_FREE_N, default 100): ALSO drop the 21 _BIG_REDUNDANT_IDX
+        #    build-time profiles for block_count>100 — they win NO n>100 case (the swap
+        #    argument applied per-big-n), so dropping them is wall-only: RF=1.0 local
+        #    stays 1.3277 BIT-IDENTICALLY while the n=120 wall halves 15.6->8.0s,
+        #    projecting a FURTHER ~-11% real @ M=11 (1.2904->1.1473), all 20 n>100
+        #    cases median-INDEPENDENT WINs, robust over median in [6,20]s.
+        # Default ON; ICCAD_ADAPTIVE_POOL=0 restores the full 40-profile pool (local
+        # 1.3269). Set ICCAD_ADAPTIVE_FREE_N huge (e.g. 9999) for M41-only behaviour.
         if not self._single and os.environ.get("ICCAD_ADAPTIVE_POOL", "1") != "0":
-            if block_count > int(os.environ.get("ICCAD_ADAPTIVE_N", "0")):
-                profiles = [p for p in profiles if "ICCAD_ORDER_SWAP" not in p
-                            and "ICCAD_ORDER_MOVE" not in p]
+            n_swap = int(os.environ.get("ICCAD_ADAPTIVE_N", "0"))
+            n_free = int(os.environ.get("ICCAD_ADAPTIVE_FREE_N", "100"))
+            kept = []
+            for i, p in enumerate(_PROFILES):
+                if block_count > n_swap and ("ICCAD_ORDER_SWAP" in p
+                                             or "ICCAD_ORDER_MOVE" in p):
+                    continue
+                if block_count > n_free and i in _BIG_REDUNDANT_IDX:
+                    continue
+                kept.append(p)
+            profiles = kept
 
         if len(profiles) == 1:
             positions_list = [_run_profile(profiles[0], inp, block_count)]

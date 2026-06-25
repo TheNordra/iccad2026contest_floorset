@@ -10,7 +10,7 @@
 - Cost = `(1 + 0.5·(HPWL_gap + Area_gap)) · exp(2·V_rel)`：gap=0 ∧ V_rel=0 → **Cost=1.0**（理論最小）。「找最佳解」永遠 HPWL_gap>0 → Cost>1；還原原圖才能 gap≈0。
 - 真天花板 ~1.1（`fp_sol` verbatim = **1.1079**，headroom 100% 在 quality、violation 已贏）。組員 **1.0322 是 oracle**（讀本地 validation label，hidden test 退 fallback → 不適用）；legit 上限 ~1.62。
 - 訓練 `fp_sol` = ground truth (w,h,x,y)，但無監督 loss 沒用它 → per-block local ML 在這題很弱（組員 v10-v12 全 <1%）。
-- **現況：M41（2026-06-25）找到全新 insight = RuntimeFactor 軸（與 quality 正交，被本地 eval 強制 RF=1.0 藏住）**。本地分 1.3269→**1.3277**（RF=1.0 fiction，+0.06%），但砍掉 6 隻 swap profiles（OS16×3/OS8×2/OM8，大案 18-20s 純 runtime 死重）→ **avg runtime 9.89→5.90s（−40%）**、投影 **real total ~−12%**（@ median 11s、robust 跨 M∈[6,25] 與核心數；10/11 大案 `Qcap/Qfull=1.0000` 品質零損）、100/100 feasible。**quality 軸仍 converged**（packer/order M26-27 + free-aspect 六子軸 M29-M37 + reconstruction M40-RED 全探畢）；RF 軸是**新開的維度**，唯一前提是「官方真套 RF」（否則只損 +0.06%，極不對稱賭注）。逐版細節 git log + memory（`[[m41-runtime-factor]]`…`[[m29-tree-decoder]]`）。
+- **現況：M41（2026-06-25）開全新 RuntimeFactor 軸（與 quality 正交，被本地 eval 強制 RF=1.0 藏住）；M42（2026-06-26）打第二槍**。本地分 1.3269→**1.3277**（RF=1.0 fiction，+0.06%、之後恆定）：M41 砍 6 隻 swap profiles（OS16×3/OS8×2/OM8，大案 18-20s 純 runtime 死重）→ avg 9.89→5.90s；**M42 再砍 21 隻「不贏任何 n>100 案」的 build profiles（per-big-n 冗餘，非全域 LOO）→ avg 5.90→4.73s（−20%）、big-case wall n=120 砍半 15.6→8.0s、quality BIT-IDENTICAL（local 仍 1.3277、20 案全 median-independent WIN）**、投影 real 疊加 M41 共 **~−22%**（@ M=11、robust 跨 M∈[6,20]）、100/100 feasible。**quality 軸仍 converged**（packer/order M26-27 + free-aspect 六子軸 M29-M37 + reconstruction M40-RED 全探畢）；RF 軸唯一前提是「官方真套 RF」（否則只損 +0.06%，極不對稱賭注）。逐版細節 git log + memory（`[[m42-runtime-2nd-order]]`、`[[m41-runtime-factor]]`…`[[m29-tree-decoder]]`）。
 
 ## 評分公式（2026-05-23 確認）
 
@@ -23,9 +23,9 @@
 
 ## 目前狀態
 
-### 🏆 最佳：local 1.3277 / 投影 real ~−12%（M41 RuntimeFactor lever, 34-prof adaptive, 2026-06-25；**avg 5.90s**, 100/100 feasible）
+### 🏆 最佳：local 1.3277 / 投影 real ~−22%（M41+M42 RuntimeFactor lever, two-tier adaptive, 2026-06-26；**avg 4.73s**, 100/100 feasible）
 
-M41 default-on（`ICCAD_ADAPTIVE_POOL=1`）砍 swap profiles；**`ICCAD_ADAPTIVE_POOL=0` 還原 full 40-prof = quality-best 1.3269**（M37, avg 9.89s）。⚠️ 官方 local eval 現顯示 **1.3277**（RF=1.0 fiction，看似退步）——真增益在 real RF 項，本地永遠看不到（見 RuntimeFactor 節）。
+M41+M42 default-on（`ICCAD_ADAPTIVE_POOL=1`）**兩階砍 profiles**：M41 砍 swap（全案）、M42 砍 21 隻 build 冗餘（`block_count>100`，`ICCAD_ADAPTIVE_FREE_N=100`）；**`ICCAD_ADAPTIVE_POOL=0` 還原 full 40-prof = quality-best 1.3269**（M37, avg 9.89s）、`ICCAD_ADAPTIVE_FREE_N=9999` 退 M41-only。⚠️ 官方 local eval 顯示 **1.3277**（RF=1.0 fiction，看似退步；M42 對 local 零再損、bit-identical）——真增益在 real RF 項，本地永遠看不到（見 RuntimeFactor 節）。
 
 `constructive.cpp`（C++ 建構式定框 placer，B 路線重寫組員架構）+ `optimizer_constructive.py`（portfolio wrapper）。**確定性**（無 randomness/限時 → run-to-run 一致，可精確 A/B）、8.78s/case 單 profile。**proxy 自 M13 起 = oracle ceiling**（完美選擇，加 profile 全額 realize → selection 不再是瓶頸）。
 
@@ -43,24 +43,24 @@ M41 default-on（`ICCAD_ADAPTIVE_POOL=1`）砍 swap profiles；**`ICCAD_ADAPTIVE
 - 下檔保護：無用 profile 不被選、不傷分（只花 runtime）
 
 ### 演進里程碑（deterministic A/B；M4 起累計 −38.5%）
-M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored 1.7045 → M6-8 portfolio 1.5659 → M9 wire refine 1.5375 → **M10 %.17g + compaction 1.4528** → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14-16 HPWL push 1.4231 → M17-23 pack-order 1.3983 → **M24 HPWL jump 1.3862** → M25 審計剪枝(38-prof) → **M26 GUIDE_MED 1.3843** → M27 global-packer 死路 → M28 reconstruction ceiling(GREEN) → **M29-M37 free-aspect 六子軸 1.3843→1.3269**（每子軸見下方 env 旋鈕 + memory）→ M38/M39 殘渣收束 → **M40 reconstruction RED-confirmed**（quality 軸到此 converged）→ **M41 RuntimeFactor lever（正交新軸）：砍 6 隻 swap profiles，local 1.3269→1.3277(+0.06%)、avg 9.89→5.90s(−40%)、投影 real ~−12%**。
+M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M5 anchored 1.7045 → M6-8 portfolio 1.5659 → M9 wire refine 1.5375 → **M10 %.17g + compaction 1.4528** → M12 40-prof 1.4371 → M13 narrow frame + _RH=1.4 1.4349 → M14-16 HPWL push 1.4231 → M17-23 pack-order 1.3983 → **M24 HPWL jump 1.3862** → M25 審計剪枝(38-prof) → **M26 GUIDE_MED 1.3843** → M27 global-packer 死路 → M28 reconstruction ceiling(GREEN) → **M29-M37 free-aspect 六子軸 1.3843→1.3269**（每子軸見下方 env 旋鈕 + memory）→ M38/M39 殘渣收束 → **M40 reconstruction RED-confirmed**（quality 軸到此 converged）→ **M41 RuntimeFactor lever（正交新軸）：砍 6 隻 swap profiles，local 1.3269→1.3277(+0.06%)、avg 9.89→5.90s(−40%)、投影 real ~−12%** → **M42 RF 二階：砍 21 隻 build 冗餘(n>100, per-big-n)，local 1.3277 bit-identical、avg 5.90→4.73s(−20%)、big-case wall 砍半、投影 real 疊加共 ~−22%**。
 
-## 🔑 戰略結論：quality 三面天花板皆探畢；**RF 軸（M41）為新開的正交維度**
+## 🔑 戰略結論：quality 三面天花板皆探畢；**RF 軸（M41+M42）為新開的正交維度、二階已 ship**
 
 1. **ordering / ML 永久封卷**（M26 oracle-perm，`oracle_perm_probe.py`）：注入完美 fp_sol 排序，placer 只多拿 +0.002%（類內）/ +0.005%（全域）→ 瓶頸是 **placer**（greedy+compact+push）非 pack order。⇒ refinement pair-relocation / order-LNS / 監督式 ML ranking 全不值得。
 2. **更好的 packer 封死**（M27 global-packer，`dbg_seqpair.py`）：greedy 已在 (area,HPWL) frontier；agap 與 hgap **結構耦合**（wire-driven 花 area 換低 HPWL）+ cluster/preplaced 強迫 void → B*-tree/SP/skyline 重寫不值得。
 3. **reconstruction RED-confirmed**（M28 GREEN→M29 YELLOW→**M40 RED**）：headroom +0.219（oracle 1.1079，100% 在 quality，top-15 大案佔 68.9%）但 X 結構不可從 connectivity 還原（M40 Spearman 0.009）+ Y 序需 label（M40 deterministic +159% vs oracle-Y）→ 重寫 slicing placer 不可行。詳見死路 ledger + `[[m40-reconstruction-red]]`。
-4. **RuntimeFactor 軸 OPEN（M41）**：以上三點全是 **quality**；計分式還有 `max(0.7,R^0.3)` 一項，本地 eval 強制 =1.0 而被全程忽略。`cost∝t^0.3` + 大案 quality 卡死 + 大案佔 60% 權重 → 砍大案 wall = median-independent real-score 增益。已 ship 砍 swap（−40% runtime / 投影 real ~−12%）。**殘留二階槓桿**：砍 swap 後 n=120 仍 22.5s（34 隻 build-time FREE profile 的 sum/cores 成新底）→ 剪低-LOO 的冗餘 FREE profile 可再降 wall（quality 較敏感，需逐-big-n LOO；`rf_score_model.py` 可評估）。見 `[[m41-runtime-factor]]`。
+4. **RuntimeFactor 軸 OPEN（M41+M42）**：以上三點全是 **quality**；計分式還有 `max(0.7,R^0.3)` 一項，本地 eval 強制 =1.0 而被全程忽略。`cost∝t^0.3` + 大案 quality 卡死 + 大案佔 60% 權重 → 砍大案 wall = median-independent real-score 增益。已 ship **兩槍**：**M41** 砍 swap（avg 9.89→5.90s / 投影 real ~−12%）；**M42** 砍 21 隻「不贏任何 n>100 案」的 build 冗餘 profile（per-big-n，**非全域 LOO**；`rf_score_model.py` M42 區塊量化）→ big-case wall n=120 15.6→8.0s、avg 5.90→4.73s、quality **bit-identical**（local 仍 1.3277、20 案全 median-independent WIN）、投影 real 再 −11%（疊加共 −22% @ M=11）。**殘留三階**：multi-tier（n>110 再砍 #8/#12/#26/#27）僅 ~2-3%/10 案、且大案多樣性壓到 8 隻（overfit 風險）→ 未 ship。見 `[[m42-runtime-2nd-order]]`、`[[m41-runtime-factor]]`。
 
-## 未來發展方向（M41 後）
+## 未來發展方向（M42 後）
 
-> quality 軸 converged；**M41 開了 RF 軸**並 ship 了第一槍（砍 swap）。依 ROI：
+> quality 軸 converged；**RF 軸 M41+M42 已 ship 兩槍**（砍 swap + 砍 build 冗餘）。依 ROI：
 
-1. **RF 軸二階槓桿（最高 ROI、唯一仍 OPEN 的追分）**：砍 swap 後 wall 由 34 隻 build-time FREE profile 的 `sum/cores` 設底（n=120 仍 22.5s）。剪掉低-big-n-LOO 的冗餘 FREE profile → 再降大案 wall、再賺 RF。需逐-big-n LOO（非全域 LOO，audit 的 LOO 是全域）避免砍到大案 winner；`rf_score_model.py` 可直接評估候選剪枝集的投影 real total。**前提**同 M41：官方真套 RF。
+1. **RF 軸三階（marginal、overfit 風險，預設不追）**：M42 後大案 wall 由 13 隻 kept build winner 的 `max / sum-cores` 設底（n=120 ~8s，已近底）。multi-tier（n>110 再砍 #8/#12/#26/#27 等非-n>110-winner）僅再 ~2-3%/10 案、且把大案多樣性壓到 8 隻 → hidden-test overfit 風險；`rf_score_model.py` 亦可掃更低 T（90/95）但增益遞減。除非確認官方 median 極低，ROI 不值。
 2. **submission hardening（不追分但對後續輪次實用）**：
    - **proxy generalization**：`_RH=1.4` 由本地 validation sweep——hidden test 分佈不同時是否仍 oracle-min？`rh_sweep.py` 看 1.3-1.6 平台寬度（窄=overfit 風險）。
-   - **feasibility 保證**：M41 後仍 100/100；portfolio 全 fail 退 `python_sa_solve` fallback——確認 fallback feasible。
-   - **RF/median 不確定性**：投影用組員 ~11s 錨 + 掃 M∈[6,25]；若官方 median 極高（大家都慢）則我們已近 0.7 floor、增益更大；若極低則增益縮但**不為負**（RF 對 t 單調）。最壞（官方忽略 RF）只損 +0.06% local。
+   - **feasibility 保證**：M42 後仍 100/100；portfolio 全 fail 退 `python_sa_solve` fallback——確認 fallback feasible。M42 大案剩 13 profile、仍遠多於 1。
+   - **RF/median 不確定性**：投影用組員 ~11s 錨 + 掃 M∈[6,25]；若官方 median 極高（大家都慢）則我們已近 0.7 floor、增益更大；若極低則增益縮但**不為負**（RF 對 t 單調）。最壞（官方忽略 RF）只損 +0.06% local（M42 不再加損）。
 3. **若要再純-quality 追分**：須非 lever 的全新角度（新 constraint 結構洞察 / 新表徵），非既有六子軸延伸——目前沒有。
 
 ### 精度 / 數值（持續遵守）
@@ -121,7 +121,7 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - 預設：`ICCAD_BP_WEIGHT`=30000、`ICCAD_WIRE_MULT`=×1、`ICCAD_ANCHOR_W`=0.10、`ICCAD_LR_ASPECT`/`ICCAD_TB_ASPECT`（boundary aspect，預設 2.50/0.40）
 - 關後處理：`NO_COMPACT`/`NO_REFINE`/`NO_PUSH`（關 M14-16+24）/`NO_BND_PUSH`/`NO_SWAP`/`NO_JUMP`；`PUSH_PASSES=N`、`COMPACT_ITERS=N`、`REFINE_ITERS=N`
 - pack-order 軸：`WIRE_TIEBREAK`、`WIRE_BFS`、`BFS_PIN`、`ORDER_SWAP=K`、`ORDER_MOVE=K`、`GUIDE_MED`（M26 ship）
-- **M41 RF lever（wrapper 旋鈕，在 `optimizer_constructive.py solve()`，非 constructive.cpp）**：`ICCAD_ADAPTIVE_POOL`（預設 **1=on**）砍掉所有含 `ORDER_SWAP`/`ORDER_MOVE` 的 profiles（大案 18-20s 純 runtime 死重）；`=0` 還原 full 40-prof（quality-best 1.3269）；`ICCAD_ADAPTIVE_N=K` 只砍 `block_count>K`（預設 0=全砍）
+- **M41+M42 RF lever（wrapper 旋鈕，在 `optimizer_constructive.py solve()` 兩階 index-based filter，非 constructive.cpp）**：`ICCAD_ADAPTIVE_POOL`（預設 **1=on**）開啟兩階剪枝；`=0` 還原 full 40-prof（quality-best 1.3269）。**M41 階**：砍所有含 `ORDER_SWAP`/`ORDER_MOVE` 的 profiles（大案 18-20s 純 runtime 死重），`ICCAD_ADAPTIVE_N=K` 只砍 `block_count>K`（預設 0=全砍）。**M42 階**：再砍 `_BIG_REDUNDANT_IDX`（21 隻不贏任何 n>100 案的 build profile，模組級常數）當 `block_count>ICCAD_ADAPTIVE_FREE_N`（預設 **100**）；`=9999` 退 M41-only。⚠️ 改 `_PROFILES` 後須用 `rf_score_model.py` M42 區塊重算 `_BIG_REDUNDANT_IDX`。
 - **free-aspect 六子軸**（全 gated、off=bit-identical；M29-M37 ship，per-case win 細節見 memory）：
   - `ICCAD_FREE_ASPECT=1`（M29/M30）：single interior movable 在 ±1% area 搜 aspect（`FREE_RATIOS={1.0,1.5,0.6667,2.0,0.5}`），per-candidate；8 free profile 進 portfolio（`free_pin_tight`/`free_gm_pin` 為全池 LOO 前二）
   - `ICCAD_LR_ASPECT`/`ICCAD_TB_ASPECT`（M32）：decoupled **uniform** boundary aspect（高 LR + TB 留 default 0.40）。⚠️ per-block FREE_BOUNDARY 死路 → 須 uniform
@@ -137,13 +137,13 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 ## 工具
 - `analyze_constructive.py`（單 profile per-case breakdown）、`profile_vs_portfolio.py KEY=VAL`（新 profile 逐案算 oracle-min 增益，>0.05% 才加）
 - `rh_sweep.py`（真值快取 + 掃 _RH/proxy）、`portfolio_ceiling.py`（oracle 天花板）、`profile_audit.py`（M25 池審計：win tally/LOO/**per-profile cpu mean/max**，cache `audit_cache.pkl`）
-- **`rf_score_model.py`（M41 RF-aware 投影模型，永不 ship）**：載入 `audit_cache.pkl`，逐案 Q=proxy oracle-min、wall=`max(max_i t, Σt/cores)`，投影 real total=`Σw·Q·max(0.7,(t/M)^0.3)/Σw` 掃 median M。full-pool RF=1.0 重現 1.3269 為 sanity gate。逐案印 median-independent 判定 `Qcap/Qfull vs (tF/tC)^0.3`
+- **`rf_score_model.py`（M41+M42 RF-aware 投影模型，永不 ship）**：載入 `audit_cache.pkl`，逐案 Q=proxy oracle-min、wall=`max(max_i t, Σt/cores)`，投影 real total=`Σw·Q·max(0.7,(t/M)^0.3)/Σw` 掃 median M。full-pool RF=1.0 重現 1.3269 為 sanity gate。逐案印 median-independent 判定 `Qcap/Qfull vs (tF/tC)^0.3`。**M42 區塊**：per-big-n winner tally → 候選冗餘集 `R = BUILD − {n>T winners}` → greedy 精煉（hmin 耦合用逐案 WIN check）→ 掃 T∈{100,105,110} 印投影增益 + 推薦 `_BIG_REDUNDANT_IDX`（改 `_PROFILES` 後重跑此區塊更新常數）
 - `dbg_area.py`、`dbg_boundary.py` / `dbg_vio_stats.py`（violation 分類）、`dbg_compact*.py`、`dbg_hpwl_push.py`
 - **離線天花板探測（永不 ship，保留為記錄）**：`oracle_perm_probe.py`（M26 ordering）、`dbg_seqpair.py`（M27 global-packer）、`reconstruct_probe.py`（M28：oracle 1.1079、headroom 100% quality；快取 `reconstruct_probe_cache.json`）、`tree_decode_probe.py`（M29 decoder：tree_sol=B\*-tree、X 規則 100% 精確、Y 序是品質 lever；讀訓練 `floorset_lite/*.th`）、`tree_build_probe.py`（M29 greedy builder 死路 8.22）、`recon_slice_probe.py`（M40 遞迴二分 slicing：雙閘死、reconstruction RED-confirmed）
 
 ## 檔案結構（要點）
 - `constructive.cpp` 🏆 — placer，含 M9-M37 全部行為（見 env 旋鈕）+ METRICS stderr
-- `optimizer_constructive.py` 🏆 — 40-prof portfolio + shapely proxy(_RH=1.4)；pruned profile 標 `[Mxx-pruned]` 註解可復原；**M41 `solve()` 開頭 default-on 砍 swap profiles（`ICCAD_ADAPTIVE_POOL`/`ICCAD_ADAPTIVE_N`）**
+- `optimizer_constructive.py` 🏆 — 40-prof portfolio + shapely proxy(_RH=1.4)；pruned profile 標 `[Mxx-pruned]` 註解可復原；**M41+M42 `solve()` default-on 兩階砍 profiles：swap（`ICCAD_ADAPTIVE_POOL`/`ICCAD_ADAPTIVE_N`）+ `_BIG_REDUNDANT_IDX` build 冗餘（`ICCAD_ADAPTIVE_FREE_N`，預設 100）**
 - `optimizer_claude.cpp/.py/.exe` — 舊 SA，僅 fallback
 - `floorplan_gnn.pth` — v1 GNN（unsupervised，僅舊路線）；`gnn_training.md` — ML 文件
 - `iccad2026contest/iccad2026_evaluate.py` — 評估腳本

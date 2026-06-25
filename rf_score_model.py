@@ -226,4 +226,122 @@ for c_ in sorted(big, key=lambda x: -x["w"]):
     win = "WIN" if qrel < ratio else "lose"
     print(f"{ci:>3} {c_['n']:>4} {qf:>7.4f} {qc:>7.4f} {tf:>6.1f} {tc:>6.1f} "
           f"{ratio:>10.4f} {qrel:>7.4f}  {win}")
+
+# ── M42: 2nd-order RF lever — prune big-case-redundant BUILD-time profiles ────
+# After M41 drops SWAP, the big-case wall is sum/cores-bound by the ~20 expensive
+# (~8s) build-time FREE/CA/FC profiles. A build-time profile that is NEVER the
+# selected winner on any case with n>T is pure wall dead-weight for those cases
+# (the M41 swap argument, applied PER-BIG-N: the audit's GLOBAL LOO would wrongly
+# keep profiles that only win small cases). Cap SWAP+them for n>T and project.
+# Gate: every capped case must stay a per-case median-INDEPENDENT WIN
+# (Qcap/Qfull < (tF/tC)^0.3) vs the post-swap (M41) pool -> robust over all M.
+print("\n" + "=" * 64)
+print("M42: 2nd-order RF lever - drop big-case-redundant BUILD profiles")
+print("=" * 64)
+MGRID = (6, 8, 9, 10, 11, 12, 14, 16, 20, 25)
+SWAPset = set(SWAP)
+BUILD = [k for k in live if k not in SWAPset]
+post_swap = cap(0, SWAP)               # M41 shipped pool fn (drop swap for all n)
+
+
+def redundant_at(T):
+    """BUILD profiles that win NO post-swap case with n>T (per-big-n redundant)."""
+    winners = set(select(c_["idx"], post_swap(c_["idx"]))
+                  for c_ in CASES if c_["n"] > T)
+    return [k for k in BUILD if k not in winners], winners
+
+
+def m42cap(T, R):
+    """Drop SWAP for ALL n (M41) AND additionally drop set R for n>T."""
+    R = set(R)
+    def f(ci):
+        n = CASES[ci]["n"]
+        return [k for k in live if k not in SWAPset and not (n > T and k in R)]
+    return f
+
+
+def win_check(R, T):
+    """Per-case median-INDEPENDENT WIN of m42cap(T,R) vs post_swap, over n>T."""
+    capfn = m42cap(T, R); rows = []; allwin = True
+    for c_ in CASES:
+        if c_["n"] <= T:
+            continue
+        ci = c_["idx"]
+        pb, pc = post_swap(ci), capfn(ci)
+        qf, qc = cost(ci, select(ci, pb)), cost(ci, select(ci, pc))
+        tf, tc = wall(ci, pb), wall(ci, pc)
+        ratio = (tf / tc) ** GAMMA if tc > 0 else 1.0
+        qrel = qc / qf if qf > 0 else 1.0
+        win = qrel <= ratio + 1e-12
+        allwin = allwin and win
+        rows.append((ci, c_["n"], qf, qc, tf, tc, ratio, qrel, win))
+    return allwin, rows
+
+
+def refine(T):
+    """Greedy: drop all per-big-n-redundant BUILD profiles, then KEEP back any
+    whose removal (via hmin coupling) broke a capped case's WIN, until all win."""
+    R, _ = redundant_at(T)
+    n0 = len(R)
+    while R:
+        ok, rows = win_check(R, T)
+        if ok:
+            break
+        cur = sum(r[-1] for r in rows)
+        best_k, best = None, cur
+        for k in list(R):                       # try keeping k (remove from drop)
+            _, rows2 = win_check([x for x in R if x != k], T)
+            w2 = sum(r[-1] for r in rows2)
+            if w2 > best:
+                best, best_k = w2, k
+        if best_k is None:                      # no single keep helps -> stop
+            break
+        R.remove(best_k)
+    return R, n0
+
+
+# baseline = M41 post-swap pool
+base_real = {M: rf_total(post_swap, M) for M in MGRID}
+base_local = local_total(post_swap)
+print(f"\nbaseline (M41 post-swap)  local RF=1.0 = {base_local:.4f}")
+
+best_pick = None
+for T in (100, 105, 110):
+    R, n0 = refine(T)
+    naff = len([c_ for c_ in CASES if c_["n"] > T])
+    capfn = m42cap(T, R)
+    loc = local_total(capfn)
+    ok, rows = win_check(R, T)
+    print(f"\n-- T={T}  (n>{T}: {naff} cases)  redundant candidates {n0} -> "
+          f"DROP {len(R)} for n>{T}  [all-win={ok}]")
+    print(f"   drop idx {sorted(R)}")
+    for k in sorted(R, key=lambda k: -max(data[(c_['idx'], k)][1] for c_ in big)):
+        cb = max(data[(c_['idx'], k)][1] for c_ in big)
+        print(f"     #{k:<3} cpuMaxBig {cb:>5.2f}  {pname(PROFILES[k])}")
+    print(f"   local RF=1.0:  {loc:.4f}  (baseline {base_local:.4f}, "
+          f"d={loc-base_local:+.4f})")
+    print(f"   {'idx':>3} {'n':>4} {'Qbase':>7} {'Qcap':>7} {'tBase':>6} {'tCap':>6} "
+          f"{'(tB/tC)^.3':>10} {'Qc/Qb':>7}  win?")
+    for ci, n, qf, qc, tf, tc, ratio, qrel, win in sorted(rows, key=lambda r: -r[1]):
+        print(f"   {ci:>3} {n:>4} {qf:>7.4f} {qc:>7.4f} {tf:>6.1f} {tc:>6.1f} "
+              f"{ratio:>10.4f} {qrel:>7.4f}  {'WIN' if win else 'lose'}")
+    print(f"   projected REAL total vs M41 post-swap baseline:")
+    print(f"     {'M(s)':>5} {'base':>9} {'M42cap':>9} {'delta%':>8}")
+    for M in MGRID:
+        v = rf_total(capfn, M); b = base_real[M]
+        print(f"     {M:>5} {b:>9.4f} {v:>9.4f} {100*(v-b)/b:>+7.2f}%")
+    # pick T that all-wins and maximizes the @M=11 real gain
+    g11 = (base_real[11] - rf_total(capfn, 11)) / base_real[11]
+    if ok and (best_pick is None or g11 > best_pick[1]):
+        best_pick = (T, g11, sorted(R), loc)
+
+print("\n" + "-" * 64)
+if best_pick:
+    T, g11, R, loc = best_pick
+    print(f"RECOMMEND: drop for n>{T}  ->  _BIG_REDUNDANT_IDX = {set(R)}")
+    print(f"  ICCAD_ADAPTIVE_FREE_N = {T}   real gain @M=11 = {g11*100:+.2f}%   "
+          f"local RF=1.0 = {loc:.4f} (vs M41 {base_local:.4f})")
+else:
+    print("NO all-win cap found -> 2nd-order lever below bar (converged).")
+
 print("\nRF MODEL DONE")
