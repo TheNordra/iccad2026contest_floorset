@@ -57,10 +57,10 @@ M1 singles 3.62 → M2 cluster 2.35 → M4 +MIB/layout-key/wire×2000 1.82 → M
 > quality 軸 converged；**RF 軸 M41+M42 已 ship 兩槍**（砍 swap + 砍 build 冗餘）。依 ROI：
 
 1. **RF 軸三階（marginal、overfit 風險，預設不追）**：M42 後大案 wall 由 13 隻 kept build winner 的 `max / sum-cores` 設底（n=120 ~8s，已近底）。multi-tier（n>110 再砍 #8/#12/#26/#27 等非-n>110-winner）僅再 ~2-3%/10 案、且把大案多樣性壓到 8 隻 → hidden-test overfit 風險；`rf_score_model.py` 亦可掃更低 T（90/95）但增益遞減。除非確認官方 median 極低，ROI 不值。
-2. **submission hardening（不追分但對後續輪次實用）**：
-   - **proxy generalization**：`_RH=1.4` 由本地 validation sweep——hidden test 分佈不同時是否仍 oracle-min？`rh_sweep.py` 看 1.3-1.6 平台寬度（窄=overfit 風險）。
-   - **feasibility 保證**：M42 後仍 100/100；portfolio 全 fail 退 `python_sa_solve` fallback——確認 fallback feasible。M42 大案剩 13 profile、仍遠多於 1。
-   - **RF/median 不確定性**：投影用組員 ~11s 錨 + 掃 M∈[6,25]；若官方 median 極高（大家都慢）則我們已近 0.7 floor、增益更大；若極低則增益縮但**不為負**（RF 對 t 單調）。最壞（官方忽略 RF）只損 +0.06% local（M42 不再加損）。
+2. **submission hardening（M43 2026-06-27 已驗，三項全綠 ✅，零 code 變更；見 `[[m43-submission-hardening]]`）**：
+   - **proxy generalization** ✅（`rh_sweep.py` + M43 size 分層）：oracle-min 1.3268、`_RH∈[1.1,1.6]` 全 1.3268–1.3271（basin 比預想 [1.3,1.6] 更寬平），shipped 1.4=1.3269（+0.0001 over oracle）。分層 small/mid/big 的 argmin 漂到 1.10–1.25（flat-basin 4th-decimal 噪音、cosmetic flag），但 `_RH=1.4` 對**各層自身最佳** gap ≤0.007%（small +0.00010 / mid +0.00009 / big +0.00000）→ 無論 hidden size 分佈如何偏都近 oracle，**非 overfit**（operative 指標是 gap 非 argmin）。
+   - **feasibility 保證** ✅（`dbg_fallback_feasible.py` 新建）：`python_sa_solve` fallback **is_feasible 100/100**（⚠️ cost≈9.999999 是 feasible 品質上限 `M_PENALTY−1e-6`、被 `%.4f` 進位成「10.0000」，非 infeasible 的 10.0；判 feasibility 用 `SolutionMetrics.is_feasible` 不可用 cost）。pool 非空不變式：M41 砍 swap→34、M42 大案再砍 21→**13**，`cands==0` 才退 fallback → kept≥13≥1 恆成立。
+   - **RF/median 不確定性** ✅（`rf_score_model.py`，重用 Jun-25 `audit_cache.pkl`、簽章仍符）：SANITY full-pool RF=1.0=**1.3269**；模型**逐位元重現** shipped `_BIG_REDUNDANT_IDX`（21 idx、FREE_N=100）→ 確認 M42 lever 即模型最佳；投影 real 在 **M∈[6,25] 每列恆更佳**（full→M41→M42 @M=11 = 1.4742→1.2904→1.1473、combined −22.2%）、n>100 **20/20 median-independent WIN**；最壞（官方忽略 RF）只損 +0.06% local。
 3. **若要再純-quality 追分**：須非 lever 的全新角度（新 constraint 結構洞察 / 新表徵），非既有六子軸延伸——目前沒有。
 
 ### 精度 / 數值（持續遵守）
