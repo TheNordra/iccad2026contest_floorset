@@ -345,6 +345,101 @@ _PROFILES: List[Dict[str, str]] = [
 _BIG_REDUNDANT_IDX = frozenset({0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 16, 20,
                                 24, 28, 29, 30, 31, 32, 33})
 
+# M45 (2026-07-02): per-band pool tiers — the M42 redundancy generalized from
+# CUMULATIVE ("wins no n>T case") to BAND-scoped ("wins no lo<n<=hi case"), which
+# frees profiles that are big-case winners but mid-band dead weight. Sets are
+# derived by rf_score_model.py's M45 section under a STRICT selection-preserving
+# gate: every band case keeps an EQUAL-cost selection (rel 1e-9) after the drop,
+# so quality is validation-identical and the wall-only cut weakly wins for EVERY
+# cross-submission median and EVERY core count (no RF-floor caveat). Band edges
+# never straddle n=100 (pool composition changes there). REGENERATE both this
+# and _BIG_REDUNDANT_IDX via rf_score_model.py after any _PROFILES edit OR any
+# constructive.exe rebuild (proxy ties can flip with ULP-level position changes).
+#   tier-3 _M45_BAND_DROP: UNIVERSAL — mid cases are sum-bound even at 12 cores
+#     (sum34/12 ~ 5.2s > max34 ~ 4.4s), so the cut pays on any machine.
+#   tier-4 _M45_LOWCORE_DROP: applied only when detected cores <= _M45_CORES_MAX;
+#     on high-core machines these bands are max-setter-bound (gain exactly 0, see
+#     the 2026-07-02 3rd-tier verification) so the tier stays off = zero risk.
+_M45_BAND_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
+    # mid cases: 9 profiles win nothing in n=61..100 (40 cases, kept 25); several
+    # (#2/#13/#17/#18) are n>110 winners — band scoping is what frees them here.
+    # sum-bound at any cores -> universal. Projected -1.2..-1.5% real @ M=11.
+    (60, 100, frozenset({2, 8, 13, 17, 18, 20, 28, 30, 33})),
+)
+_M45_LOWCORE_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
+    # small band: deep floor at 12c (gain ~0) but sum-bound and scoring at low
+    # cores; drops 20/34, kept 14 (strict-equal over its 20 cases).
+    (40, 60, frozenset({2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14,
+                        24, 25, 26, 27, 29, 31, 32, 33})),
+    # (100,110]: kept 8 — #17/#18 set some walls even at 12c, but diversity floor
+    # + high weight keeps this tier-4 (conservative). #19 stays (band winner).
+    (100, 110, frozenset({2, 13, 17, 18, 21})),
+    # (110,inf): D4 — #19 is the case-90 winner (exact tie with #21, proxy
+    # 2.766374981 / cost 1.330092901 both) and is KEPT; only true non-winners go.
+    (110, 10**9, frozenset({8, 12, 26, 27})),
+)
+# tier-4 activation: at 8 detected cores the tier still adds ~-2.2% real @ M=11
+# (some walls are sum-bound there) and the strict gate makes it weakly winning at
+# ANY cores; 8 also covers 8-vCPU/4-physical cloud boxes where the true gain is
+# larger. Above 8 the increment (~-0.9% @12c) is not worth the kept-8 diversity
+# squeeze on the high-weight (100,110] band.
+_M45_CORES_MAX = 8
+
+
+def _effective_cores() -> int:
+    """Detected parallelism for tier-4 gating. Conservative: logical count
+    over-estimates effective cores -> mis-detection direction is 'tier stays
+    off' = bit-identical shipped behaviour. ICCAD_ADAPTIVE_CORES forces a value
+    (<=0/garbage -> auto); unknown -> 9999 (tier-4 off)."""
+    v = os.environ.get("ICCAD_ADAPTIVE_CORES", "")
+    if v:
+        try:
+            c = int(v)
+            if c > 0:
+                return c
+        except ValueError:
+            pass
+    try:
+        if hasattr(os, "sched_getaffinity"):        # Linux: cgroup/affinity-aware
+            return len(os.sched_getaffinity(0)) or 9999
+        return os.cpu_count() or 9999
+    except Exception:
+        return 9999
+
+
+def _pool_indices(block_count: int) -> List[int]:
+    """Kept _PROFILES indices for this case size under the adaptive-pool tiers
+    (M41 swap / M42 big-redundant / M45 band + low-core). ICCAD_ADAPTIVE_POOL=0
+    returns the full pool."""
+    full = list(range(len(_PROFILES)))
+    if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
+        return full
+    n_swap = int(os.environ.get("ICCAD_ADAPTIVE_N", "0"))
+    n_free = int(os.environ.get("ICCAD_ADAPTIVE_FREE_N", "100"))
+    drop_band: frozenset = frozenset()
+    if os.environ.get("ICCAD_ADAPTIVE_BAND", "1") != "0":        # M45 tier-3
+        for lo, hi, d in _M45_BAND_DROP:
+            if lo < block_count <= hi:
+                drop_band = d
+                break
+    drop_low: frozenset = frozenset()
+    if _effective_cores() <= _M45_CORES_MAX:                     # M45 tier-4
+        for lo, hi, d in _M45_LOWCORE_DROP:
+            if lo < block_count <= hi:
+                drop_low = d
+                break
+    kept = []
+    for i, p in enumerate(_PROFILES):
+        if block_count > n_swap and ("ICCAD_ORDER_SWAP" in p
+                                     or "ICCAD_ORDER_MOVE" in p):
+            continue
+        if block_count > n_free and i in _BIG_REDUNDANT_IDX:
+            continue
+        if i in drop_band or i in drop_low:
+            continue
+        kept.append(i)
+    return kept if kept else full                                # never-empty guard
+
 _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # (min hpwl over profiles) as a stand-in for the unknown baseline hpwl
            # hbase; since we never beat baseline, hmin > hbase by ~hmin/hbase≈1.3-1.4,
@@ -485,18 +580,13 @@ class MyOptimizer(FloorplanOptimizer):
         #    cases median-INDEPENDENT WINs, robust over median in [6,20]s.
         # Default ON; ICCAD_ADAPTIVE_POOL=0 restores the full 40-profile pool (local
         # 1.3269). Set ICCAD_ADAPTIVE_FREE_N huge (e.g. 9999) for M41-only behaviour.
-        if not self._single and os.environ.get("ICCAD_ADAPTIVE_POOL", "1") != "0":
-            n_swap = int(os.environ.get("ICCAD_ADAPTIVE_N", "0"))
-            n_free = int(os.environ.get("ICCAD_ADAPTIVE_FREE_N", "100"))
-            kept = []
-            for i, p in enumerate(_PROFILES):
-                if block_count > n_swap and ("ICCAD_ORDER_SWAP" in p
-                                             or "ICCAD_ORDER_MOVE" in p):
-                    continue
-                if block_count > n_free and i in _BIG_REDUNDANT_IDX:
-                    continue
-                kept.append(p)
-            profiles = kept
+        #  M45 (2026-07-02): two more tiers inside _pool_indices() — tier-3 band-
+        #    scoped mid-case drops (UNIVERSAL, ICCAD_ADAPTIVE_BAND=0 disables) and
+        #    tier-4 low-core drops (only when _effective_cores() <= _M45_CORES_MAX;
+        #    ICCAD_ADAPTIVE_CORES forces/disables detection). Both under the strict
+        #    selection-preserving gate -> local RF=1.0 score unchanged (1.3277).
+        if not self._single:
+            profiles = [_PROFILES[i] for i in _pool_indices(block_count)]
 
         if len(profiles) == 1:
             positions_list = [_run_profile(profiles[0], inp, block_count)]

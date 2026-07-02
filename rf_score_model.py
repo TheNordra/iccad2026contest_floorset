@@ -344,4 +344,169 @@ if best_pick:
 else:
     print("NO all-win cap found -> 2nd-order lever below bar (converged).")
 
+# ── M45: per-band pool tiers — band-scoped redundancy under a STRICT gate ─────
+# M42's redundancy is CUMULATIVE ("wins no case with n>T"); a BAND-scoped one
+# ("wins no case with lo<n<=hi") frees profiles that are big-case winners but
+# mid-band dead weight (#2/#13/#17/#18 win n>110 yet nothing in 61..100). Mid
+# cases stay sum-bound even at 12 cores (sum34/12 ~ 5.2s > max34 ~ 4.4s), so a
+# mid-band drop is a UNIVERSAL wall cut; small-band and deeper big-band drops
+# only pay when the machine is low-core (wall flips to sum/cores) -> tier-4,
+# gated by detected cores in the wrapper.
+# GATE (stricter than the M42 WIN inequality, which over-credits caps near the
+# RF floor): per-case SELECTION-PRESERVING — cost(select(capped)) must EQUAL
+# cost(select(shipped)) (rel 1e-9; cost-tied winner flips allowed). Q unchanged
+# -> max(0.7,(t/M)^0.3) monotone in t -> a wall-only drop weakly wins for EVERY
+# median M and EVERY cores count. Candidates exclude band winners, so an exact
+# tie's INDEX winner (e.g. #19 on case 90, tied with #21) is always KEPT.
+print("\n" + "=" * 64)
+print("M45: per-band tiers - band-scoped redundancy, strict gate")
+print("=" * 64)
+
+BIGSET = set(oc._BIG_REDUNDANT_IDX)
+R100r, _ = refine(100)
+assert set(R100r) == BIGSET, (
+    f"shipped _BIG_REDUNDANT_IDX drift: model {sorted(R100r)} vs {sorted(BIGSET)}")
+print(f"shipped-chain check: refine(100) == _BIG_REDUNDANT_IDX ({len(BIGSET)} idx) OK")
+
+
+def shipped_pool(ci):
+    """M41+M42 shipped chain (the tier-3 baseline)."""
+    n = CASES[ci]["n"]
+    return [k for k in live if k not in SWAPset and not (n > 100 and k in BIGSET)]
+
+
+def band_cases(lo, hi):
+    return [c_ for c_ in CASES if lo < c_["n"] <= hi]
+
+
+def strict_rows(drop, lo, hi):
+    """Per-band-case (ci, n, q_shipped, q_capped, equal?) under drop set."""
+    rows = []
+    for c_ in band_cases(lo, hi):
+        ci = c_["idx"]
+        pb = shipped_pool(ci)
+        pc = [k for k in pb if k not in drop]
+        qb, qc = cost(ci, select(ci, pb)), cost(ci, select(ci, pc))
+        rows.append((ci, c_["n"], qb, qc, abs(qc - qb) <= 1e-9 * max(1.0, abs(qb))))
+    return rows
+
+
+def strict_refine_band(lo, hi):
+    """Drop = band non-winners, greedy keep-back until every band case keeps an
+    EQUAL-cost selection (hmin coupling can shift selections)."""
+    bc = band_cases(lo, hi)
+    winners = set(select(c_["idx"], shipped_pool(c_["idx"])) for c_ in bc)
+    pool0 = shipped_pool(bc[0]["idx"])
+    R = [k for k in pool0 if k not in winners]
+    n0 = len(R)
+    while R:
+        rows = strict_rows(set(R), lo, hi)
+        if all(r[-1] for r in rows):
+            break
+        best_k, best = None, sum(r[-1] for r in rows)
+        for k in list(R):
+            w2 = sum(r[-1] for r in strict_rows(set(R) - {k}, lo, hi))
+            if w2 > best:
+                best, best_k = w2, k
+        if best_k is None:
+            break
+        R.remove(best_k)
+    return sorted(R), n0
+
+
+# band edges must not straddle n=100 (pool composition changes there)
+BANDS = [(40, 60), (60, 80), (80, 100), (60, 100), (100, 110), (110, 10**9),
+         (100, 10**9)]
+BAND_R = {}
+for lo, hi in BANDS:
+    bc = band_cases(lo, hi)
+    if not bc:
+        continue
+    R, n0 = strict_refine_band(lo, hi)
+    ok = all(r[-1] for r in strict_rows(set(R), lo, hi))
+    poolsz = len(shipped_pool(bc[0]["idx"]))
+    BAND_R[(lo, hi)] = R
+    hs = "inf" if hi >= 10**9 else str(hi)
+    print(f"\nband ({lo},{hs}]: {len(bc)} cases, pool {poolsz}, candidates {n0} "
+          f"-> DROP {len(R)} [strict all-equal={ok}]  kept {poolsz - len(R)}")
+    print(f"  drop idx {R}")
+    for k in R:
+        tb = [data[(c_['idx'], k)][1] for c_ in bc]
+        print(f"    #{k:<3} bandCpu mean {sum(tb)/len(tb):5.2f} max {max(tb):5.2f}  "
+              f"{pname(PROFILES[k])}")
+
+# fine (60,80]+(80,100] union vs coarse (60,100]
+fine_mid = set(BAND_R.get((60, 80), [])) | set(BAND_R.get((80, 100), []))
+coarse_mid = set(BAND_R.get((60, 100), []))
+print(f"\nmid banding: fine union {sorted(fine_mid)} vs coarse {sorted(coarse_mid)}")
+
+# ── projection: shipped vs +universal(mid) vs +lowcore(all tiers) ─────────────
+
+
+def m45_fn(band_drop):
+    """band_drop: iterable of (lo, hi, set). Applied on top of shipped chain."""
+    def f(ci):
+        n = CASES[ci]["n"]
+        pool = shipped_pool(ci)
+        for lo, hi, D in band_drop:
+            if lo < n <= hi:
+                pool = [k for k in pool if k not in D]
+        return pool
+    return f
+
+
+UNI = [(60, 100, coarse_mid)]
+LOW = UNI + [(40, 60, set(BAND_R.get((40, 60), []))),
+             (100, 110, set(BAND_R.get((100, 110), []))),
+             (110, 10**9, set(BAND_R.get((110, 10**9), [])))]
+V_ship = shipped_pool
+V_uni = m45_fn(UNI)
+V_low = m45_fn(LOW)
+
+for tag, fn in (("shipped", V_ship), ("+uni(mid)", V_uni), ("+lowcore(all)", V_low)):
+    print(f"  local RF=1.0 total {tag:<14} = {local_total(fn):.4f}")
+
+print(f"\nprojected REAL total, rows = median M, cols = cores (shipped / +uni / +low):")
+for cores_ in (4, 6, 8, 12, 16):
+    print(f"  cores={cores_}")
+    for M in (6, 8, 11, 14, 20):
+        a = rf_total(V_ship, M, cores_)
+        b = rf_total(V_uni, M, cores_)
+        d = rf_total(V_low, M, cores_)
+        print(f"    M={M:>3}  {a:.4f}  {b:.4f} ({100*(b-a)/a:+.2f}%)  "
+              f"{d:.4f} ({100*(d-a)/a:+.2f}%)")
+
+# per-band mean wall before/after (uni and low) at each cores
+print(f"\nband mean wall (s) shipped -> +uni -> +low:")
+for lo, hi in ((40, 60), (60, 100), (100, 110), (110, 10**9)):
+    bc = band_cases(lo, hi)
+    hs = "inf" if hi >= 10**9 else str(hi)
+    for cores_ in (4, 8, 12):
+        ws = sum(wall(c_["idx"], V_ship(c_["idx"]), cores_) for c_ in bc) / len(bc)
+        wu = sum(wall(c_["idx"], V_uni(c_["idx"]), cores_) for c_ in bc) / len(bc)
+        wl = sum(wall(c_["idx"], V_low(c_["idx"]), cores_) for c_ in bc) / len(bc)
+        print(f"  ({lo},{hs}] cores={cores_:>2}: {ws:6.2f} -> {wu:6.2f} -> {wl:6.2f}")
+
+# tie record for the docs (n=111 case; #19 vs #21 under shipped pool)
+for c_ in CASES:
+    if c_["n"] == 111:
+        ci = c_["idx"]
+        pb = shipped_pool(ci)
+        hmin = min(PM[(ci, k)][1] for k in pb) or 1.0
+        A = CASES[ci]["A_hat"]
+        for k in (19, 21):
+            if k in pb:
+                px = (PM[(ci, k)][0] / A + RH * PM[(ci, k)][1] / hmin) * math.exp(2 * PM[(ci, k)][2])
+                print(f"\ntie check case {ci} (n=111): #{k} proxy {px:.9f} cost {cost(ci, k):.9f}")
+
+print(f"\nready-to-paste wrapper constants:")
+print(f"_M45_BAND_DROP = (  # tier-3 UNIVERSAL (mid cases sum-bound at any cores)")
+print(f"    (60, 100, frozenset({sorted(coarse_mid)})),")
+print(f")")
+print(f"_M45_LOWCORE_DROP = (  # tier-4, only when detected cores <= _M45_CORES_MAX")
+print(f"    (40, 60, frozenset({sorted(BAND_R.get((40, 60), []))})),")
+print(f"    (100, 110, frozenset({sorted(BAND_R.get((100, 110), []))})),")
+print(f"    (110, 10**9, frozenset({sorted(BAND_R.get((110, 10**9), []))})),")
+print(f")")
+
 print("\nRF MODEL DONE")
