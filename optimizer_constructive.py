@@ -529,6 +529,8 @@ def _run_profile(env_over: Dict[str, str], inp: str, n: int):
         return None
 
 
+
+
 class MyOptimizer(FloorplanOptimizer):
     """Constructive fixed-outline placer, portfolio + proxy selection."""
 
@@ -588,14 +590,36 @@ class MyOptimizer(FloorplanOptimizer):
         if not self._single:
             profiles = [_PROFILES[i] for i in _pool_indices(block_count)]
 
+        # M47: compute each profile's proxy on the MAIN thread as soon as that
+        # profile finishes (as_completed), overlapping the still-running slower
+        # profiles. The serial post-pool proxy tail was 29% of the scored wall
+        # on n>100 (2.9s on n=120); running the 13 proxies CONCURRENTLY in the
+        # worker threads was 4x WORSE (pure-Python GIL thrash), so exactly one
+        # proxy runs at a time. Same _proxy_metrics inputs, results stored by
+        # profile index -> same cands order and values -> argmin unchanged. A
+        # proxy failure degrades to (pos, None) and is recomputed below on the
+        # original exception path (a lone candidate never reads its proxy).
+        margs = (area_targets, b2b_connectivity, p2b_connectivity,
+                 pins_pos, constraints, block_count)
         if len(profiles) == 1:
-            positions_list = [_run_profile(profiles[0], inp, block_count)]
+            results = [(_run_profile(profiles[0], inp, block_count), None)]
         else:
+            results = [(None, None)] * len(profiles)
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(profiles)) as ex:
-                futs = [ex.submit(_run_profile, p, inp, block_count) for p in profiles]
-                positions_list = [f.result() for f in futs]
+                futs = {ex.submit(_run_profile, p, inp, block_count): i
+                        for i, p in enumerate(profiles)}
+                for f in concurrent.futures.as_completed(futs):
+                    pos = f.result()
+                    m = None
+                    if pos is not None:
+                        try:
+                            m = _proxy_metrics(pos, *margs)
+                        except Exception:
+                            m = None
+                    results[futs[f]] = (pos, m)
 
-        cands = [pos for pos in positions_list if pos is not None]
+        kept = [(pos, m) for pos, m in results if pos is not None]
+        cands = [pos for pos, _ in kept]
         if not cands:
             print("[constructive] all profiles failed; python SA fallback",
                   file=sys.stderr)
@@ -606,9 +630,10 @@ class MyOptimizer(FloorplanOptimizer):
             return cands[0]
 
         # Baseline-free proxy selection: cost ~ (area/A + hpwl/H)*exp(2*vrel).
-        metrics = [_proxy_metrics(pos, area_targets, b2b_connectivity,
-                                  p2b_connectivity, pins_pos, constraints, block_count)
-                   for pos in cands]
+        # Metrics normally arrive precomputed from the profile threads (M47).
+        metrics = [m if m is not None else
+                   _proxy_metrics(pos, *margs)
+                   for pos, m in kept]
         sumA = sum(max(0.0, float(area_targets[i])) for i in range(block_count))
         A_hat = 1.035 * max(sumA, 1e-9)
         hmin = min(m["hpwl"] for m in metrics) or 1.0
