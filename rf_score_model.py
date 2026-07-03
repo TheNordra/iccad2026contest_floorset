@@ -509,4 +509,96 @@ print(f"    (100, 110, frozenset({sorted(BAND_R.get((100, 110), []))})),")
 print(f"    (110, 10**9, frozenset({sorted(BAND_R.get((110, 10**9), []))})),")
 print(f")")
 
+# ── M46: wall-setter speedup sensitivity — uniform & FREE-targeted alpha ──────
+# After M45 the pool-prune axis is exhausted ((100,inf] candidates=0); the only
+# RF continuation is making the max-setter RUNS faster (C++ hot path). A pure
+# speedup keeps positions bit-identical -> Q and selection unchanged -> per-case
+# t' <= t -> cost' <= cost for EVERY median and EVERY cores count (stronger than
+# the M45 strict gate). This section quantifies the payoff: scale kept-profile
+# times by alpha (uniform, or FREE-stack-only) and project the real total.
+print("\n" + "=" * 64)
+print("M46: max-setter speedup sensitivity (uniform / FREE-stack alpha)")
+print("=" * 64)
+
+# shipped-constant drift checks (mirrors the M42 assert)
+assert coarse_mid == set(oc._M45_BAND_DROP[0][2]), "tier-3 drift vs shipped"
+for lo, hi, d in oc._M45_LOWCORE_DROP:
+    assert set(d) == set(BAND_R.get((lo, hi), [])), f"tier-4 drift ({lo},{hi}]"
+print("shipped-chain check: M45 tier-3/tier-4 constants match model OK")
+
+
+def m46_pool(ci, cores):
+    """The ACTUAL shipped pool at a given cores count (tier-4 auto-gates)."""
+    n = CASES[ci]["n"]
+    pool = shipped_pool(ci)
+    for lo, hi, D in oc._M45_BAND_DROP:
+        if lo < n <= hi:
+            pool = [k for k in pool if k not in D]
+    if cores <= oc._M45_CORES_MAX:
+        for lo, hi, D in oc._M45_LOWCORE_DROP:
+            if lo < n <= hi:
+                pool = [k for k in pool if k not in D]
+    return pool
+
+
+FREE_SET = {k for k in live if "ICCAD_FREE_ASPECT" in PROFILES[k]}
+
+
+def rf46(M, cores, af):
+    """Real total with per-profile time scaling af(k) (selection/Q unchanged —
+    exact for a pure bit-identical speedup)."""
+    s = 0.0
+    for c_ in CASES:
+        ci = c_["idx"]
+        pool = m46_pool(ci, cores)
+        q = cost(ci, select(ci, pool))
+        ts = [data[(ci, k)][1] * af(k) for k in pool]
+        w = max(max(ts), sum(ts) / cores)
+        s += c_["w"] * q * max(FLOOR, (w / M) ** GAMMA)
+    return s / totW
+
+
+ONE = lambda k: 1.0
+# sanity: alpha=1 must reproduce the M45 projections at matching cores
+for cores_, ref in ((12, V_uni), (4, V_low)):
+    a, b = rf46(11, cores_, ONE), rf_total(ref, 11, cores_)
+    assert abs(a - b) < 1e-9, f"alpha=1 sanity failed @cores={cores_}: {a} vs {b}"
+print("sanity: alpha=1.0 reproduces shipped projections @12c/@4c OK")
+
+# max-setter record (regen after any exe rebuild)
+from collections import Counter
+tal = Counter()
+for c_ in CASES:
+    if c_["n"] > 100:
+        ci = c_["idx"]
+        pool = m46_pool(ci, 12)
+        tal[max(pool, key=lambda k: data[(ci, k)][1])] += 1
+print("\nmax-setter tally n>100 @12c: "
+      + "  ".join(f"#{k}({pname(PROFILES[k])})x{v}" for k, v in tal.most_common()))
+
+ALPHAS_U = (0.95, 0.9, 0.85, 0.8, 0.7, 0.5)
+print("\nprojected REAL delta vs shipped (uniform alpha on ALL kept profiles):")
+print(f"{'cores':>6} {'M':>3} " + "".join(f"{'a='+str(a):>9}" for a in ALPHAS_U))
+for cores_ in (4, 8, 12, 16):
+    for M in (6, 8, 11, 14, 20):
+        base = rf46(M, cores_, ONE)
+        row = f"{cores_:>6} {M:>3} "
+        for a in ALPHAS_U:
+            v = rf46(M, cores_, lambda k, a=a: a)
+            row += f"{100*(v-base)/base:>+8.2f}%"
+        print(row)
+
+ALPHAS_T = (0.9, 0.8, 0.7)
+print(f"\nprojected REAL delta vs shipped (alpha on FREE-stack profiles ONLY, "
+      f"{len(FREE_SET)} of {N_LIVE}):")
+print(f"{'cores':>6} {'M':>3} " + "".join(f"{'a='+str(a):>9}" for a in ALPHAS_T))
+for cores_ in (4, 8, 12, 16):
+    for M in (8, 11, 14):
+        base = rf46(M, cores_, ONE)
+        row = f"{cores_:>6} {M:>3} "
+        for a in ALPHAS_T:
+            v = rf46(M, cores_, lambda k, a=a: a if k in FREE_SET else 1.0)
+            row += f"{100*(v-base)/base:>+8.2f}%"
+        print(row)
+
 print("\nRF MODEL DONE")
