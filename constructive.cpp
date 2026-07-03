@@ -44,6 +44,7 @@
 #include <functional>
 #include <string>
 #include <tuple>
+#include <unordered_set>
 using namespace std;
 
 static const int B_LEFT = 1, B_RIGHT = 2, B_TOP = 4, B_BOTTOM = 8;
@@ -450,24 +451,22 @@ static double bbox_area_with(double x,double y,double w,double h){
 }
 
 // candidate origins for an item of size (iw,ih)
+struct M46KeyHash {
+    size_t operator()(const pair<long long,long long>& p) const {
+        return (size_t)((unsigned long long)p.first*1000003ULL
+                        ^ (unsigned long long)p.second*7919ULL);
+    }
+};
 static vector<pair<double,double>> item_candidates(
         const Item& it, double fw, double fh, const vector<XYWH>& rects) {
     double iw=it.w, ih=it.h, xmax=max(0.0,fw-iw), ymax=max(0.0,fh-ih);
     vector<pair<double,double>> cands={{0,0},{xmax,0},{0,ymax},{xmax,ymax}};
+    cands.reserve(8*rects.size()+16);
     if (it.aw>0) cands.push_back({it.ax-iw/2, it.ay-ih/2});
-    set<long long> xs,ys; xs.insert(0);xs.insert(llround(xmax*1e6));ys.insert(0);ys.insert(llround(ymax*1e6));
-    auto addx=[&](double v){ xs.insert(llround(min(max(0.0,v),xmax)*1e6)); };
-    auto addy=[&](double v){ ys.insert(llround(min(max(0.0,v),ymax)*1e6)); };
-    for (const XYWH& r:rects){
-        double rx2=r.x+r.w+MARGIN, ry2=r.y+r.h+MARGIN;
-        double lx=max(0.0,r.x-iw-MARGIN), by=max(0.0,r.y-ih-MARGIN);
-        addx(rx2);addx(lx);addx(r.x); addy(ry2);addy(by);addy(r.y);
-        cands.push_back({rx2,r.y}); cands.push_back({rx2,max(0.0,r.y+r.h-ih)});
-        cands.push_back({r.x,ry2}); cands.push_back({max(0.0,r.x+r.w-iw),ry2});
-        cands.push_back({lx,r.y});  cands.push_back({lx,max(0.0,r.y+r.h-ih)});
-        cands.push_back({r.x,by});  cands.push_back({max(0.0,r.x+r.w-iw),by});
-    }
-    // boundary-exact: origin that makes a boundary member touch the frame edge
+    // M46 opt-A: boundary scan FIRST — xs/ys are read only when a boundary
+    // member has no exact origin on that axis, so interior items (the FREE
+    // hot path) skip every std::set insert. Same sets when needed (std::set
+    // iteration is sorted by value, independent of insert order).
     vector<double> xv, yv; bool any=false, slide_x=true, slide_y=true;
     for (size_t k=0;k<it.blocks.size();k++){
         int code=blocks[it.blocks[k]].boundary; if (code==0) continue; any=true;
@@ -478,12 +477,32 @@ static vector<pair<double,double>> item_candidates(
         if (code&B_BOTTOM){ yv.push_back(-oy); slide_y=false; }
         if (code&B_TOP){ yv.push_back(fh-oy-bh); slide_y=false; }
     }
+    bool need_xs = any && xv.empty(), need_ys = any && yv.empty();
+    set<long long> xs,ys;
+    if (need_xs){ xs.insert(0);xs.insert(llround(xmax*1e6)); }
+    if (need_ys){ ys.insert(0);ys.insert(llround(ymax*1e6)); }
+    auto addx=[&](double v){ xs.insert(llround(min(max(0.0,v),xmax)*1e6)); };
+    auto addy=[&](double v){ ys.insert(llround(min(max(0.0,v),ymax)*1e6)); };
+    for (const XYWH& r:rects){
+        double rx2=r.x+r.w+MARGIN, ry2=r.y+r.h+MARGIN;
+        double lx=max(0.0,r.x-iw-MARGIN), by=max(0.0,r.y-ih-MARGIN);
+        if (need_xs){ addx(rx2);addx(lx);addx(r.x); }
+        if (need_ys){ addy(ry2);addy(by);addy(r.y); }
+        cands.push_back({rx2,r.y}); cands.push_back({rx2,max(0.0,r.y+r.h-ih)});
+        cands.push_back({r.x,ry2}); cands.push_back({max(0.0,r.x+r.w-iw),ry2});
+        cands.push_back({lx,r.y});  cands.push_back({lx,max(0.0,r.y+r.h-ih)});
+        cands.push_back({r.x,by});  cands.push_back({max(0.0,r.x+r.w-iw),by});
+    }
     if (any){
         if (xv.empty()){ for(long long v:xs) xv.push_back(v/1e6); }
         if (yv.empty()){ for(long long v:ys) yv.push_back(v/1e6); }
         for (double xx:xv) for (double yy:yv) cands.push_back({xx,yy});
     }
-    set<pair<long long,long long>> seen; vector<pair<double,double>> out;
+    // M46 opt-B: hash dedup (same first-occurrence-wins semantics -> identical
+    // out order -> identical sort input; equality is exact on the key pair).
+    unordered_set<pair<long long,long long>,M46KeyHash> seen;
+    seen.reserve(cands.size()*2);
+    vector<pair<double,double>> out; out.reserve(cands.size());
     for (auto&c:cands){
         double x=min(max(0.0,c.first),xmax), y=min(max(0.0,c.second),ymax);
         auto key=make_pair((long long)llround(x*1e6),(long long)llround(y*1e6));
@@ -555,9 +574,46 @@ static bool rect_touches_any(double x,double y,double w,double h,const vector<XY
 
 static double wmedian(vector<pair<double,double>>&);  // defined below (used by GUIDE_MED)
 
+// M46 opt-C: uniform-grid overlap index. Returns the same boolean as the
+// linear rect_overlap scan: a true overlap has interval intersection > TOL
+// on both axes, so the two rects share at least one grid cell -> querying the
+// candidate's cell span visits every possible overlapper (superset); the exact
+// rect_overlap test then decides. Boolean-only -> bit-identical output.
+struct M46Grid {
+    double csx=1, csy=1; static const int G=32;
+    const vector<XYWH>* rp=nullptr;
+    vector<vector<int>> cells;
+    vector<int> stamp; int qid=0;
+    void init(double fw, double fh, const vector<XYWH>* r){
+        rp=r; csx=max(fw,1e-9)/G; csy=max(fh,1e-9)/G;
+        cells.assign(G*G,{}); stamp.clear(); qid=0;
+    }
+    inline int ixc(double v) const { int c=(int)(v/csx); return c<0?0:(c>=G?G-1:c); }
+    inline int iyc(double v) const { int c=(int)(v/csy); return c<0?0:(c>=G?G-1:c); }
+    void add(int i){
+        const XYWH& r=(*rp)[i];
+        int x0=ixc(r.x), x1=ixc(r.x+r.w), y0=iyc(r.y), y1=iyc(r.y+r.h);
+        for (int a=x0;a<=x1;a++) for (int b=y0;b<=y1;b++) cells[a*G+b].push_back(i);
+        stamp.push_back(0);
+    }
+    bool overlaps(double x,double y,double w,double h){
+        ++qid;
+        int x0=ixc(x), x1=ixc(x+w), y0=iyc(y), y1=iyc(y+h);
+        for (int a=x0;a<=x1;a++) for (int b=y0;b<=y1;b++)
+            for (int i:cells[a*G+b]){
+                if (stamp[i]==qid) continue;
+                stamp[i]=qid;
+                const XYWH& r=(*rp)[i];
+                if (rect_overlap(x,y,w,h,r.x,r.y,r.w,r.h)) return true;
+            }
+        return false;
+    }
+};
+
 // greedy pack of items into frame
 static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<XYWH>& out){
     out=pos; vector<XYWH> rects; bbox_reset();
+    M46Grid g46; g46.init(fw,fh,&rects);
     vector<char> done(N,0);
     // Wire weight calibrated high: bbox-area minimisation alone scatters connected
     // blocks; the baseline we reconstruct is wire-driven. Swept optimum ~2000-3000
@@ -566,7 +622,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
     for (int i=0;i<N;i++) if (placed[i]){
         if (pos[i].x<-TOL||pos[i].y<-TOL||pos[i].x+pos[i].w>fw+TOL||pos[i].y+pos[i].h>fh+TOL) return false;
         for (const XYWH&r:rects) if (rect_overlap(pos[i].x,pos[i].y,pos[i].w,pos[i].h,r.x,r.y,r.w,r.h)) return false;
-        rects.push_back(pos[i]); bbox_add(pos[i].x,pos[i].y,pos[i].w,pos[i].h); done[i]=1;
+        rects.push_back(pos[i]); g46.add((int)rects.size()-1); bbox_add(pos[i].x,pos[i].y,pos[i].w,pos[i].h); done[i]=1;
     }
     // First-pass: attach anchored-cluster movable members to their preplaced walls
     // (teammate _pack_in_frame 637-689). Placed members are skipped by the singles
@@ -603,8 +659,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                 for (auto&c:cands){
                     double x=c.first, y=c.second;
                     if (x<-TOL||y<-TOL||x+cw>fw+TOL||y+ch>fh+TOL) continue;
-                    bool ov=false;
-                    for (const XYWH&r2:rects) if (rect_overlap(x,y,cw,ch,r2.x,r2.y,r2.w,r2.h)){ ov=true; break; }
+                    bool ov=g46.overlaps(x,y,cw,ch);
                     if (ov) continue;
                     double cx=x+cw/2, cy=y+ch/2;
                     double ad=anchors[b].w>0?fabs(cx-anchors[b].x)+fabs(cy-anchors[b].y):0.0;
@@ -627,7 +682,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                 }
             }
             if (found){
-                out[b]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh});
+                out[b]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh}); g46.add((int)rects.size()-1);
                 bbox_add(bx,by,bw,bh); done[b]=1; cluster_rects.push_back({bx,by,bw,bh});
             }
         }
@@ -668,8 +723,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                     for (auto&c:cands){
                         double x=c.first,y=c.second;
                         if (x<-TOL||y<-TOL||x+IW>fw+TOL||y+IH>fh+TOL) continue;
-                        bool ov=false;
-                        for (const XYWH&rr:rects) if (rect_overlap(x,y,IW,IH,rr.x,rr.y,rr.w,rr.h)){ ov=true; break; }
+                        bool ov=g46.overlaps(x,y,IW,IH);
                         if (ov) continue;
                         double cx=x+IW/2, cy=y+IH/2;
                         double ad=it.aw>0?fabs(cx-it.ax)+fabs(cy-it.ay):0.0;
@@ -688,7 +742,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                     }
                 }
                 if (!found) return false;
-                out[sb]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh}); bbox_add(bx,by,bw,bh); done[sb]=1;
+                out[sb]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh}); g46.add((int)rects.size()-1); bbox_add(bx,by,bw,bh); done[sb]=1;
                 continue;
             }
         }
@@ -728,7 +782,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
             for (size_t k=0;k<it.blocks.size()&&!ov;k++){
                 int b=it.blocks[k]; double rx=x+it.offs[k].first, ry=y+it.offs[k].second;
                 double bw=dims[b].first, bh=dims[b].second;
-                for (const XYWH&r:rects) if (rect_overlap(rx,ry,bw,bh,r.x,r.y,r.w,r.h)){ ov=true; break; }
+                if (g46.overlaps(rx,ry,bw,bh)){ ov=true; break; }
             }
             if (ov) continue;
             double cx=x+it.w/2, cy=y+it.h/2;
@@ -758,7 +812,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         for (size_t k=0;k<it.blocks.size();k++){
             int b=it.blocks[k]; double rx=bx+it.offs[k].first, ry=by+it.offs[k].second;
             double bw=dims[b].first, bh=dims[b].second;
-            out[b]={rx,ry,bw,bh}; rects.push_back({rx,ry,bw,bh}); bbox_add(rx,ry,bw,bh); done[b]=1;
+            out[b]={rx,ry,bw,bh}; rects.push_back({rx,ry,bw,bh}); g46.add((int)rects.size()-1); bbox_add(rx,ry,bw,bh); done[b]=1;
         }
     }
     return true;
