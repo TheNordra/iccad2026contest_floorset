@@ -34,9 +34,7 @@ _DIR = Path(__file__).parent
 sys.path.insert(0, str(_DIR / "iccad2026contest"))
 sys.path.insert(0, str(_DIR))
 
-from iccad2026_evaluate import (
-    FloorplanOptimizer, calculate_hpwl_b2b, calculate_hpwl_p2b,
-)
+from iccad2026_evaluate import FloorplanOptimizer
 from optimizer_claude import _serialize_input, _parse_output, python_sa_solve
 
 try:
@@ -466,25 +464,71 @@ def _ensure_compiled() -> bool:
     return _BIN.exists()
 
 
+def _hpwl_b2b_fast(positions, b2b):
+    """calculate_hpwl_b2b with the tensor rows pre-converted via tolist().
+    BIT-IDENTICAL to the harness version: tolist == float(tensor scalar) is the
+    same exact fp32->fp64 widening, edge order and accumulation order unchanged,
+    all arithmetic on python floats as before. Per-row tensor indexing was the
+    proxy hot spot (M47b: 300/300 old==new, x11.5)."""
+    if b2b is None or len(b2b) == 0:
+        return 0.0
+    total_wl = 0.0
+    np_ = len(positions)
+    for r in b2b.tolist():
+        if r[0] == -1:
+            continue
+        i, j, weight = int(r[0]), int(r[1]), r[2]
+        if i < np_ and j < np_:
+            x1 = positions[i][0] + positions[i][2] / 2
+            y1 = positions[i][1] + positions[i][3] / 2
+            x2 = positions[j][0] + positions[j][2] / 2
+            y2 = positions[j][1] + positions[j][3] / 2
+            total_wl += weight * (abs(x2 - x1) + abs(y2 - y1))
+    return total_wl
+
+
+def _hpwl_p2b_fast(positions, p2b, pins):
+    """calculate_hpwl_p2b, tolist-converted like _hpwl_b2b_fast (bit-identical)."""
+    if p2b is None or len(p2b) == 0:
+        return 0.0
+    total_wl = 0.0
+    np_ = len(positions)
+    pins_l = pins.tolist() if pins is not None else []
+    for r in p2b.tolist():
+        if r[0] == -1:
+            continue
+        pin_idx, block_idx, weight = int(r[0]), int(r[1]), r[2]
+        if block_idx < np_ and pin_idx < len(pins_l):
+            px, py = pins_l[pin_idx][0], pins_l[pin_idx][1]
+            bx = positions[block_idx][0] + positions[block_idx][2] / 2
+            by = positions[block_idx][1] + positions[block_idx][3] / 2
+            total_wl += weight * (abs(px - bx) + abs(py - by))
+    return total_wl
+
+
 def _proxy_metrics(positions, area_targets, b2b, p2b, pins, constraints, n):
     """Baseline-free (area, hpwl, vrel), computed EXACTLY like the harness so the
     live selector matches the offline-validated proxy. The C++ emits its own vrel
     too, but its union-find grouping (1e-3 tol) disagrees with shapely on ~34% of
-    cases; replicating the harness here recovers the oracle-level selection."""
+    cases; replicating the harness here recovers the oracle-level selection.
+    M47b: scalar tensor reads replaced by one-shot tolist() (values, order and
+    formulas unchanged -> bit-identical; gated 300/300 on all 100 cases)."""
     xmin = min(p[0] for p in positions); ymin = min(p[1] for p in positions)
     xmax = max(p[0] + p[2] for p in positions); ymax = max(p[1] + p[3] for p in positions)
     area = (xmax - xmin) * (ymax - ymin)
-    hpwl = calculate_hpwl_b2b(positions, b2b) + calculate_hpwl_p2b(positions, p2b, pins)
+    hpwl = _hpwl_b2b_fast(positions, b2b) + _hpwl_p2b_fast(positions, p2b, pins)
 
     ncols = constraints.shape[1] if constraints.dim() > 1 else 0
     vb = vg = vm = 0
     nsoft = 0
     if ncols > 4:
-        bound = constraints[:n, 4]; clust = constraints[:n, 3]; mib = constraints[:n, 2]
-        nsoft = int((bound != 0).sum().item())
+        bound_l = constraints[:n, 4].tolist()
+        clust_l = constraints[:n, 3].tolist()
+        mib_l = constraints[:n, 2].tolist()
+        nsoft = sum(1 for b in bound_l if b != 0)
         eps = 1e-6
         for i in range(n):
-            code = int(bound[i].item())
+            code = int(bound_l[i])
             if code == 0:
                 continue
             bx, by, bw, bh = positions[i]
@@ -495,9 +539,9 @@ def _proxy_metrics(positions, area_targets, b2b, p2b, pins, constraints, n):
             if code & 8: ok = ok and abs(by - ymin) < eps
             if not ok:
                 vb += 1
-        ngrp = int(clust.max().item()) if clust.numel() else 0
+        ngrp = int(max(clust_l)) if clust_l else 0
         for g in range(1, ngrp + 1):
-            idx = [i for i in range(n) if int(clust[i].item()) == g]
+            idx = [i for i in range(n) if int(clust_l[i]) == g]
             nsoft += max(0, len(idx) - 1)
             if len(idx) > 1 and _SHAPELY:
                 u = _unary_union([_box(positions[i][0], positions[i][1],
@@ -505,9 +549,9 @@ def _proxy_metrics(positions, area_targets, b2b, p2b, pins, constraints, n):
                                        positions[i][1] + positions[i][3]) for i in idx])
                 if u.geom_type == "MultiPolygon":
                     vg += len(u.geoms) - 1
-        nmib = int(mib.max().item()) if mib.numel() else 0
+        nmib = int(max(mib_l)) if mib_l else 0
         for g in range(1, nmib + 1):
-            idx = [i for i in range(n) if int(mib[i].item()) == g]
+            idx = [i for i in range(n) if int(mib_l[i]) == g]
             nsoft += max(0, len(idx) - 1)
             shapes = {(round(positions[i][2], 4), round(positions[i][3], 4)) for i in idx}
             vm += len(shapes) - 1
