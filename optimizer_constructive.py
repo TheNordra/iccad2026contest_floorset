@@ -446,22 +446,55 @@ _RH = 1.4  # relative weight of the hpwl term in the proxy. The proxy uses hmin
            # Flat basin 1.3-1.6 all hit oracle (1.4349); 1.0 gave 1.4369. (M13 _rh_sweep)
 
 
+_SMOKE_INP: Optional[str] = None
+
+
+def _binary_runs() -> bool:
+    """True iff _BIN executes a trivial 1-block case end-to-end (M48). Catches
+    binaries that exist but cannot run on this machine — a foreign-platform
+    .exe shipped in the package, a truncated file — which exists()+mtime alone
+    would accept, silently dropping EVERY case to the SA fallback."""
+    global _SMOKE_INP
+    if _SMOKE_INP is None:
+        _SMOKE_INP = _serialize_input(1, [1.0], None, None, None, None, None)
+    try:
+        r = subprocess.run([str(_BIN)], input=_SMOKE_INP, capture_output=True,
+                           text=True, timeout=30.0)
+        return r.returncode == 0 and len(_parse_output(r.stdout, 1)) == 1
+    except Exception:
+        return False
+
+
 def _ensure_compiled() -> bool:
     src = _DIR / "constructive.cpp"
-    if _BIN.exists() and _BIN.stat().st_mtime >= src.stat().st_mtime:
+    if not src.exists():
+        return _BIN.exists() and _binary_runs()
+    if (_BIN.exists() and _BIN.stat().st_mtime >= src.stat().st_mtime
+            and _binary_runs()):
         return True
-    for gpp in (r"C:\msys64\ucrt64\bin\g++.exe", "g++"):
-        try:
-            r = subprocess.run(
-                [gpp, "-O3", "-std=c++17", "-o", str(_BIN), str(src)],
-                capture_output=True, text=True, timeout=120,
-            )
-            if r.returncode == 0:
-                return True
-            print(f"[constructive] compile failed:\n{r.stderr}", file=sys.stderr)
-        except Exception as e:
-            print(f"[constructive] compile error with {gpp}: {e}", file=sys.stderr)
-    return _BIN.exists()
+    # M48 compile chain: the first candidate is the exact command used through
+    # M47 (identical local behaviour); the others only matter where it is
+    # missing (e.g. a Linux grader). -O2 is retried last in case -O3 fails.
+    # ICCAD_CXX forces a specific compiler to the front of each round.
+    compilers = [r"C:\msys64\ucrt64\bin\g++.exe", "g++", "clang++", "c++"]
+    if os.environ.get("ICCAD_CXX"):
+        compilers.insert(0, os.environ["ICCAD_CXX"])
+    for opt in ("-O3", "-O2"):
+        for gpp in compilers:
+            try:
+                r = subprocess.run(
+                    [gpp, opt, "-std=c++17", "-o", str(_BIN), str(src)],
+                    capture_output=True, text=True, timeout=240,
+                )
+                if r.returncode == 0 and _binary_runs():
+                    return True
+                if r.returncode != 0:
+                    print(f"[constructive] {gpp} {opt} failed:\n{r.stderr}",
+                          file=sys.stderr)
+            except Exception as e:
+                print(f"[constructive] compile error with {gpp} {opt}: {e}",
+                      file=sys.stderr)
+    return _BIN.exists() and _binary_runs()
 
 
 def _hpwl_b2b_fast(positions, b2b):
@@ -573,6 +606,59 @@ def _run_profile(env_over: Dict[str, str], inp: str, n: int):
         return None
 
 
+def _row_fallback(block_count, area_targets, constraints, target_positions):
+    """Last-resort layout (M48): preplaced blocks exactly at their targets,
+    everything else in a single row strictly above them. Overlap-free with
+    exact areas and fixed dims -> hard-feasible (soft violations only), so a
+    case where even the SA fallback raises scores the feasible cap instead of
+    the evaluator's exception-path M_PENALTY. Pure python, never raises."""
+    def _f(v, default):
+        try:
+            x = float(v)
+            return x if math.isfinite(x) else default
+        except Exception:
+            return default
+
+    pos = [None] * block_count
+    x_row, y_row = 0.0, 0.0
+    for i in range(block_count):        # preplaced first: they pin the free zone
+        try:
+            pp = constraints is not None and int(constraints[i][1]) != 0
+        except Exception:
+            pp = False
+        if pp and target_positions is not None:
+            try:
+                tx = _f(target_positions[i][0], 0.0)
+                ty = _f(target_positions[i][1], 0.0)
+                tw = max(_f(target_positions[i][2], 1.0), 1e-9)
+                th = max(_f(target_positions[i][3], 1.0), 1e-9)
+            except Exception:
+                tx = ty = 0.0
+                tw = th = 1.0
+            pos[i] = (tx, ty, tw, th)
+            y_row = max(y_row, ty + th)
+    y_row += 1.0
+    for i in range(block_count):
+        if pos[i] is not None:
+            continue
+        w = h = -1.0
+        try:                            # fixed-shape blocks carry exact (w,h)
+            if target_positions is not None:
+                w = _f(target_positions[i][2], -1.0)
+                h = _f(target_positions[i][3], -1.0)
+        except Exception:
+            w = h = -1.0
+        if not (w > 0 and h > 0):
+            a = 1.0
+            try:
+                if area_targets is not None:
+                    a = _f(area_targets[i], 1.0)
+            except Exception:
+                a = 1.0
+            w = h = math.sqrt(max(a, 1e-12))
+        pos[i] = (x_row, y_row, w, h)
+        x_row += w + 1.0
+    return pos
 
 
 class MyOptimizer(FloorplanOptimizer):
@@ -587,6 +673,38 @@ class MyOptimizer(FloorplanOptimizer):
                   file=sys.stderr)
 
     def solve(
+        self,
+        block_count: int,
+        area_targets: torch.Tensor,
+        b2b_connectivity: torch.Tensor,
+        p2b_connectivity: torch.Tensor,
+        pins_pos: torch.Tensor,
+        constraints: torch.Tensor,
+        target_positions: Optional[torch.Tensor] = None,
+    ) -> List[Tuple[float, float, float, float]]:
+        # M48 blanket safety net: an exception escaping solve() makes the
+        # evaluator record M_PENALTY 10.0 for the case (iccad2026_evaluate.py
+        # :917-922). Never triggered on the 100 local cases; a hidden weird
+        # case degrades to the SA fallback (feasible 100/100, M43) and, if
+        # even that raises, to a trivial hard-feasible row layout.
+        try:
+            return self._solve_impl(block_count, area_targets, b2b_connectivity,
+                                    p2b_connectivity, pins_pos, constraints,
+                                    target_positions)
+        except Exception as e:
+            print(f"[constructive] solve raised {e!r}; python SA fallback",
+                  file=sys.stderr)
+        try:
+            return python_sa_solve(block_count, area_targets, b2b_connectivity,
+                                   p2b_connectivity, pins_pos, constraints,
+                                   target_positions)
+        except Exception as e:
+            print(f"[constructive] SA fallback raised {e!r}; row fallback",
+                  file=sys.stderr)
+            return _row_fallback(block_count, area_targets, constraints,
+                                 target_positions)
+
+    def _solve_impl(
         self,
         block_count: int,
         area_targets: torch.Tensor,
@@ -675,15 +793,23 @@ class MyOptimizer(FloorplanOptimizer):
 
         # Baseline-free proxy selection: cost ~ (area/A + hpwl/H)*exp(2*vrel).
         # Metrics normally arrive precomputed from the profile threads (M47).
-        metrics = [m if m is not None else
-                   _proxy_metrics(pos, *margs)
-                   for pos, m in kept]
-        sumA = sum(max(0.0, float(area_targets[i])) for i in range(block_count))
-        A_hat = 1.035 * max(sumA, 1e-9)
-        hmin = min(m["hpwl"] for m in metrics) or 1.0
-        best_pos, best_proxy = cands[0], float("inf")
-        for pos, m in zip(cands, metrics):
-            proxy = (m["area"] / A_hat + _RH * m["hpwl"] / hmin) * math.exp(2.0 * m["vrel"])
-            if proxy < best_proxy:
-                best_proxy, best_pos = proxy, pos
-        return best_pos
+        # M48: if the proxy/selection stage itself raises (all thread-side
+        # proxies already failed on some weird hidden case), any C++ candidate
+        # is hard-feasible and beats the SA fallback by miles -> cands[0].
+        try:
+            metrics = [m if m is not None else
+                       _proxy_metrics(pos, *margs)
+                       for pos, m in kept]
+            sumA = sum(max(0.0, float(area_targets[i])) for i in range(block_count))
+            A_hat = 1.035 * max(sumA, 1e-9)
+            hmin = min(m["hpwl"] for m in metrics) or 1.0
+            best_pos, best_proxy = cands[0], float("inf")
+            for pos, m in zip(cands, metrics):
+                proxy = (m["area"] / A_hat + _RH * m["hpwl"] / hmin) * math.exp(2.0 * m["vrel"])
+                if proxy < best_proxy:
+                    best_proxy, best_pos = proxy, pos
+            return best_pos
+        except Exception as e:
+            print(f"[constructive] proxy selection raised {e!r}; keeping first "
+                  f"candidate", file=sys.stderr)
+            return cands[0]
