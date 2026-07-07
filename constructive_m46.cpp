@@ -51,6 +51,17 @@ using namespace std;
 
 // ─── M46 offline probe: gated stage timing (never shipped) ───────────────────
 static int STAGE_TIMING = 0;      // ICCAD_STAGE_TIMING=1 -> stderr TIMING lines
+// ─── M49 offline probe: gated refine trace (never shipped) ────────────────────
+// ICCAD_REFINE_TRACE=1 -> stderr RTRACE lines: per refine pass sc/improved/hash
+// (cycle detection), per-frame last accepted improving pass, per-case winner
+// frame. Gate off = zero behavioural change; gate on writes stderr only.
+static int REFINE_TRACE = 0;
+static unsigned long long m49_fnv(const void* p, size_t nb){
+    unsigned long long h=1469598103934665603ULL;
+    const unsigned char* b=(const unsigned char*)p;
+    for (size_t i=0;i<nb;i++){ h^=b[i]; h*=1099511628211ULL; }
+    return h;
+}
 static inline double m46_now(){
     using namespace std::chrono;
     return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
@@ -1558,12 +1569,14 @@ static void solve() {
     auto run_pipeline=[&](const vector<pair<double,double>>& frms)->vector<XYWH>{
     double t_pl=m46_now();
     vector<XYWH> best; bool have_best=false; double best_score=1e300; int trials=0;
+    int m49_best_trial=-1, m49_best_last_imp=-1;   // M49 trace: winner attribution
     for (auto& f:frms){
         items=items_base;
         vector<XYWH> c1, dummy;
         if (!run_frame(f.first,f.second,false,dummy,c1)) continue;
         trials++; m46.frames++;
         double sc=layout_score(c1);
+        double m49_init_sc=sc; int m49_last_imp=-1;   // M49 trace (per frame)
         // Pack-order pair-swap hill-climb: greedy ordering misplaces an item the
         // force-directed refinement can only nudge, not relocate. Swapping two
         // order positions re-routes the whole downstream pack — a jump move.
@@ -1629,21 +1642,36 @@ static void solve() {
                 m46.refine_passes++;
                 if (!run_frame(f.first,f.second,true,guide,c2)) break;
                 double sc2=layout_score(c2);
-                if (sc2<sc){ sc=sc2; c1=c2; }
+                bool m49_imp = sc2<sc;
+                if (m49_imp){ sc=sc2; c1=c2; m49_last_imp=r; }
+                if (REFINE_TRACE)
+                    fprintf(stderr,"RTRACE pass f=%d r=%d sc=%.17g imp=%d h=%016llx\n",
+                            trials-1, r, sc2, m49_imp?1:0,
+                            m49_fnv(c2.data(), c2.size()*sizeof(XYWH)));
                 // M46 opt-D: fixed point -> every later pass reproduces this
                 // exact c2/sc2 (deterministic in guide) and can never update
                 // sc again -> breaking here is result-identical.
                 if (c2.size()==guide.size() &&
                     !memcmp(c2.data(), guide.data(), c2.size()*sizeof(XYWH))){
-                    m46.refine_fixed++; break;
+                    m46.refine_fixed++;
+                    if (REFINE_TRACE)
+                        fprintf(stderr,"RTRACE fixpoint f=%d r=%d\n", trials-1, r);
+                    break;
                 }
                 guide.swap(c2);
             }
             m46.refine+=m46_now()-t_rf;
         }
-        if (!have_best||sc<best_score){ best_score=sc; best=c1; have_best=true; }
+        if (REFINE_TRACE)
+            fprintf(stderr,"RTRACE fdone f=%d init=%.17g final=%.17g last_imp=%d\n",
+                    trials-1, m49_init_sc, sc, m49_last_imp);
+        if (!have_best||sc<best_score){ best_score=sc; best=c1; have_best=true;
+            m49_best_trial=trials-1; m49_best_last_imp=m49_last_imp; }
         if (trials>=max_trials) break;
     }
+    if (REFINE_TRACE)
+        fprintf(stderr,"RTRACE winner f=%d last_imp=%d trials=%d\n",
+                m49_best_trial, m49_best_last_imp, trials);
     if (!have_best) best=shelf_fallback(order);
     // Compaction squeezes void out of the SELECTED layout (downside-protected:
     // returns the original if no directional pack beats it by layout_score).
@@ -1783,6 +1811,7 @@ int main() {
     if (getenv("ICCAD_REFRAME")) REFRAME=true;
     if (getenv("ICCAD_GUIDE_MED")) GUIDE_MED=true;
     if (const char* e=getenv("ICCAD_STAGE_TIMING")){ int v=atoi(e); if (v>0) STAGE_TIMING=v; }
+    if (const char* e=getenv("ICCAD_REFINE_TRACE")){ int v=atoi(e); if (v>0) REFINE_TRACE=v; }
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;

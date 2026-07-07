@@ -383,6 +383,37 @@ _M45_LOWCORE_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
 # squeeze on the high-weight (100,110] band.
 _M45_CORES_MAX = 8
 
+# M49 (2026-07-07): band-gated REFINE truncation — the first MEASURED quality-
+# vs-runtime trade (M41's was inferred). REFINE is 12 of every frame's 13 packs;
+# m49_refine_probe.py (trace + variant, 20 n>100 cases x kept pool) showed:
+#   - no exact cut exists (17/260 winning frames improve at the LAST pass), but
+#   - truncating to 4 passes leaves 19/20 case costs BIT-IDENTICAL; the only
+#     mover is case 85 (+0.95%, its winner improves at pass 11), weighted local
+#     +0.027%, and all 20 cases stay median-independent WINs;
+#   - band wall @12c 64.9->33.6s (-48%); projected real delta vs shipped:
+#     @12c M=6/8/11 = -12.6%/-7.9%/-2.4%, M=14 -0.02%, worst case (RF floor /
+#     RF ignored) +0.03%; low-core (4c) keeps gains at every median (sum-bound).
+#   - K=4 weakly dominates K=6/8 everywhere measured at identical local cost.
+# Applied as an env overlay on every profile run of a band case (the C++ knob
+# ICCAD_REFINE_ITERS already exists); ICCAD_ADAPTIVE_REFINE=0 disables, and
+# ICCAD_ADAPTIVE_POOL=0 (full quality-best pool) also restores full REFINE.
+_M49_REFINE_BAND: Tuple[Tuple[int, int, str], ...] = (
+    (100, 10**9, "4"),
+)
+
+
+def _band_env(block_count: int) -> Dict[str, str]:
+    """M49: per-case env overlay for every profile subprocess (band-gated
+    REFINE truncation). Empty dict = shipped pre-M49 behaviour."""
+    if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
+        return {}
+    if os.environ.get("ICCAD_ADAPTIVE_REFINE", "1") == "0":
+        return {}
+    for lo, hi, iters in _M49_REFINE_BAND:
+        if lo < block_count <= hi:
+            return {"ICCAD_REFINE_ITERS": iters}
+    return {}
+
 
 def _effective_cores() -> int:
     """Detected parallelism for tier-4 gating. Conservative: logical count
@@ -749,8 +780,14 @@ class MyOptimizer(FloorplanOptimizer):
         #    tier-4 low-core drops (only when _effective_cores() <= _M45_CORES_MAX;
         #    ICCAD_ADAPTIVE_CORES forces/disables detection). Both under the strict
         #    selection-preserving gate -> local RF=1.0 score unchanged (1.3277).
+        #  M49 (2026-07-07): band-gated REFINE truncation via _band_env() — every
+        #    profile of an n>100 case runs with ICCAD_REFINE_ITERS=4 (measured:
+        #    19/20 case costs bit-identical, +0.027% local, band wall -48%;
+        #    ICCAD_ADAPTIVE_REFINE=0 disables). See _M49_REFINE_BAND.
         if not self._single:
-            profiles = [_PROFILES[i] for i in _pool_indices(block_count)]
+            band = _band_env(block_count)
+            profiles = [dict(_PROFILES[i], **band) if band else _PROFILES[i]
+                        for i in _pool_indices(block_count)]
 
         # M47: compute each profile's proxy on the MAIN thread as soon as that
         # profile finishes (as_completed), overlapping the still-running slower
