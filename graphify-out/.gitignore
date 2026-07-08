@@ -1,0 +1,8 @@
+# graphify machine-local / regenerable internals (not portable across clones)
+.graphify_python
+.graphify_root
+.graphify_labels.json
+.needs_update
+cache/
+
+# keep: graph.json, graph.html, GRAPH_REPORT.md, manifest.json, cost.json
