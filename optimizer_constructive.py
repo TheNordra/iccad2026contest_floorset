@@ -397,18 +397,46 @@ _M45_CORES_MAX = 8
 # Applied as an env overlay on every profile run of a band case (the C++ knob
 # ICCAD_REFINE_ITERS already exists); ICCAD_ADAPTIVE_REFINE=0 disables, and
 # ICCAD_ADAPTIVE_POOL=0 (full quality-best pool) also restores full REFINE.
+#
+# M50 (2026-07-09): mid-band tier, measured the same way (m49_refine_probe.py
+# trace/variant mid: 40 cases 60<n<=100 x kept 25):
+#   - trace: no exact cut for mid either (40/1000 winning frames improve at
+#     pass 11); refine cycles are frequent (538 events vs big's 2) but a cycle
+#     fast-forward needs C++ changes for a mostly RF-floored band -> dropped.
+#   - variant K=4 UNGATED fails the mid bar: 11 movers, weighted local +0.069%,
+#     floor-saturated cells turn +0.06~0.07% at >=12c M>=11 (net loss on
+#     high-core machines).
+#   - variant K=8 PASSES: 6 movers (49/54/61/64/68/70), weighted local +0.028%,
+#     band wall @12c 91.6->73.1s (-20.2%); projected real @12c M=6/8/11 =
+#     -1.14/-0.85/-0.13%, worst cell +0.03% (the ceiling M49 accepted).
+#   - K=4 as a LOW-CORE tier (detected cores <= _M45_CORES_MAX, fail-open, M45
+#     tier-4 doctrine) dominates K=8 there: @4c -2.0~-3.5% at EVERY M, @8c wins
+#     for M<=14 (worst @8c M=20 +0.05%); band wall -45%, sum -46% (sum-bound).
+# Ship = two tiers: universal mid K=8 below, low-core mid K=4 override next.
 _M49_REFINE_BAND: Tuple[Tuple[int, int, str], ...] = (
-    (100, 10**9, "4"),
+    (60, 100, "8"),                              # M50 universal tier
+    (100, 10**9, "4"),                           # M49
+)
+# M50 low-core tier: replaces the universal band value when _effective_cores()
+# <= _M45_CORES_MAX; mis-detection direction (unknown -> 9999) falls back to
+# the universal tier = the safe profile.
+_M50_REFINE_LOWCORE: Tuple[Tuple[int, int, str], ...] = (
+    (60, 100, "4"),
 )
 
 
 def _band_env(block_count: int) -> Dict[str, str]:
-    """M49: per-case env overlay for every profile subprocess (band-gated
-    REFINE truncation). Empty dict = shipped pre-M49 behaviour."""
+    """M49/M50: per-case env overlay for every profile subprocess (band-gated
+    REFINE truncation; M50 adds the cores-gated mid tier). Empty dict =
+    pre-M49 behaviour."""
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
         return {}
     if os.environ.get("ICCAD_ADAPTIVE_REFINE", "1") == "0":
         return {}
+    if _effective_cores() <= _M45_CORES_MAX:
+        for lo, hi, iters in _M50_REFINE_LOWCORE:
+            if lo < block_count <= hi:
+                return {"ICCAD_REFINE_ITERS": iters}
     for lo, hi, iters in _M49_REFINE_BAND:
         if lo < block_count <= hi:
             return {"ICCAD_REFINE_ITERS": iters}

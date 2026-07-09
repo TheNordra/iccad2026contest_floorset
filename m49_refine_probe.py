@@ -16,11 +16,12 @@ with ZERO C++ change. Two modes:
                           hashes (opt-D only ruled out 1-cycles/fixpoints)
                         * position compare vs audit_cache.pkl (validates the
                           instrumented exe + gate-on non-perturbation)
-  variant K1[,K2..] - run the SHIPPED constructive.exe with
+  variant K1[,K2..] [big|mid]
+                    - run the SHIPPED constructive.exe with
                       ICCAD_REFINE_ITERS=K over band x kept pool (11 workers,
                       audit dt protocol) plus a K=12 same-session CONTROL:
                         * per-pair position compare vs audit_cache.pkl -> EXACT?
-                          (control must be 260/260 exact or the session is bad)
+                          (control must be ALL-pairs exact or the session is bad)
                         * band wall table + RF projection sweep (M x cores,
                           mirrors rf_score_model's pools incl. M45 tier-4)
                         * non-exact pairs -> variant proxy selection + true
@@ -290,21 +291,24 @@ def band_dt(ci, k, VD):
     return VD[(ci, k)][1]
 
 
-def project(K, VD_ctrl, VD_k, exact_all):
+def project(K, VD_ctrl, VD_k, exact_all, band):
     """Real-total projection: band cases use same-session dts (control vs K)
     and cache-Q (exact) or variant-Q; non-band cases identical on both sides
-    (cache Q + cache dt) so they cancel in the delta but keep totals honest."""
+    (cache Q + cache dt) so they cancel in the delta but keep totals honest.
+    NOTE mid runs: n>100 cases then sit at their K=12-counterfactual cache dts
+    on BOTH sides (shipped M49 already cuts them) -> absolute totals are a bit
+    stale but the delta is strictly the probed band's effect."""
     # variant per-case proxy metrics for band cases (Path B only)
     PMV = {}
     if not exact_all:
-        for ci in BAND_BIG:
+        for ci in band:
             PMV[ci] = {k: pm_of(VD_k[(ci, k)][0], ci) for k in KEPT[ci]}
 
     print(f"\n  projected REAL total (rows M, cols cores) "
           f"baseline -> K={K} (delta%):")
     hdr = f"    {'M':>3} " + "".join(f"{('c='+str(c)):>26}" for c in CORESGRID)
     print(hdr)
-    bigset = set(BAND_BIG)
+    bandset = set(band)
     for M in MGRID:
         row = f"    {M:>3} "
         for cores in CORESGRID:
@@ -314,7 +318,7 @@ def project(K, VD_ctrl, VD_k, exact_all):
                 pmc = {k: pm_cache(ci, k) for k in pool}
                 kb = select_pm(ci, pool, pmc)
                 qb = cost_of(DATA[(ci, kb)][0], ci, ("c", ci, kb))
-                if ci in bigset:
+                if ci in bandset:
                     tsb = [band_dt(ci, k, VD_ctrl) for k in pool]
                     tsv = [band_dt(ci, k, VD_k) for k in pool]
                     if exact_all:
@@ -335,10 +339,11 @@ def project(K, VD_ctrl, VD_k, exact_all):
         print(row, flush=True)
 
 
-def mode_variant(ks):
-    jobs = [(ci, k) for ci in BAND_BIG for k in KEPT[ci]]
-    print(f"VARIANT: {len(BAND_BIG)} big cases x kept pool = {len(jobs)} runs "
-          f"per K, Ks = control(12) + {ks}", flush=True)
+def mode_variant(ks, band_tag="big"):
+    band = {"big": BAND_BIG, "mid": BAND_MID}[band_tag]
+    jobs = [(ci, k) for ci in band for k in KEPT[ci]]
+    print(f"VARIANT band={band_tag}: {len(band)} cases x kept pool = "
+          f"{len(jobs)} runs per K, Ks = control(12) + {ks}", flush=True)
 
     VD = {}
     for K in [12] + ks:
@@ -366,7 +371,7 @@ def mode_variant(ks):
         s_ctl = s_k = 0.0
         print(f"  {'case':>4} {'n':>4} {'wall12_ctl':>10} {'wall12_K':>9} "
               f"{'sum_ctl':>8} {'sum_K':>8}")
-        for ci in BAND_BIG:
+        for ci in band:
             pool = KEPT[ci]
             tc = [band_dt(ci, k, VD[12]) for k in pool]
             tk = [band_dt(ci, k, VD[K]) for k in pool]
@@ -383,7 +388,7 @@ def mode_variant(ks):
             print(f"  Path B per-case quality check @12c kept pool:")
             print(f"  {'case':>4} {'n':>4} {'Qbase':>9} {'QK':>9} "
                   f"{'(tb/tk)^.3':>10} {'Qk/Qb':>8}  medInd-win?")
-            for ci in BAND_BIG:
+            for ci in band:
                 pool = KEPT[ci]
                 pmc = {k: pm_cache(ci, k) for k in pool}
                 kb = select_pm(ci, pool, pmc)
@@ -403,7 +408,7 @@ def mode_variant(ks):
             print(f"  weighted local delta (RF=1.0): {dloc/totW:+.6f} "
                   f"({100*(dloc/totW)/1.3277:+.3f}% of 1.3277)")
 
-        project(K, VD[12], VD[K], exact_all)
+        project(K, VD[12], VD[K], exact_all, band)
     save_pm()
 
 
@@ -413,6 +418,6 @@ if __name__ == "__main__":
         mode_trace(sys.argv[2] if len(sys.argv) > 2 else "big")
     elif mode == "variant":
         ks = [int(x) for x in sys.argv[2].split(",")] if len(sys.argv) > 2 else [6]
-        mode_variant(ks)
+        mode_variant(ks, sys.argv[3] if len(sys.argv) > 3 else "big")
     else:
         sys.exit(f"unknown mode {mode}")
