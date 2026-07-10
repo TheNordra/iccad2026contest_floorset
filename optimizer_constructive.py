@@ -326,6 +326,21 @@ _PROFILES: List[Dict[str, str]] = [
     # 0.002-0.005% (injecting the PERFECT fp_sol order gains nothing -> the placer, not
     # the pack order, is the bottleneck -> ordering/ML ranking permanently closed).
     # [M30-pruned: 0 wins, LOO 0; superseded by free_gm_wt_wire] {"ICCAD_GUIDE_MED": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # gm_bfs_wt_wire (case 91)
+    # M51 (2026-07-10): wide-CLAMPED frame — the default FRAME_ASPECTS caps at 1.8,
+    # but any aspect >=2.0 on a preplaced-heavy case clamps (frame_candidates:
+    # w/h floors at pre_*+MARGIN / max_i*+MARGIN) to ONE fixed wide outline the
+    # default set never generates. On the heaviest case 99 (n=120, 8.0% weight)
+    # that clamped frame beats both layout_score and true cost: 1.3334->1.3084
+    # (+0.200% weighted, the largest single-case find since M37), bit-identical
+    # across aspects 2.0/2.2/2.5 (clamp-invariant) and across REFINE_ITERS 4/12
+    # (valid under the shipped M49 big-band overlay). Host = fc_pin_tight (true
+    # cost 1.3084 vs 1.3129 on the M37 anchored host); first three tried frames
+    # (1.0/0.75/1.35) stay identical to the default order, only the 4th slot
+    # changes. Standalone FRAME_ASPECTS sweeps (wide/mid/no-square/mild-tall)
+    # were all ~0.000% — the win only exists stacked (M33-M37 amplification
+    # pattern). BP_WEIGHT-down (10000/3000/1000/300, standalone + both hard-case
+    # stacks) was 0.000% everywhere -> that axis is closed RED.
+    {"ICCAD_FRAME_ASPECTS": "1.0,0.75,1.35,2.2", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fa22_fc_pin_tight_wire (M51: clamped-wide frame cracks case 99 ->1.3084)
 ]
 
 # M42 (2026-06-26): 2nd-order RuntimeFactor lever — indices into _PROFILES of the
@@ -340,8 +355,8 @@ _PROFILES: List[Dict[str, str]] = [
 # WINs). The kept 13 build profiles are the cluster/anchored/MIB stacks that
 # structurally dominate big cases + a few aspect/free winners. REGENERATE after any
 # _PROFILES edit: rf_score_model.py M42 section prints the recommended set.
-_BIG_REDUNDANT_IDX = frozenset({0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 16, 20,
-                                24, 28, 29, 30, 31, 32, 33})
+_BIG_REDUNDANT_IDX = frozenset({0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 16, 18,
+                                20, 24, 28, 29, 30, 31, 32, 33})
 
 # M45 (2026-07-02): per-band pool tiers — the M42 redundancy generalized from
 # CUMULATIVE ("wins no n>T case") to BAND-scoped ("wins no lo<n<=hi case"), which
@@ -366,14 +381,17 @@ _M45_BAND_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
 )
 _M45_LOWCORE_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
     # small band: deep floor at 12c (gain ~0) but sum-bound and scoring at low
-    # cores; drops 20/34, kept 14 (strict-equal over its 20 cases).
+    # cores; drops 21/35, kept 14 (strict-equal over its 20 cases; M51 adds #40).
     (40, 60, frozenset({2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14,
-                        24, 25, 26, 27, 29, 31, 32, 33})),
-    # (100,110]: kept 8 — #17/#18 set some walls even at 12c, but diversity floor
-    # + high weight keeps this tier-4 (conservative). #19 stays (band winner).
-    (100, 110, frozenset({2, 13, 17, 18, 21})),
+                        24, 25, 26, 27, 29, 31, 32, 33, 40})),
+    # (100,110]: kept 8 — #17 sets some walls even at 12c, but diversity floor
+    # + high weight keeps this tier-4 (conservative). #19 stays (band winner);
+    # M51: #18 moved into _BIG_REDUNDANT_IDX (whole n>100), #40 wins only in
+    # (110,inf] so it drops here at low cores.
+    (100, 110, frozenset({2, 13, 17, 21, 40})),
     # (110,inf): D4 — #19 is the case-90 winner (exact tie with #21, proxy
     # 2.766374981 / cost 1.330092901 both) and is KEPT; only true non-winners go.
+    # M51: #40 (case-99 winner) is KEPT here.
     (110, 10**9, frozenset({8, 12, 26, 27})),
 )
 # tier-4 activation: at 8 detected cores the tier still adds ~-2.2% real @ M=11
