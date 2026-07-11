@@ -343,6 +343,33 @@ _PROFILES: List[Dict[str, str]] = [
     {"ICCAD_FRAME_ASPECTS": "1.0,0.75,1.35,2.2", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # fa22_fc_pin_tight_wire (M51: clamped-wide frame cracks case 99 ->1.3084)
 ]
 
+# M53 L1 (2026-07-12): score-first quality pool — OFF by default; enable with
+# ICCAD_L1_POOL=1, meant to pair with ICCAD_ADAPTIVE_POOL=0 (the offline quality
+# baseline for the M53 L2/L3 probes; NEVER the submission profile). Gate off ->
+# _PROFILES is bit-identical to shipped, so no rf_score_model/m49 re-gate needed.
+# Two parts, both measured 2026-07-12 against the 41-prof POOL=0 baseline 1.3248:
+#  (1) _L1_EXTRA: the M36 OS16xfree family (shelved purely for RuntimeFactor:
+#      ~48s on n=120). Re-validated via profile_vs_portfolio vs the min(K12,K24)
+#      oracle baseline 1.3241: os16 on the fc_anchored_bnd recipe = +0.509%
+#      oracle-min (18 wins: 80/73/97/82/78/86/75/66...).
+#  (2) a REFINE_ITERS=24 duplicate of every base profile: the GLOBAL override
+#      regresses (+0.105%; layout_score!=true-cost poison on cases 84/73), but as
+#      a portfolio tier the proxy keeps per-case winners -> oracle -0.053%
+#      (96/77/72/70/27/64). K=48 adds only -0.010% over K=24 -> dropped;
+#      PUSH_PASSES/COMPACT_ITERS=64 are exact no-ops (both loops early-break).
+# NOTE: with ICCAD_ADAPTIVE_POOL=1 the swap filter in _pool_indices() drops the
+# OS16 extras anyway, but the K24 duplicates would not be dropped — always run
+# this gate together with ICCAD_ADAPTIVE_POOL=0 (and ICCAD_PROFILE_TIMEOUT high:
+# the ~84-way pool oversubscribes cores, stretching per-profile wall past 120s).
+_L1_EXTRA: List[Dict[str, str]] = [
+    {"ICCAD_FREE_ANCHORED": "1", "ICCAD_FREE_ANCHORED_BND": "1", "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0", "ICCAD_ORDER_SWAP": "16"},  # os16_fc_anchored_bnd_pin_tight (M36 1c+OS, L1 re-val: +0.509%; wins 80/73/97/82/78/86/75/66)
+    {"ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0", "ICCAD_ORDER_SWAP": "16"},  # os16_fc_pin_tight (L1: +0.151% incr over P1; disjoint wins 95/90/79/64/35)
+]
+if os.environ.get("ICCAD_L1_POOL", "0") == "1":
+    _L1_BASE = list(_PROFILES)
+    _PROFILES.extend(_L1_EXTRA)
+    _PROFILES.extend(dict(p, ICCAD_REFINE_ITERS="24") for p in _L1_BASE)
+
 # M42 (2026-06-26): 2nd-order RuntimeFactor lever — indices into _PROFILES of the
 # BUILD-time profiles that are NEVER the selected winner on any case with n>100
 # (per-big-n redundancy; the M41 swap argument applied to the build profiles).
@@ -669,13 +696,22 @@ def _proxy_metrics(positions, area_targets, b2b, p2b, pins, constraints, n):
     return {"area": area, "hpwl": hpwl, "vrel": vrel}
 
 
+# M53 L1: overridable per-profile timeout (default 120s = shipped behaviour).
+# The L1 quality pool (~84 profiles) oversubscribes cores, so nominal-48s
+# profiles can stretch past 120s wall and would be SILENTLY dropped.
+try:
+    _PROFILE_TIMEOUT = float(os.environ.get("ICCAD_PROFILE_TIMEOUT", "120"))
+except ValueError:
+    _PROFILE_TIMEOUT = 120.0
+
+
 def _run_profile(env_over: Dict[str, str], inp: str, n: int):
     """Run one profile; return positions or None."""
     env = dict(os.environ)
     env.update(env_over)
     try:
         r = subprocess.run([str(_BIN)], input=inp, capture_output=True,
-                           text=True, timeout=120.0, env=env)
+                           text=True, timeout=_PROFILE_TIMEOUT, env=env)
         if r.returncode != 0 or not r.stdout.strip():
             return None
         return _parse_output(r.stdout, n)
