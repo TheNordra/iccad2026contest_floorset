@@ -1,24 +1,34 @@
 #!/usr/bin/env python3
 """
-Constructive-placer PORTFOLIO wrapper.
+Constructive-placer PORTFOLIO wrapper (M51 state, 2026-07-10).
 
-Drives constructive.exe (C++ port of the teammate's constraint-aware constructive
-floorplanner). Runs several deterministic profiles in parallel and selects the
-best with a BASELINE-FREE proxy of the contest cost:
+Drives constructive.exe (C++ constraint-aware constructive floorplanner:
+fixed-outline greedy packing + compaction/refine/HPWL-push post-passes). Runs
+41 deterministic profiles in parallel and selects the best with a
+BASELINE-FREE proxy of the contest cost:
 
-    cost  = 0.5*(area/A + hpwl/H) * exp(2*vrel)
-    proxy = (area/Â + hpwl/hmin) * exp(2*vrel)     (Â = 1.035*ΣblockArea, hmin =
-                                                    min hpwl over profiles)
+    cost  = (1 + 0.5*(agap + hgap)) * exp(2*vrel) * max(0.7, R^0.3)
+    proxy = (area/Â + _RH*hpwl/hmin) * exp(2*vrel)   (Â = 1.035*ΣblockArea,
+             hmin = min hpwl over profiles, _RH = 1.4)
 
-vrel is exact from (positions, constraints); area/hpwl are emitted by the C++ on
-stderr ("METRICS area hpwl vbd vcl vmb nsoft"). Offline the proxy matched the
-oracle ceiling almost exactly (1.6060 vs 1.6057) because constructive is
-deterministic — no SA timing noise. Profiles vary boundary aspect (the highest-
-leverage diversity axis) plus wire/anchor weights via env knobs.
+vrel is computed shapely-exact like the harness (_proxy_metrics); constructive
+is deterministic — no SA timing noise — so the proxy has matched the oracle
+ceiling since M13 (re-confirmed M31/M43: zero score leaked to selection).
 
-Single base profile ~1.658; portfolio ~1.536 (C++ M9 two-pass wire refinement +
-14th frame_fine profile). Set ICCAD_CONSTRUCTIVE_SINGLE=1 to run only the base
-profile. ICCAD_CONSTRUCTIVE_BIN overrides the binary path.
+Official local eval = 1.3265 (M51) — an RF=1.0 FICTION: the local harness
+forces the RuntimeFactor term to 1.0 while the real score multiplies each case
+by max(0.7,(t/median)^0.3). The default-ON adaptive tiers exploit that hidden
+axis: M41/M42/M45 pool cuts in _pool_indices() plus the M49/M50 REFINE band
+truncation in _band_env(). ICCAD_ADAPTIVE_POOL=0 restores the full 41-profile
+quality-best pool (1.3248, full REFINE); ICCAD_L1_POOL=1 (offline only, pair
+with ICCAD_ADAPTIVE_POOL=0) extends it to ~84 profiles for the M53 L1 quality
+anchor (1.3176) — never the submission shape. M48 hardening: compile chain +
+1-block binary smoke, and solve() degrades exception -> python SA -> trivial
+hard-feasible row layout.
+
+ICCAD_CONSTRUCTIVE_SINGLE=1 runs only the FIRST profile (free_aspect — the
+empty base profile was M33-pruned). ICCAD_CONSTRUCTIVE_BIN overrides the
+binary path. Per-knob details: CLAUDE.md.
 """
 import concurrent.futures
 import math
@@ -46,14 +56,12 @@ except Exception:
 
 _BIN = Path(os.environ.get("ICCAD_CONSTRUCTIVE_BIN", str(_DIR / "constructive.exe")))
 
-# Profiles validated by portfolio_ceiling.py. Two diversity axes dominate:
-# block boundary-aspect (high LR -> low vBd on violation-heavy cases) and frame
-# outline shape (frame_tall wins 13% of weight). Adding profiles is downside-
-# protected: the proxy picks per-case, so a never-best profile costs only runtime.
-# Portfolio ~1.5362 with this 14-profile set: C++ M9 wire refinement (1.5659->
-# 1.5375) + frame_fine (tighter outline scales for area-dominated cases, a further
-# marginal -0.08%; the frame-based area lever is near-exhausted -- see dbg_area.py
-# and CLAUDE.md). Dropped as useless: wire_xhi, frame_wide, frame_wwire.
+# 41 active profiles (M51 state; #40 fa22_fc_pin_tight_wire is the newest).
+# Every add was validated by profile_vs_portfolio.py / portfolio_ceiling.py
+# (>0.05% oracle-min bar); the per-milestone rationale lives in the dated
+# comment blocks below. Adding profiles is downside-protected: the proxy picks
+# per-case, so a never-best profile costs only runtime (and, since M41,
+# RuntimeFactor — check per-profile cpu before adding heavy ones).
 #
 # M25 audit (profile_audit.py, 2026-06-12, on the M24 jump binary): 18 profiles
 # with 0 proxy wins AND leave-one-out dTotal == 0 over all 100 cases are pruned
@@ -374,8 +382,9 @@ if os.environ.get("ICCAD_L1_POOL", "0") == "1":
 # BUILD-time profiles that are NEVER the selected winner on any case with n>100
 # (per-big-n redundancy; the M41 swap argument applied to the build profiles).
 # After M41 drops the 6 swap profiles, the big-case (n>=110, 60% weight) wall is
-# sum/cores-bound by the ~20 expensive (~8s) FREE/CA/FC profiles; these 21 win NO
-# n>100 case, so dropping them there is wall-only (rf_score_model.py: local RF=1.0
+# sum/cores-bound by the ~20 expensive (~8s) FREE/CA/FC profiles; these 22
+# (21 at M42; M51's re-audit added #18) win NO n>100 case, so dropping them
+# there is wall-only (rf_score_model.py: local RF=1.0
 # stays 1.3277 BIT-IDENTICALLY — every capped case keeps Qcap/Qbase=1.0000 — while
 # the n=120 wall halves 15.6->8.0s, projecting a FURTHER ~-11% real total @ M=11,
 # robust over median in [6,20]s and all 20 n>100 cases stay median-INDEPENDENT
@@ -849,14 +858,15 @@ class MyOptimizer(FloorplanOptimizer):
         #    profiles (audit cpu max ~19s vs ~8s) — they set the 18-20s wall yet the
         #    proxy never selects them on big cases. -0.06% RF=1.0 local, projected
         #    real ~-12% @ M=11 (1.4742->1.2904), avg 9.89->5.90s.
-        #  M42 (ICCAD_ADAPTIVE_FREE_N, default 100): ALSO drop the 21 _BIG_REDUNDANT_IDX
+        #  M42 (ICCAD_ADAPTIVE_FREE_N, default 100): ALSO drop the 22 _BIG_REDUNDANT_IDX
         #    build-time profiles for block_count>100 — they win NO n>100 case (the swap
         #    argument applied per-big-n), so dropping them is wall-only: RF=1.0 local
         #    stays 1.3277 BIT-IDENTICALLY while the n=120 wall halves 15.6->8.0s,
         #    projecting a FURTHER ~-11% real @ M=11 (1.2904->1.1473), all 20 n>100
         #    cases median-INDEPENDENT WINs, robust over median in [6,20]s.
-        # Default ON; ICCAD_ADAPTIVE_POOL=0 restores the full 40-profile pool (local
-        # 1.3269). Set ICCAD_ADAPTIVE_FREE_N huge (e.g. 9999) for M41-only behaviour.
+        # Default ON; ICCAD_ADAPTIVE_POOL=0 restores the full 41-profile pool
+        # (quality-best 1.3248, full REFINE). Set ICCAD_ADAPTIVE_FREE_N huge
+        # (e.g. 9999) for M41-only behaviour.
         #  M45 (2026-07-02): two more tiers inside _pool_indices() — tier-3 band-
         #    scoped mid-case drops (UNIVERSAL, ICCAD_ADAPTIVE_BAND=0 disables) and
         #    tier-4 low-core drops (only when _effective_cores() <= _M45_CORES_MAX;
