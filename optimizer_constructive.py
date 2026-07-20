@@ -45,7 +45,10 @@ sys.path.insert(0, str(_DIR / "iccad2026contest"))
 sys.path.insert(0, str(_DIR))
 
 from iccad2026_evaluate import FloorplanOptimizer
-from optimizer_claude import _serialize_input, _parse_output, python_sa_solve
+try:
+    from optimizer_claude import _serialize_input, _parse_output, python_sa_solve
+except ImportError:
+    pass  # merged single-file form (M67-B): these are defined at the file tail
 
 try:
     from shapely.geometry import box as _box
@@ -579,6 +582,23 @@ def _binary_runs() -> bool:
 
 
 def _ensure_compiled() -> bool:
+    global _BIN
+    # M67-A bundled-binary-first: on a POSIX grader a prebuilt Linux binary
+    # (bin/constructive_linux, produced by M67-C) skips the compile entirely.
+    # Gated off Windows and off ICCAD_CONSTRUCTIVE_BIN (explicit override wins);
+    # a bundled binary that fails the 1-block smoke falls through to the chain.
+    if os.name != "nt" and not os.environ.get("ICCAD_CONSTRUCTIVE_BIN"):
+        bundled = _DIR / "bin" / "constructive_linux"
+        if bundled.exists():
+            try:
+                os.chmod(bundled, os.stat(bundled).st_mode | 0o111)
+            except Exception:
+                pass
+            prev = _BIN
+            _BIN = bundled
+            if _binary_runs():
+                return True
+            _BIN = prev
     src = _DIR / "constructive.cpp"
     if not src.exists():
         return _BIN.exists() and _binary_runs()
@@ -588,8 +608,11 @@ def _ensure_compiled() -> bool:
     # M48 compile chain: the first candidate is the exact command used through
     # M47 (identical local behaviour); the others only matter where it is
     # missing (e.g. a Linux grader). -O2 is retried last in case -O3 fails.
-    # ICCAD_CXX forces a specific compiler to the front of each round.
-    compilers = [r"C:\msys64\ucrt64\bin\g++.exe", "g++", "clang++", "c++"]
+    # ICCAD_CXX forces a specific compiler to the front of each round. The msys
+    # candidate is Windows-only (M67-A: no doomed absolute-path exec on POSIX).
+    compilers = ["g++", "clang++", "c++"]
+    if os.name == "nt":
+        compilers.insert(0, r"C:\msys64\ucrt64\bin\g++.exe")
     if os.environ.get("ICCAD_CXX"):
         compilers.insert(0, os.environ["ICCAD_CXX"])
     for opt in ("-O3", "-O2"):
