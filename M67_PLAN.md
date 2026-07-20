@@ -8,6 +8,13 @@
 - **架構決策**:op_wrapper.py = 我們的 Python portfolio wrapper 直接合規化,**不走 PyInstaller**(逐案 spawn+import 稅 0.5-3s 會毀 RF;alpha 已證 Python-module 路線在官方 harness 可跑)。C++ 以 bundled Linux binary 優先 + 現場編譯 fallback + SA 最後防線(M48 三層安全網保持)。
 - **戰略不變**:送件內容 = M51 shipped 逐位(1.3265 local);品質軸/L1/L3/in-window LP 全部不動;Beta 回傳資料將是第一份真 hidden-set RF median 校準源,Final 前才重評 M54/M62。
 
+## 送件物流(官方公告 `Downloads/beta_test_submission_ABC.pdf`,與 guidelines 並行遵守)
+
+- Deadline **2026-07-31 17:00 GMT+8 硬截止**:上傳中斷即失敗、遲交不收 → **提早數天上傳**。
+- Problem C 送件方式 = **各隊專屬 Google Drive「beta_test_submission」資料夾**(email 不收)。把 `cadc1075.tar.gz` 放入對應 stage 資料夾。
+- **檔名錯誤不得重交**("Re-submissions due to errors in file naming will not be accepted")→ 命名零容錯:`cadc1075.tar.gz`、解開後 `cadc1075/`、`op_wrapper.py`/`op_src.py`/`requirements.txt` 逐字元照規格;M67-B 的衛生 assert 必須涵蓋命名檢查。
+- ⚠️ 行動項(使用者/組員,**現在就確認**):隊伍的 Google Drive beta_test_submission 資料夾連結在誰手上、能否存取——存取問題要找主辦方,處理需時,不能拖到截止前。
+
 ## 封包規格(Beta guidelines 硬規定)
 
 ```
@@ -35,15 +42,15 @@ cadc1075/
 2. 全檔絕對路徑掃描(`C:\\`、`/home/`、`/Users/`),殘餘一律 gate 或改相對。
 3. **Gate**:官方 local eval 逐位 = `results_shipped_m51.json`(總分 1.3264731049、100 案 positions 逐位)+ `regression_suite.py` 全 PASS。commit。
 
-### M67-B:打包器 + 官方佈局 Windows 驗證
-1. 新工具 `make_submission.py`(永不 ship):
-   - staging `build_submission/cadc1075/` 依上方封包規格產出。
-   - `op_wrapper.py` = optimizer_constructive.py 內容 + **機械併入** optimizer_claude.py(SA wrapper 類別嵌入檔尾、import 改內部引用;無 optimizer_claude.py 檔案)。class 名/`solve()` 介面不動。
-   - `op_src.py` = op_wrapper.py 逐位副本;`requirements.txt` 空檔;README 簡短。
-   - 衛生 assert:檔案白名單、絕對路徑 regex 掃描、tar.gz 產出(`cadc1075.tar.gz`)。
-2. Windows 端驗證:staging 內放 evaluator + dataset(複製或 junction),`cd cadc1075` 以官方指令跑全 100 案 → 總分/positions **逐位** = `results_shipped_m51.json`。
-3. `m48_coldstart_dryrun.py` 加 variant:以 op_wrapper.py 名稱/佈局重跑四 phase(smoke 攔截、編譯鏈迭代、絕對路徑 report)。
-4. **Gate**:逐位 + coldstart 四 phase 綠 + regression_suite 綠。commit(build_submission/ 進 .gitignore,make_submission.py 進 repo)。
+### M67-B:打包器 + 官方佈局 Windows 驗證 ✅ 完成(2026-07-21)
+1. 新工具 `make_submission.py`(永不 ship;`stage|verify|all` 三模式,可 import——`build_op_wrapper_text()` 與 m48 variant 共用同一份併檔實作):
+   - staging `build_submission/cadc1075/` 依上方封包規格產出(bin/ 缺席容忍 + 警告,M67-C 補)。
+   - `op_wrapper.py` = optimizer_constructive.py 內容 + **機械切片併入** optimizer_claude.py。⚠️ 實測 naive 全檔串接會炸:optimizer_claude 的 module-level `_BIN`/`_ensure_compiled`/`MyOptimizer` 會 shadow constructive 側(每 profile 都會跑 SA binary)→ 只切兩塊:**B1** =「Fallback Python SA」區(python_sa_solve + Skyline/skyline_decode/violation_cost + COL_*/BOUNDARY_* 常數)、**B2** = `_serialize_input`+`_parse_output`;SA MyOptimizer/GNN/SA 編譯鏈刻意不併(constructive 從不呼叫)。M67-A 的 try/except lazy import **整塊移除**(非留著失敗——repo 佈局跑 gate 時 sys.path 會撈到 repo 的 optimizer_claude 遮蔽併檔 bug)。合併 assert:compile()、`class MyOptimizer`/三函式 count==1、tail 禁 `_BIN =`/`_ensure_compiled`/`MyOptimizer`/`_GNN`、AST module-level 名字零碰撞。
+   - `op_src.py` = op_wrapper.py 逐位副本;`requirements.txt` 0 bytes;README 簡短(英文,三層 fallback 說明)。
+   - 衛生 assert:檔案白名單 exact、`.py` 恰兩隻、絕對路徑掃描(`[Cc]:[\\/]|/home/|/Users/`,allowlist 僅 nt-gated msys 候選)、禁 .pkl/.json/.log/.exe、tar 成員名單複驗、bin/* mode 0o755。
+2. Windows 官方佈局驗證(`verify` 模式):解 tar → `build_submission/verify/cadc1075/` + evaluator 疊入包內 + 8 隻 loader .py 疊 `verify/`(evaluator `sys.path.insert(parent.parent)` + data_path `../` 力學)+ `LiteTensorDataTest` junction;官方指令 `python iccad2026_evaluate.py --evaluate op_wrapper.py`(env 剝 ICCAD_*)→ **全 100 案逐位 PASS**:total 1.326473104916827、100/100 feasible、costs/gaps/positions 全逐位、零 fallback、eval 187s(avg 1.57s)。gotcha:子行程須 `encoding="utf-8"`(tqdm 輸出撞 cp1252 decode)。
+3. `m48_coldstart_dryrun.py opwrapper` variant(預設模式輸出逐字不變):scratch = 送件佈局(op_wrapper.py + 兩 .cpp、無 optimizer_claude.py)→ **四 phase 全 PASS**(cold compile 3 案逐位含案 99 = 1.3083538507526609、垃圾 exe smoke 攔截、bogus ICCAD_CXX 鏈跳過、phase 4 僅剩 msys 候選)。
+4. **Gate 全綠**:逐位 ✅ + coldstart 四 phase ✅ + regression_suite 六項 ✅。commit(build_submission/ 進 .gitignore,make_submission.py 進 repo)。
 
 ### M67-C:Linux static binary + 三關驗證(需使用者在 GPU 機 WSL2 跑指令)
 1. 產 build script:`g++ -O3 -std=c++17 -static-libstdc++ -static-libgcc -o bin/constructive_linux constructive.cpp`(先試,必要時試全 `-static`)+ md5 + 1-block smoke;`optimizer_claude.cpp` 同。
@@ -60,7 +67,7 @@ cadc1075/
 - `rf_score_model.py` cores 網格加 48;以 alpha 錨(weighted RF 0.7081、median≈3.2×)校準;確認 48c 下 tier-4/lowcore fail-open→universal、wall=max_i 假設;純 cache 分析,產 Final 決策用投影。不動送件形。
 
 ## 等待中(勿在上述 session 內處理)
-- **Alpha feedback 信**(組員):拿到後逐項對照修正(已知一項 = 檔名 my_optimizer.py→op_wrapper.py,M67-B 已涵蓋)。
+- **Alpha feedback 確認**(組員):guidelines 寫 "address all issues noted in your Alpha feedback"——「feedback」很可能就是已拿到的 `cadc1075_results.json`+`cadc1075.xlsx` 本體 + guidelines §4 common issues(其中 (e) 檔名 my_optimizer.py 已確認是我們,M67-B 涵蓋)。只需跟組員確認:主辦方有無寄過**其他**個別通知;若無,此項即結案。
 - **Alpha 包內容**(組員):確認當時是預編譯 binary 還是現場編譯過關 → 只影響 M67-C 的保險層級評估,雙路徑架構已覆蓋兩種答案。
 - 送件上傳動作本身(使用者執行)。
 

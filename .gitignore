@@ -56,6 +56,9 @@ viz_results/
 # Cpp Executation Data
 *.exe
 
+# M67-B submission staging (regenerate via make_submission.py)
+build_submission/
+
 # Probe/sweep scratch logs & caches (M37-M49 sessions)
 audit_cache.pkl
 audit_cache_m45.pkl

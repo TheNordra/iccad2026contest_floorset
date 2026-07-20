@@ -17,6 +17,14 @@ reuse the repo's optimizer_claude from sys.modules and hide packaging bugs).
            the chain must skip it and still succeed via the next candidate
   phase 4  path hygiene: report absolute C:\\ paths in the shipped files
 
+M67-B variant (`python m48_coldstart_dryrun.py opwrapper`): same four phases,
+but the clean dir holds the Beta SUBMISSION layout instead -- op_wrapper.py
+(generated live via make_submission.build_op_wrapper_text(), so the gate and
+the packager share one merge implementation) + constructive.cpp +
+optimizer_claude.cpp, with NO optimizer_claude.py. Phase 0 baseline stays the
+repo optimizer, so digit-equality also proves the merged single-file form is
+cost-identical to the shipped three-file form.
+
 Never touches the repo constructive.exe (phases compile only inside a tempdir).
 """
 import os
@@ -76,10 +84,12 @@ def main():
         _phase_eval(sys.argv[k + 1], [int(x) for x in sys.argv[k + 2:]])
         return
 
+    opw = "opwrapper" in sys.argv[1:]             # M67-B submission-layout variant
+    tag = " (op_wrapper)" if opw else ""
     ids = _pick_ids()
     sids = [str(i) for i in ids]
     scratch = Path(tempfile.mkdtemp(prefix="m48_coldstart_"))
-    print(f"scratch: {scratch}")
+    print(f"scratch: {scratch}{tag}")
     ok = True
     try:
         # ---- phase 0: repo baseline --------------------------------------
@@ -88,12 +98,24 @@ def main():
         print(f"phase 0 baseline costs: {base}  ({time.time()-t0:.0f}s)")
 
         # ---- phase 1: cold start in a clean dir --------------------------
-        for f in _SHIP:
-            shutil.copy2(_REPO / f, scratch / f)
+        if opw:
+            import make_submission
+            (scratch / "op_wrapper.py").write_text(
+                make_submission.build_op_wrapper_text(), encoding="utf-8",
+                newline="\n")
+            for f in ("constructive.cpp", "optimizer_claude.cpp"):
+                shutil.copy2(_REPO / f, scratch / f)
+            target = scratch / "op_wrapper.py"
+            scan_files = ("op_wrapper.py", "constructive.cpp", "optimizer_claude.cpp")
+        else:
+            for f in _SHIP:
+                shutil.copy2(_REPO / f, scratch / f)
+            target = scratch / "optimizer_constructive.py"
+            scan_files = _SHIP
         exe = scratch / "constructive.exe"
         assert not exe.exists()
         t0 = time.time()
-        c1, _, err1 = _run_phase(["--eval", str(scratch / "optimizer_constructive.py"), *sids])
+        c1, _, err1 = _run_phase(["--eval", str(target), *sids])
         p1 = (c1 == base and exe.exists()
               and "fallback" not in err1 and "unavailable" not in err1)
         print(f"phase 1 cold start: {'PASS' if p1 else 'FAIL'} "
@@ -106,7 +128,7 @@ def main():
         os.utime(exe, (future, future))
         garbage_size = exe.stat().st_size
         t0 = time.time()
-        c2, _, err2 = _run_phase(["--eval", str(scratch / "optimizer_constructive.py"), sids[0]])
+        c2, _, err2 = _run_phase(["--eval", str(target), sids[0]])
         p2 = (c2.get(sids[0]) == base[sids[0]]
               and exe.stat().st_size != garbage_size and "fallback" not in err2)
         print(f"phase 2 foreign binary: {'PASS' if p2 else 'FAIL'} "
@@ -116,7 +138,7 @@ def main():
         # ---- phase 3: compile chain skips a missing compiler -------------
         exe.unlink()
         t0 = time.time()
-        c3, _, err3 = _run_phase(["--eval", str(scratch / "optimizer_constructive.py"), sids[0]],
+        c3, _, err3 = _run_phase(["--eval", str(target), sids[0]],
                                  env_over={"ICCAD_CXX": "no-such-compiler-m48"})
         p3 = (c3.get(sids[0]) == base[sids[0]]
               and "no-such-compiler-m48" in err3 and "fallback" not in err3)
@@ -126,15 +148,18 @@ def main():
 
         # ---- phase 4: absolute-path hygiene (report only) -----------------
         print("phase 4 absolute C:\\ paths in shipped files:")
-        for f in _SHIP:
-            for ln, line in enumerate((_REPO / f).read_text(encoding="utf-8").splitlines(), 1):
+        scan_root = scratch if opw else _REPO
+        for f in scan_files:
+            for ln, line in enumerate((scan_root / f).read_text(encoding="utf-8").splitlines(), 1):
                 if re.search(r"[Cc]:[\\/]", line):
                     print(f"  {f}:{ln}: {line.strip()[:90]}")
-        print("  (expected: only the try-guarded compiler candidates in both wrappers)")
+        print("  (expected: only the try-guarded compiler candidates in both wrappers)"
+              if not opw else
+              "  (expected: only the nt-gated msys compiler candidate in op_wrapper.py)")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
-    print(f"\nM48 COLD-START DRY-RUN: {'ALL PASS' if ok else 'FAILURES -- see above'}")
+    print(f"\nM48 COLD-START DRY-RUN{tag}: {'ALL PASS' if ok else 'FAILURES -- see above'}")
     sys.exit(0 if ok else 1)
 
 
