@@ -76,7 +76,30 @@ cadc1075/
 3. **wall 模型驗證**(`fit`):`W=max(max dt, Σdt/cores, ΣPT)`;40 隻 REFINE-free 案 OLS → **a=0.9997、b=2.45ms/profile、c≈0**;γ 逐帶 = 1.20/1.06/0.88/**0.496**/0.463(後兩者正是 M49 K=4 的 −50%);full-pool 側用 M67-D pool0 實測 → γ_full 1.088、**實測 full/ship wall 6.27× @12c**。M47 後 proxy 鏈 ≈2.5ms/隻(ΣPT ≤0.09s,ledger 的 2.9s 是 pre-M47)。
 4. **投影結論(κ=3.16;κ∈{2.5,4,6}、模型 B、`--tax-all`、`--cores 24` 符號全同)**:shipped @s=1 **0.9926**(加權 RF 0.7325)、s=2 1.1668;**`POOL=0` 全池 +52.8~+60.0%**、**REFINE 還原 K=12 +15.1~+20.5%** → **M41 swap 砍 + M49/M50 REFINE 是 48c 的 RF 主力,必須留**。
 5. **🚨 主發現**:48c wall=max-setter ⇒ 被 M42/M45 砍掉的 22 隻(全部 dt ≤ max-setter)**加回來 dW = +0.00%**(重帶 13→33/34 隻、ΔΣPT ≤0.20s、`c*(restore)` ≤27.2 → **連 24 physical 都 ≤+0.53%**);in-set dQ ≈ 0 是設計使然(閘就是逐案 cost 相等)。⇒ **M42/M45 是為 12 核 `Σ/cores` 牆設計的,Beta 的 48 核把那面牆拿掉了,只剩 OOS 品質稅**:break-even **θ\*=0.000**(回收任何一點就贏)、θ=1 上界 **−2.11%**。
-6. **交接 M67-F(未做,送件形不動)**:θ 只能實測——`m67_oos_probe.py` 加「高核 restore 池」env 形(留 M41+M49/M50、跳過 `_BIG_REDUNDANT_IDX`+`_M45_BAND_DROP`)在同批 80 OOS 重案重跑 `pool0`;θ 顯著 >0 才討論 ship,且須做成 **cores-gated tier-5**(偵測失敗→現行行為 fail-safe)並重跑 m49 三 gate → regression_suite → make_submission → WSL 逐位複驗。⚠️ deadline 2026-07-31,現行 tar 已四關綠,θ 未量到前不要動 wrapper。細節見 `M67E_REPORT.md`。
+6. **交接 → 見下方獨立的 §M67-F**(θ 實測;本 session 未做、送件形不動)。細節見 `M67E_REPORT.md`。
+
+### M67-F(下一個 session 的主線;⏳ 未開工)——量 θ:+2.8% OOS 稅裡有多少屬於 M42/M45 池砍
+
+**背景一句話**:M67-E 證明 48c 下 wall = max-setter,M42/M45 砍掉的 22 隻 build profile 全部比 max-setter 便宜 → **加回來 dW=+0.00%**(@24c ≤+0.53%),所以那兩層在 Beta 機器上**只剩 M67-D 的 +2.825% OOS 品質稅、換不到任何 RF**。break-even **θ\*=0.000**、θ=1 上界 **−2.11%**(官方總分)。θ 無法從 cache 得知(M67-D 只量了 shipped 與 POOL=0 兩端點)。
+
+**要量的東西**:`θ = (OOS_shipped − OOS_restore) / (OOS_shipped − OOS_full)`,其中 restore = 保留 M41 swap 砍 + M49/M50 REFINE band、**只**跳過 `_BIG_REDUNDANT_IDX` + `_M45_BAND_DROP` 的池。
+
+**Phase 1 — θ pilot(便宜、零風險、先做這個)**
+1. `optimizer_constructive.py` 加一個**純 offline env 旋鈕**(預設 off ⇒ 送件行為逐位不變,同 `ICCAD_L1_POOL` 慣例),例如 `ICCAD_M67F_RESTORE=1`:在 `_pool_indices()` 內跳過 M42/M45 兩層、其餘不動。⚠️ 加完先跑 `m48_coldstart_dryrun.py` + 官方 eval 逐位 = `results_shipped_m51.json` 證明 off 路徑沒被汙染。
+2. `m67_oos_probe.py` 的 `pool0` 模式加 `--pool-env KEY=VAL`(或新 mode `restore`),沿用**同一批 80 案 OOS 重案 + 同 cache/協定**。
+3. **預註冊 gate**(照 M64/M65 pilot 慣例):先抽 20 案 →
+   - θ_pilot ≤ 0.10 ⇒ **RED,結案**(把結論寫進 ledger,M42/M45 維持不動);
+   - 0.10 < θ_pilot < 0.30 ⇒ 補齊 80 案再判;
+   - θ_pilot ≥ 0.30 ⇒ 直接補齊 80 案並進 Phase 2。
+4. ⚠️ θ 可能為**負**(池變大 → proxy 在未見過的案上更容易選錯)。這正是要量它的理由。
+
+**Phase 2 — 多核 wall 實測(ship 的第二個必要條件,與 θ 獨立)**
+「48c 下 restore 免費」目前只有模型 + 間接證據(12 核跑 41-way 並行時 wall 模型只低估 9%)。本機只有 12 核 → **必須在真多核機**(GPU box 的 WSL2,先確認 `nproc`)實測 shipped vs restore 池的逐案 wall;若 restore 的 wall 漲幅 >2%,免費論證破產、直接結案。
+
+**Phase 3 — 才輪到 ship 討論**(θ 綠 ∧ 多核 wall 綠)
+- 形態 = **cores-gated tier-5**,鏡射 M45 doctrine:`_effective_cores() >= T`(T 待定,建議 ≥32)才跳過 M42/M45;偵測失敗 / 未知 → **現行行為**(fail-safe 方向與 M45 相反但同精神:高核才鬆綁)。
+- 全鏈重驗,一項都不能省:`rf_score_model.py`(常數不必重算,但要重看投影)→ `m49_refine_probe.py` `variant 4 big`/`8 mid`/`4 mid` → `regression_suite.py` 六項 → `make_submission.py all` → **M67-C 的 WSL 端到端逐位複驗**(`verify_final_tar.sh`)。
+- ⚠️ **時程/風險**:deadline **2026-07-31 17:00 GMT+8**,現行 tar(md5 `b9589618d507de0561f79a55a80fd8f3`)已四關全綠。建議**先把現行 tar 提早上傳**,M67-F 平行推進;要換件必須先確認「Drive 可否覆蓋重傳」(官方只明寫**檔名錯誤**不得重交,覆蓋規則未明 → 找主辦方/組員確認)。任一 phase 沒過或時間不夠 → **維持現行送件形**,把 M67-F 結論留給 Final。
 
 ## 等待中(勿在上述 session 內處理)
 - **Alpha feedback 確認**(組員):guidelines 寫 "address all issues noted in your Alpha feedback"——「feedback」很可能就是已拿到的 `cadc1075_results.json`+`cadc1075.xlsx` 本體 + guidelines §4 common issues(其中 (e) 檔名 my_optimizer.py 已確認是我們,M67-B 涵蓋)。只需跟組員確認:主辦方有無寄過**其他**個別通知;若無,此項即結案。
