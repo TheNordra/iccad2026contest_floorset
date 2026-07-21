@@ -52,11 +52,15 @@ cadc1075/
 3. `m48_coldstart_dryrun.py opwrapper` variant(預設模式輸出逐字不變):scratch = 送件佈局(op_wrapper.py + 兩 .cpp、無 optimizer_claude.py)→ **四 phase 全 PASS**(cold compile 3 案逐位含案 99 = 1.3083538507526609、垃圾 exe smoke 攔截、bogus ICCAD_CXX 鏈跳過、phase 4 僅剩 msys 候選)。
 4. **Gate 全綠**:逐位 ✅ + coldstart 四 phase ✅ + regression_suite 六項 ✅。commit(build_submission/ 進 .gitignore,make_submission.py 進 repo)。
 
-### M67-C:Linux static binary + 三關驗證(需使用者在 GPU 機 WSL2 跑指令)
-1. 產 build script:`g++ -O3 -std=c++17 -static-libstdc++ -static-libgcc -o bin/constructive_linux constructive.cpp`(先試,必要時試全 `-static`)+ md5 + 1-block smoke;`optimizer_claude.cpp` 同。
-2. 更新 Linux 驗證包(參考 memory `[[docker-linux-coldstart-verify]]` 的三關結構,改 cadc1075/ + op_wrapper.py 佈局):Tier1 compile+smoke / Tier2 coldstart / Tier3 100 案逐位 vs `results_shipped_m51.json`(容忍 case 84 <2e-9 ULP)。
-3. 使用者在 GPU 機 WSL2(Ubuntu-22.04, g++11)執行、貼回輸出;session 判定、將 binary 入包、確認 bundled-binary-first 路徑在 Linux 實際生效(stderr/耗時證據),重跑 M67-B gate。
-4. 風險註記:grader glibc 未知 → binary 只是第一層,編譯 fallback 第二層、SA 第三層。
+### M67-C:Linux static binary + 四關驗證 ✅ 完成(2026-07-21)
+1. 新工具 `m67c_make_linux_bundle.py`(永不 ship):產自足 WSL2 驗證包 `Downloads/m67c-linux-verify.tar.gz`(161MB / 422 檔;內嵌 scripts 強制 LF、現產 staged `cadc1075.tar.gz`、8 隻 loader 閉包、`LiteTensorDataTest`、`results_shipped_m51.json`)。包內 `verify_final_tar.sh` 供最終 tar 複驗(免重傳大包)。
+2. **WSL2 Ubuntu-22.04 / g++ 11.4.0 / python 3.10.12 / torch 2.11.0+cpu 四關 ALL GREEN**:
+   - **T1** `-O3 -std=c++17 -static-libstdc++ -static-libgcc`(無 -march,保 portable)→ `constructive_linux` 508248B、`sa_linux` 350352B,ldd 僅剩 libc/libm;全 `-static` 備胎亦 COMPILE_OK(1485672B,**不入包**、留 Final 保險);三隻 1-block SMOKE OK。md5:cons `70d3cd9f…a301`、sa `e89d3a84…1325`。
+   - **T2** `m48_coldstart_dryrun.py opwrapper` 四 phase ALL PASS(phase 4 僅剩 nt-gated msys 行)。⚠️ gotcha:phase 2 的假 binary 以 `MZ` 開頭 → 撞 WSL binfmt `WSLInterop` → Windows 彈「不支援的 16 位元應用程式」modal(**無害**,子行程非零 → smoke 正確拒收 → 重編 PASS;免對話框:跑前 `sudo sh -c 'echo 0 > /proc/sys/fs/binfmt_misc/WSLInterop'`)。
+   - **T3** 官方指令 100 案:total **1.326473104916827 逐位 |d|=0.000e+00**、100/100 feasible、avg **0.92s**(Windows 1.73s)、eval 102s;唯一 ULP-WARN = case 84 cost |d|=**4.441e-16**(positions 逐位相同,比 2026-07-15 的 <2e-9 更緊);**bundled-first 生效鐵證 = 跑完無 `constructive.exe` 編譯產物**、stderr 零 fallback/compile 行。
+   - **T4** 破壞 `bin/constructive_linux`(垃圾 bytes)→ 落編譯鏈:case 50 cost 1.3106535809308177 逐位 = anchor ∧ `constructive.exe` 出現 → POSIX 上 layer-1→layer-2 交接證實。
+3. 入包 + gate 重跑(Windows):binaries → repo `bin/`(md5 對照 build manifest 逐位)→ `make_submission.py all` 8 檔 hygiene OK、tar `bin/*` mode 0o755、官方佈局 verify 逐位 **1.326473104916827**;交叉驗證 = 最終 tar 內 `op_wrapper.py` md5 `709a255e…958f` **與 WSL T3 實跑那份逐位相同**;`m48 opwrapper` 四 phase + `regression_suite` 六項重跑存證。
+4. 風險註記:grader glibc 未知 → partial-static 綁 build 機 glibc(2.35)向前相容,風險低;真不合 → 第二層現場編譯(T4 已證)、第三層 SA。fullstatic 備胎存 `Downloads/m67c_bin_out/`。
 
 ### M67-D:OOS 泛化預檢(訓練集抽樣;獨立,可與 C 對調)
 1. 新工具 `m67_oos_probe.py`(永不 ship):從 `floorset_lite` 訓練集抽 N≥100 案(固定 seed;n 分佈 mirror validation 的 20-120 結構),loader 參考 `tree_decode_probe.py`/`m52_phase0_probe.py`;baseline 由 fp_sol label 導出(鏡射 `ContestEvaluator._extract_baseline`),評分用官方 `evaluate_solution` + `target_positions`(嚴格硬約束;勿用 `tree_decode_probe._cost_of`)。
