@@ -63,10 +63,12 @@ cadc1075/
    **第二回合(最終 tar 端到端)✅**:含 bin/ 的實際上傳物（`cadc1075.tar.gz` 425563B md5 `b9589618d507de0561f79a55a80fd8f3`）帶回 WSL2 跑 `bash verify_final_tar.sh` —— **零注入**、包內自帶 binaries：total **1.326473104916827 |d|=0.000e+00**、100/100 feasible、`bundled-first: OK`、唯一 case 84 4.441e-16、avg 1.15s、eval 128s → **Linux 端定案**。
 4. 風險註記:grader glibc 未知 → partial-static 綁 build 機 glibc(2.35)向前相容,風險低;真不合 → 第二層現場編譯(T4 已證)、第三層 SA。fullstatic 備胎存 `Downloads/m67c_bin_out/`。
 
-### M67-D:OOS 泛化預檢(訓練集抽樣;獨立,可與 C 對調)
-1. 新工具 `m67_oos_probe.py`(永不 ship):從 `floorset_lite` 訓練集抽 N≥100 案(固定 seed;n 分佈 mirror validation 的 20-120 結構),loader 參考 `tree_decode_probe.py`/`m52_phase0_probe.py`;baseline 由 fp_sol label 導出(鏡射 `ContestEvaluator._extract_baseline`),評分用官方 `evaluate_solution` + `target_positions`(嚴格硬約束;勿用 `tree_decode_probe._cost_of`)。
-2. 跑 shipped M51 portfolio(default env)→ OOS raw 加權總分 vs in-set 1.3265;band 分解(n>100/mid/small)、feasible 率、SA fallback 率、最壞案清單。
-3. 判定(診斷性,不改送件形):OOS ≤ ~1.40 綠;>1.45 報告 overfit 集中在哪個 band/機制。快取斷點續跑(耗時 ~N×1.6s + 開發)。
+### M67-D:OOS 泛化預檢 ✅ 完成(2026-07-21)——**送件形不動;RF 投影須改用 OOS 稅**
+1. `m67_oos_probe.py`(永不 ship;`gate0|run|report|ref|pool0`,cache `m67_oos_cache.pkl`,dump `results_M67D_oos.json`):訓練集 `floorset_lite` 抽 **240 案**(seed 67;validation 每個 n∈[21,120] 恰 1 案 → 鏡射之,每 n K=2、n>100 K=4),baseline 逐位鏡射 `_extract_baseline`(含 stored-metrics 分支,訓練 metrics_sol 與重算 dev 2.8e-8),評分 = 官方 `evaluate_solution` + `target_positions` + `median_runtime=1.0`(RF=1.0 同 in-set 語意),估計量 = per-n 先平均再官方加權。**gate0 全 PASS**(env 淨、池=41、in-set 3 案 cost+positions 逐位 = `results_shipped_m51.json`、訓練 fp_sol verbatim feasible∧hgap≈0)。
+2. **結果**:OOS raw **1.6533** vs in-set 1.3265(+24.6% → 預註冊 bar 判 RED);floor-relative ratio 1.3287 vs 1.1972(+10.98%);**硬旗標全清**(100% feasible、零 fallback、零例外、runtime p50 1.54s vs 1.55s、p90 2.44 vs 2.58)。band:S 0.6%/M 18.2%/**B 81.1% wContr**,B 帶 1.6599 vs 1.3121。
+3. **歸因(raw RED ≠ 過擬合)**:(a) 單 profile 參照 in-set 1.4775→OOS 1.8681 = **+26.4% gap 比 portfolio 的 +24.6% 更大**、portfolio 增益 in-set 10.22% vs **OOS 11.50%** → 品質軸調參泛化;(b) 語料本身更硬:label floor 1.2444 vs 1.1079(label vrel 0.1081 vs 0.0504)、boundary blocks 28.8 vs 24.0、preplaced 3.08 vs 2.59、b2b 1201 vs 994。
+4. **🚨 主發現(`pool0` 模式)**:M41/M42/M45+M49/M50 的 adaptive 切法品質稅 **in-set +0.106%(movers 3/20)vs OOS +2.825%(movers 52/80,最壞單案 +11.9%)= 27 倍**;證實 M55 CV 預言(且更嚴重:break 65% vs CV 的 40-48%)→「strict selection-preserving ⇒ ∀median∀cores 弱贏」**只在樣本內成立**。**但仍不改送件形**:pool-cut wall 比值 2.50× @48c(實測含 REFINE 為 7.28× @12c),以 alpha 校準(RF=0.7081≈floor ⇒ t≈0.30·median)算 `cost_full/cost_ship = (1/1.02825)×(0.921/0.700) = 1.279` → 切法淨賺 **~28%**(含 REFINE 取 5× 則 ~58%);淨虧只在 median ≥ **8.2×** t_shipped(alpha 實測 3.28×,安全邊際 2.5 倍)。
+5. **對 M67-E 的交接**:48c 投影**必須改用 +2.8% 的 OOS 品質稅**取代 in-sample 的 +0.1%。細節見 `M67D_REPORT.md`。
 
 ### M67-E(可選):48c RF 投影更新
 - `rf_score_model.py` cores 網格加 48;以 alpha 錨(weighted RF 0.7081、median≈3.2×)校準;確認 48c 下 tier-4/lowcore fail-open→universal、wall=max_i 假設;純 cache 分析,產 Final 決策用投影。不動送件形。
