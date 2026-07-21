@@ -59,7 +59,8 @@ cadc1075/
    - **T2** `m48_coldstart_dryrun.py opwrapper` 四 phase ALL PASS(phase 4 僅剩 nt-gated msys 行)。⚠️ gotcha:phase 2 的假 binary 以 `MZ` 開頭 → 撞 WSL binfmt `WSLInterop` → Windows 彈「不支援的 16 位元應用程式」modal(**無害**,子行程非零 → smoke 正確拒收 → 重編 PASS;免對話框:跑前 `sudo sh -c 'echo 0 > /proc/sys/fs/binfmt_misc/WSLInterop'`)。
    - **T3** 官方指令 100 案:total **1.326473104916827 逐位 |d|=0.000e+00**、100/100 feasible、avg **0.92s**(Windows 1.73s)、eval 102s;唯一 ULP-WARN = case 84 cost |d|=**4.441e-16**(positions 逐位相同,比 2026-07-15 的 <2e-9 更緊);**bundled-first 生效鐵證 = 跑完無 `constructive.exe` 編譯產物**、stderr 零 fallback/compile 行。
    - **T4** 破壞 `bin/constructive_linux`(垃圾 bytes)→ 落編譯鏈:case 50 cost 1.3106535809308177 逐位 = anchor ∧ `constructive.exe` 出現 → POSIX 上 layer-1→layer-2 交接證實。
-3. 入包 + gate 重跑(Windows):binaries → repo `bin/`(md5 對照 build manifest 逐位)→ `make_submission.py all` 8 檔 hygiene OK、tar `bin/*` mode 0o755、官方佈局 verify 逐位 **1.326473104916827**;交叉驗證 = 最終 tar 內 `op_wrapper.py` md5 `709a255e…958f` **與 WSL T3 實跑那份逐位相同**;`m48 opwrapper` 四 phase + `regression_suite` 六項重跑存證。
+3. 入包 + gate 重跑(Windows):binaries → repo `bin/`(md5 對照 build manifest 逐位)→ `make_submission.py all` 8 檔 hygiene OK、tar `bin/*` mode 0o755、官方佈局 verify 逐位 **1.326473104916827**;交叉驗證 = 最終 tar 內 `op_wrapper.py` md5 `709a255e…958f` **與 WSL T3 實跑那份逐位相同**;`m48 opwrapper` 四 phase + `regression_suite` 六項重跑存證（752s ALL PASS）。
+   **第二回合(最終 tar 端到端)✅**:含 bin/ 的實際上傳物（`cadc1075.tar.gz` 425563B md5 `b9589618d507de0561f79a55a80fd8f3`）帶回 WSL2 跑 `bash verify_final_tar.sh` —— **零注入**、包內自帶 binaries：total **1.326473104916827 |d|=0.000e+00**、100/100 feasible、`bundled-first: OK`、唯一 case 84 4.441e-16、avg 1.15s、eval 128s → **Linux 端定案**。
 4. 風險註記:grader glibc 未知 → partial-static 綁 build 機 glibc(2.35)向前相容,風險低;真不合 → 第二層現場編譯(T4 已證)、第三層 SA。fullstatic 備胎存 `Downloads/m67c_bin_out/`。
 
 ### M67-D:OOS 泛化預檢(訓練集抽樣;獨立,可與 C 對調)
