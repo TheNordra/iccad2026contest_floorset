@@ -467,7 +467,7 @@ for tag, fn in (("shipped", V_ship), ("+uni(mid)", V_uni), ("+lowcore(all)", V_l
     print(f"  local RF=1.0 total {tag:<14} = {local_total(fn):.4f}")
 
 print(f"\nprojected REAL total, rows = median M, cols = cores (shipped / +uni / +low):")
-for cores_ in (4, 6, 8, 12, 16):
+for cores_ in (4, 6, 8, 12, 16, 48):
     print(f"  cores={cores_}")
     for M in (6, 8, 11, 14, 20):
         a = rf_total(V_ship, M, cores_)
@@ -481,11 +481,40 @@ print(f"\nband mean wall (s) shipped -> +uni -> +low:")
 for lo, hi in ((40, 60), (60, 100), (100, 110), (110, 10**9)):
     bc = band_cases(lo, hi)
     hs = "inf" if hi >= 10**9 else str(hi)
-    for cores_ in (4, 8, 12):
+    for cores_ in (4, 8, 12, 48):
         ws = sum(wall(c_["idx"], V_ship(c_["idx"]), cores_) for c_ in bc) / len(bc)
         wu = sum(wall(c_["idx"], V_uni(c_["idx"]), cores_) for c_ in bc) / len(bc)
         wl = sum(wall(c_["idx"], V_low(c_["idx"]), cores_) for c_ in bc) / len(bc)
         print(f"  ({lo},{hs}] cores={cores_:>2}: {ws:6.2f} -> {wu:6.2f} -> {wl:6.2f}")
+
+# ── M67-E: 48-core structure (Beta runs on a dedicated 48c ICELAKE box) ───────
+# At 48 cores every shipped pool (13 / 25 / 35 profiles) is smaller than the core
+# count, so sum/cores <= (|P|/48)*max_i < max_i: the wall is the MAX-setter, not
+# the sum. The per-case crossover c* = sum_i/max_i is the core count above which
+# that holds; max c* over a band answers "does the assumption survive if the 48
+# logical cores are really 24 physical?". Tier-4 / M50 low-core do NOT fire at 48
+# detected cores (fail-open -> universal tiers only), so the 48c pool is exactly
+# V_uni (== m46_pool(., cores>8) == _pool_indices() under ICCAD_ADAPTIVE_CORES=48;
+# gated in m67e_rf48.py gate0). Detail + alpha-anchored projection: m67e_rf48.py.
+print(f"\n48-core structure (shipped pool at 48c; wall = max_i iff cores >= c*):")
+print(f"  {'band':>12} {'#':>3} {'|P|':>4} {'max_i':>7} {'sum/48':>7} {'c* p50':>7} "
+      f"{'c* max':>7}  max-bound?")
+for lo, hi in ((0, 40), (40, 60), (60, 100), (100, 110), (110, 10**9)):
+    bc = band_cases(lo, hi)
+    if not bc:
+        continue
+    hs = "inf" if hi >= 10**9 else str(hi)
+    mx, s48, cstar = [], [], []
+    for c_ in bc:
+        ci = c_["idx"]; pool = V_uni(ci)
+        ts = [data[(ci, k)][1] for k in pool]
+        mx.append(max(ts)); s48.append(sum(ts) / 48.0)
+        cstar.append(sum(ts) / max(ts))
+    cs = sorted(cstar)
+    ok = all(s <= m + 1e-12 for s, m in zip(s48, mx))
+    print(f"  ({lo:>3},{hs:>4}] {len(bc):>3} {len(V_uni(bc[0]['idx'])):>4} "
+          f"{sum(mx)/len(mx):>7.2f} {sum(s48)/len(s48):>7.2f} "
+          f"{cs[len(cs)//2]:>7.1f} {max(cstar):>7.1f}  {'YES' if ok else 'NO'}")
 
 # tie record for the docs (n=111 case; #19 vs #21 under shipped pool)
 for c_ in CASES:
@@ -579,7 +608,7 @@ print("\nmax-setter tally n>100 @12c: "
 ALPHAS_U = (0.95, 0.9, 0.85, 0.8, 0.7, 0.5)
 print("\nprojected REAL delta vs shipped (uniform alpha on ALL kept profiles):")
 print(f"{'cores':>6} {'M':>3} " + "".join(f"{'a='+str(a):>9}" for a in ALPHAS_U))
-for cores_ in (4, 8, 12, 16):
+for cores_ in (4, 8, 12, 16, 48):
     for M in (6, 8, 11, 14, 20):
         base = rf46(M, cores_, ONE)
         row = f"{cores_:>6} {M:>3} "
@@ -592,7 +621,7 @@ ALPHAS_T = (0.9, 0.8, 0.7)
 print(f"\nprojected REAL delta vs shipped (alpha on FREE-stack profiles ONLY, "
       f"{len(FREE_SET)} of {N_LIVE}):")
 print(f"{'cores':>6} {'M':>3} " + "".join(f"{'a='+str(a):>9}" for a in ALPHAS_T))
-for cores_ in (4, 8, 12, 16):
+for cores_ in (4, 8, 12, 16, 48):
     for M in (8, 11, 14):
         base = rf46(M, cores_, ONE)
         row = f"{cores_:>6} {M:>3} "
