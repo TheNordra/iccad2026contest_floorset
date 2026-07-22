@@ -368,6 +368,23 @@ def _weights(ns):
     return [math.exp((n - mx) / 12.0) for n in ns]
 
 
+def _sel(args):
+    """(lo, hi] case-size window for pool0/restore. --pool0-hi 0 = no upper
+    bound (M67-F Phase 1 semantics, n>100). M67-F mid-band top-up uses
+    --pool0-lo 60 --pool0-hi 100 so the M45 tier-3 band is scored on its own;
+    cases are cached individually, so a run with a wider window reuses every
+    solve a narrower one already did."""
+    return args.pool0_lo, (args.pool0_hi or 10 ** 9)
+
+
+def _selname(lo, hi):
+    return f"n>{lo}" if hi >= 10 ** 9 else f"{lo}<n<={hi}"
+
+
+def _in_sel(n, lo, hi):
+    return lo < n <= hi
+
+
 # --------------------------------------------------------------------------- #
 # modes                                                                        #
 # --------------------------------------------------------------------------- #
@@ -776,14 +793,15 @@ def mode_pool0(args):
     os.environ["ICCAD_PROFILE_TIMEOUT"] = "600"
     opt = oc.MyOptimizer(verbose=False)
     st = _C.setdefault("pool0", {})
-    lo = args.pool0_lo
+    lo, hi = _sel(args)
+    sel = _selname(lo, hi)
 
     ev = _inset_dataset()
     _j, arec = _anchor()
-    in_ids = [i for i in range(100) if arec[i]["block_count"] > lo]
+    in_ids = [i for i in range(100) if _in_sel(arec[i]["block_count"], lo, hi)]
     todo = [i for i in in_ids if f"IN{i}" not in st]
     if todo:
-        print(f"[pool0] in-set full-pool: {len(todo)} cases (n>{lo})")
+        print(f"[pool0] in-set full-pool: {len(todo)} cases ({sel})")
         for k, i in enumerate(todo):
             lay = _inset_lay(ev, i)
             pos, dt, _e = _solve_one(opt, lay)
@@ -792,7 +810,7 @@ def mode_pool0(args):
             print(f"[pool0]   in {k + 1}/{len(todo)} n={lay['n']} "
                   f"cost={st[f'IN{i}']['cost']:.4f} t={dt:.1f}s", flush=True)
 
-    rows = [r for r in _rows(args) if r["n"] > lo]
+    rows = [r for r in _rows(args) if _in_sel(r["n"], lo, hi)]
     byf = {}
     for r in rows:
         if f"OOS{r['key']}" not in st:
@@ -800,7 +818,7 @@ def mode_pool0(args):
             byf.setdefault(key, []).append(int(L))
     if byf:
         tot = sum(len(v) for v in byf.values())
-        print(f"[pool0] OOS full-pool: {tot} cases (n>{lo})")
+        print(f"[pool0] OOS full-pool: {tot} cases ({sel})")
         k = 0
         for key in sorted(byf):
             d = torch.load(_path_of(key))
@@ -815,7 +833,7 @@ def mode_pool0(args):
             print(f"[pool0]   oos {k}/{tot}", flush=True)
 
     print("=" * 78)
-    print(f"M67-D  ADAPTIVE-CUT OVERFIT TEST  (n>{lo}: shipped pool vs "
+    print(f"M67-D  ADAPTIVE-CUT OVERFIT TEST  ({sel}: shipped pool vs "
           f"ICCAD_ADAPTIVE_POOL=0)")
     print("=" * 78)
     ship_in = [dict(cost=arec[i]["cost"], n=arec[i]["block_count"])
@@ -827,7 +845,7 @@ def mode_pool0(args):
                             [r["n"] for r in full_in])
     mv_in = sum(1 for x, y in zip(ship_in, full_in)
                 if abs(x["cost"] - y["cost"]) > 1e-9)
-    print(f"  in-set n>{lo}: shipped {a:.6f}   full-pool {b:.6f}   "
+    print(f"  in-set {sel}: shipped {a:.6f}   full-pool {b:.6f}   "
           f"tax {(a / b - 1) * 100:+.3f}%   movers {mv_in}/{len(in_ids)}")
     ship_o = [r for r in rows if f"OOS{r['key']}" in st]
     full_o = [dict(st[f"OOS{r['key']}"], key=r["key"]) for r in ship_o]
@@ -836,7 +854,7 @@ def mode_pool0(args):
     mv_o = sum(1 for x, y in zip(ship_o, full_o)
                if abs(x["cost"] - y["cost"]) > 1e-9)
     worse = sum(1 for x, y in zip(ship_o, full_o) if x["cost"] > y["cost"] + 1e-9)
-    print(f"  OOS    n>{lo}: shipped {a2:.6f}   full-pool {b2:.6f}   "
+    print(f"  OOS    {sel}: shipped {a2:.6f}   full-pool {b2:.6f}   "
           f"tax {(a2 / b2 - 1) * 100:+.3f}%   movers {mv_o}/{len(ship_o)} "
           f"(shipped worse on {worse})")
     rt_s = statistics.mean(r["runtime"] for r in ship_o)
@@ -902,6 +920,14 @@ def _theta_gate_a(arm):
         chk("restore adds exactly the two drop sets @n=120",
             set(oc._pool_indices(120)) - set(_shipped_pool(120))
             == set(oc._BIG_REDUNDANT_IDX))
+        # mid band: the layer the (60,100] top-up measures is M45 tier-3 alone
+        mid_drop = set()
+        for _lo, _hi, _d in oc._M45_BAND_DROP:
+            if _lo < 80 <= _hi:
+                mid_drop = set(_d)
+        chk("restore adds exactly _M45_BAND_DROP @n=80",
+            set(oc._pool_indices(80)) - set(_shipped_pool(80)) == mid_drop,
+            f"(tier-3 = {sorted(mid_drop)})")
     else:
         chk("norefine keeps the shipped pool", on == off, str(on))
         chk("norefine clears the REFINE band",
@@ -946,15 +972,18 @@ def mode_restore(args):
     os.environ["ICCAD_PROFILE_TIMEOUT"] = "600"       # wider pool oversubscribes
     opt = oc.MyOptimizer(verbose=False)
     st = _C.setdefault("m67f", {}).setdefault(arm, {})
-    lo = args.pool0_lo
+    lo, hi = _sel(args)
+    sel = _selname(lo, hi)
 
-    # ---- Gate B: in-set n>100 under the restored pool ----------------------
+    # ---- Gate B: in-set window under the restored pool ---------------------
+    # n>100 covers the M42 gate; a window reaching into (60,100] ALSO re-checks
+    # the M45 tier-3 gate, since that is the layer the knob restores there.
     ev = _inset_dataset()
     _j, arec = _anchor()
-    in_ids = [i for i in range(100) if arec[i]["block_count"] > lo]
+    in_ids = [i for i in range(100) if _in_sel(arec[i]["block_count"], lo, hi)]
     todo = [i for i in in_ids if f"IN{i}" not in st]
     if todo:
-        print(f"\n[{arm}] in-set: {len(todo)} cases (n>{lo})")
+        print(f"\n[{arm}] in-set: {len(todo)} cases ({sel})")
         for k, i in enumerate(todo):
             lay = _inset_lay(ev, i)
             pos, dt, _e = _solve_one(opt, lay)
@@ -965,35 +994,65 @@ def mode_restore(args):
 
     print()
     print("=" * 78)
-    print(f"GATE B  in-set n>{lo}: {arm} vs shipped "
-          f"({'strict gate => must be EQUAL' if arm == 'pool' else 'M49/M50 trade => movers expected'})")
+    gates = ("M42" if lo >= 100 else
+             ("M45 tier-3" if hi <= 100 else "M42 + M45 tier-3"))
+    expect = (f"{gates} strict gate: restore must never be WORSE" if arm == "pool"
+              else "M49/M50 trade => movers expected")
+    print(f"GATE B  in-set {sel}: {arm} vs shipped ({expect})")
     print("=" * 78)
-    bad = []
+    # Two different claims, and only one of them is an invariant:
+    #  * restore WORSE than shipped  -> impossible (the proxy is oracle-min in
+    #    sample, M31, so a superset pool is weakly better) => knob bug, STOP.
+    #  * restore BETTER than shipped -> the drop set's strict selection-
+    #    preserving gate has drifted. Measured 2026-07-22: it HAS, on the mid
+    #    band. _M45_BAND_DROP (and _BIG_REDUNDANT_IDX) were derived from
+    #    audit_cache.pkl = REFINE K=12 positions, but M49/M50 ship a K=4/K=8
+    #    overlay on exactly those bands, so the gate was never re-proven under
+    #    the config that ships. In-set case 64 (n=85): equal at K=12
+    #    (1.3558352796522921 both sides), but at the shipped K=8 the cut costs
+    #    +0.41%. Heavy band is still 20/20 equal. Reported, not fatal - it is a
+    #    finding about the shipped constants, not a fault in this measurement.
+    worse, better = [], []
     for i in in_ids:
         cs, cr = float(arec[i]["cost"]), float(st[f"IN{i}"]["cost"])
-        if abs(cr - cs) > 1e-9 * max(abs(cs), 1.0):
-            bad.append((i, arec[i]["block_count"], cs, cr))
+        if cr > cs + 1e-9 * max(abs(cs), 1.0):
+            worse.append((i, arec[i]["block_count"], cs, cr))
+        elif cr < cs - 1e-9 * max(abs(cs), 1.0):
+            better.append((i, arec[i]["block_count"], cs, cr))
+    bad = worse + better
     if arm == "pool":
-        print(f"  [{'PASS' if not bad else 'FAIL'}] "
-              f"{len(in_ids) - len(bad)}/{len(in_ids)} cases cost-equal (rel 1e-9)")
-        for i, n, cs, cr in bad:
-            print(f"    case {i:3d} n={n:3d} shipped {cs!r} restore {cr!r} "
-                  f"{(cr / cs - 1) * 100:+.4f}%")
-        if bad:
-            print("  => the M42 strict selection-preserving gate no longer holds "
-                  "(knob wrong or constants drifted). STOP.")
+        print(f"  [{'PASS' if not worse else 'FAIL'}] restore never worse "
+              f"({len(worse)} worse) - the invariant")
+        print(f"  [{'PASS' if not better else 'DRIFT'}] "
+              f"{len(in_ids) - len(bad)}/{len(in_ids)} cases cost-equal "
+              f"(rel 1e-9) - the {gates} gate as originally proven")
+        for tag, lst in (("WORSE", worse), ("DRIFT", better)):
+            for i, n, cs, cr in lst:
+                print(f"    [{tag}] case {i:3d} n={n:3d} shipped {cs!r} "
+                      f"restore {cr!r} {(cr / cs - 1) * 100:+.4f}%")
+        if worse:
+            print("  => restore lost to a subset of its own pool: the knob is "
+                  "wrong. STOP.")
             _csave()
             return 1
+        if better:
+            wt = {i: math.exp(arec[i]["block_count"] / 12.0) for i in range(100)}
+            dw = sum(wt[i] * (cr - cs) for i, _n, cs, cr in better)
+            print(f"  => the {gates} gate has DRIFTED (derived at REFINE K=12, "
+                  f"ships at K=4/K=8).\n     In-set cost of the drift: "
+                  f"{100 * dw / sum(wt.values()) / IN_SET_TOTAL:+.4f}% of the "
+                  f"local total. Continuing:\n     the OOS theta below is "
+                  f"exactly the quantity this drift makes interesting.")
     else:
         a = compute_total_score([arec[i]["cost"] for i in in_ids],
                                 [arec[i]["block_count"] for i in in_ids])
         b = compute_total_score([st[f"IN{i}"]["cost"] for i in in_ids],
                                 [st[f"IN{i}"]["n"] for i in in_ids])
-        print(f"  in-set n>{lo}: shipped {a:.6f}  {arm} {b:.6f}  "
+        print(f"  in-set {sel}: shipped {a:.6f}  {arm} {b:.6f}  "
               f"tax {(a / b - 1) * 100:+.3f}%  movers {len(bad)}/{len(in_ids)}")
 
     # ---- OOS arm ----------------------------------------------------------
-    rows = [r for r in _rows(args) if r["n"] > lo]
+    rows = [r for r in _rows(args) if _in_sel(r["n"], lo, hi)]
     byf = {}
     for r in rows:
         if f"OOS{r['key']}" not in st:
@@ -1001,7 +1060,7 @@ def mode_restore(args):
             byf.setdefault(key, []).append(int(L))
     if byf:
         tot = sum(len(v) for v in byf.values())
-        print(f"\n[{arm}] OOS: {tot} cases (n>{lo})")
+        print(f"\n[{arm}] OOS: {tot} cases ({sel})")
         t0, k = time.time(), 0
         for key in sorted(byf):
             d = torch.load(_path_of(key))
@@ -1021,10 +1080,11 @@ def mode_restore(args):
 
 
 def _theta_report(args, arm):
-    lo = args.pool0_lo
+    lo, hi = _sel(args)
+    sel = _selname(lo, hi)
     p0 = _C.get("pool0", {})
     st = _C.get("m67f", {}).get(arm, {})
-    rows = [r for r in _rows(args) if r["n"] > lo
+    rows = [r for r in _rows(args) if _in_sel(r["n"], lo, hi)
             and f"OOS{r['key']}" in p0 and f"OOS{r['key']}" in st]
     if not rows:
         print("[theta] no overlapping cases - run pool0 first")
@@ -1039,7 +1099,7 @@ def _theta_report(args, arm):
 
     print()
     print("=" * 78)
-    print(f"M67-F  THETA  (arm={arm}, n>{lo}, per-n averaged then officially "
+    print(f"M67-F  THETA  (arm={arm}, {sel}, per-n averaged then officially "
           f"weighted)")
     print("=" * 78)
     # pilot subset = first draw per n (the sample is prefix-stable in K)
@@ -1048,8 +1108,8 @@ def _theta_report(args, arm):
         first[f"{key}/L{L}"] = n
     pilot = [t for t in trip if t["key"] in first]
     out = {}
-    for tag, sub in (("theta_20 (pilot, checkpoint only)", pilot),
-                     ("theta_80 (VERDICT SAMPLE)", trip)):
+    for tag, sub in ((f"theta_{len(pilot)} (pilot, checkpoint only)", pilot),
+                     (f"theta_{len(trip)} (VERDICT SAMPLE)", trip)):
         if not sub:
             continue
         S, R, F = tot(sub, "S"), tot(sub, "R"), tot(sub, "F")
@@ -1079,7 +1139,47 @@ def _theta_report(args, arm):
         verdict = "YELLOW (0.10..0.30) - record, no Phase 2"
     else:
         verdict = "GREEN (>=0.30) - Phase 2 (multi-core wall)"
-    print(f"\n  PRE-REGISTERED VERDICT (theta_80): {verdict}")
+    print(f"\n  PRE-REGISTERED VERDICT (theta_{len(trip)}): {verdict}")
+    if lo != 100 or hi < 10 ** 9:
+        print("  NOTE: the >=0.30 bar was pre-registered for n>100, where the "
+              "index-based\n        restore is wall-free @48c. It is NOT free "
+              "on (60,100] (dW +2.34%),\n        so the ship decision there is "
+              "m67e_rf48.py's wall-aware break-even\n        theta*, not this "
+              "bar. theta here only measures the quality debt.")
+
+    # ---- per-band decomposition -------------------------------------------
+    # theta is a ratio inside a band; wContr says how much of the OFFICIAL total
+    # that band can move (validation weight profile: one case per n in [21,120],
+    # independent of how many draws the sample took).
+    wall_n = sum(math.exp(n / 12.0) for n in range(21, 121))
+    bands = [b for b in BANDS if any(_in_sel(t["n"], b[1], b[2]) for t in trip)]
+    if len(bands) > 1 or lo != 100 or hi < 10 ** 9:
+        print(f"\n  per-band decomposition ({arm}):")
+        print(f"    {'band':>12} {'cases':>5} {'wContr':>7} {'shipped':>9} "
+              f"{'restore':>9} {'full':>9} {'S/F-1':>8} {'S/R-1':>8} "
+              f"{'theta':>7} {'movers':>7}")
+        for _b, blo, bhi in bands:
+            sub = [t for t in trip if _in_sel(t["n"], blo, bhi)]
+            if not sub:
+                continue
+            bS, bR, bF = tot(sub, "S"), tot(sub, "R"), tot(sub, "F")
+            bth = _theta(bS, bR, bF)
+            bmv = sum(1 for t in sub if abs(t["S"] - t["R"]) > 1e-9)
+            bbet = sum(1 for t in sub if t["R"] < t["S"] - 1e-9)
+            wc = sum(math.exp(n / 12.0) for n in range(21, 121)
+                     if _in_sel(n, blo, bhi)) / wall_n
+            out[f"band_{blo}_{bhi}"] = dict(
+                cases=len(sub), wcontr=wc, S=bS, R=bR, F=bF, theta=bth,
+                movers=bmv, better=bbet, worse=bmv - bbet,
+                denominator_pct=(bS / bF - 1) * 100,
+                recovered_pct=(bS / bR - 1) * 100)
+            print(f"    {_selname(blo, bhi):>12} {len(sub):>5} {100 * wc:>6.1f}% "
+                  f"{bS:>9.4f} {bR:>9.4f} {bF:>9.4f} "
+                  f"{(bS / bF - 1) * 100:>+7.3f}% {(bS / bR - 1) * 100:>+7.3f}% "
+                  f"{'  n/a' if bth is None else f'{bth:>7.4f}'} "
+                  f"{f'{bbet}/{bmv - bbet}':>7}")
+        print("    (movers column = better/worse; theta = (S-R)/(S-F) inside "
+              "the band)")
     print(f"  wall @12c (NOT extrapolable to 48c, see report): shipped "
           f"{statistics.mean(t['tS'] for t in trip):.2f}s  {arm} "
           f"{statistics.mean(t['tR'] for t in trip):.2f}s  full "
@@ -1105,7 +1205,8 @@ def _theta_report(args, arm):
         print(f"\n  cross-arm: theta_{arm} {th:.4f} + theta_{other} {th2:.4f} "
               f"= {th + th2:.4f}  (vs 1.0 => "
               f"{'additive' if abs(th + th2 - 1) < 0.15 else 'INTERACTION'})")
-    dump = dict(arm=arm, lo=lo, cases=len(trip), theta=th, denominator_pct=den,
+    dump = dict(arm=arm, lo=lo, hi=(None if hi >= 10 ** 9 else hi), window=sel,
+                cases=len(trip), theta=th, denominator_pct=den,
                 verdict=verdict, totals=dict(shipped=S, arm=R, full=F),
                 summary=out, cross_arm=cross,
                 wall12c=dict(shipped=statistics.mean(t["tS"] for t in trip),
@@ -1114,7 +1215,10 @@ def _theta_report(args, arm):
                 per_case=[dict(key=t["key"], n=t["n"], shipped=t["S"], arm=t["R"],
                                full=t["F"], t_shipped=t["tS"], t_arm=t["tR"],
                                t_full=t["tF"]) for t in trip])
-    path = _DIR / f"results_M67F_theta_{arm}.json"
+    # default window (n>100) keeps the Phase 1 filename; any other window gets
+    # its own file so the heavy-band verdict is never clobbered
+    suffix = "" if (lo == 100 and hi >= 10 ** 9) else f"_{lo}_{'inf' if hi >= 10 ** 9 else hi}"
+    path = _DIR / f"results_M67F_theta_{arm}{suffix}.json"
     json.dump(dump, open(path, "w"), indent=1)
     print(f"\n  wrote {path.name}")
     return 0
@@ -1126,6 +1230,10 @@ def main():
                                      "restore"])
     ap.add_argument("--arm", choices=sorted(_ARMS), default="pool")
     ap.add_argument("--pool0-lo", type=int, default=100, dest="pool0_lo")
+    ap.add_argument("--pool0-hi", type=int, default=0, dest="pool0_hi",
+                    help="upper case-size bound for pool0/restore (0 = none); "
+                         "--pool0-lo 60 --pool0-hi 100 scores the M45 tier-3 "
+                         "mid band on its own")
     ap.add_argument("--per-n", type=int, default=2, dest="per_n")
     ap.add_argument("--heavy-per-n", type=int, default=4, dest="heavy_per_n")
     ap.add_argument("--workers", type=int, default=10)

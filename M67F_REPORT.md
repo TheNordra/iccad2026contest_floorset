@@ -16,6 +16,9 @@
 | 兩者相加 | 0.8500（vs 1.0 → 15% 是**交互作用**，方向 = 兩層一起還原比分項和多回收） |
 | 在 M67-E 模型下值多少官方分 | **−1.60 ~ −1.62%**（s∈[1,2.5] 全同號；`--tax-all` 保守版 −2.06%；θ=1 上界 −2.11%） |
 | ⇒ Phase 1 結論 | **GREEN，進 Phase 2**（真多核機 wall 實測）。**本 session 不動送件形**。 |
+| θ_mid（(60,100] 的 M45 tier-3；**§7 補量**） | **0.5913**（品質 GREEN）**但 ship 判 RED** —— 加進來每個 s 都變差 |
+| ⚠️ §3 那張 −1.60~−1.62% 表 | **高估**：投影用了 dt-filtered 池、θ 卻是 index 池量的。正解 **−0.26 ~ −1.30%**，見 §7-2 |
+| ⚠️ M45 tier-3 strict gate | 在**出貨組態**（K=8）下**已失效**（in-set case 64 +0.41%，加權 −0.0018%），見 §7-4 |
 
 一句話：**M67-E 說「M42/M45 在 48 核買不到 RF」；M67-F 量到它們同時是 OOS 品質稅的主要來源（76%）。
 兩件事合起來 = 目前桌上唯一一個上界 −2% 級、且方向確定的分數槓桿。**
@@ -114,12 +117,10 @@ Phase 2 就是去把這句話變成實測。
 
 ## 4. 誠實範圍（重要，勿在後續 session 忘記）
 
-1. **θ 只覆蓋 n>100（81% wContr）= M42 層**。`(60,100]` 的 M45 tier-3（9 隻、18.2% wContr）
-   **OOS 稅未量**——cache 沒有 mid band 的 full-pool 對照，補量需要 mid 帶的 `pool0` + `restore`
-   兩批新 run（各約 80 案）。Phase 3 若要把 tier-3 也一起鬆綁，**必須先補這一批**。
-2. **本 knob 的 restore 是 index-based**（還原兩個 drop set 的全部 22/9 隻）；M67-E 模型的 restore 是
-   **dt-based**（`dt ≤ max-setter` 才撿）。n>100 兩者是 22 vs 22.3 隻 → 等價；小案帶（M67-E 會多撿
-   幾隻便宜 swap profile）不在本量測內。
+1. ~~**θ 只覆蓋 n>100**~~ → **已補齊，見 §7**（mid band θ_mid = 0.5913，但 **ship 判 RED**）。
+2. ~~**index-based vs dt-based 等價**~~ → **這句話是錯的，已由 §7-2 更正**：兩者在 n>100 的
+   *隻數* 相近（22 vs 22.3）但 *身分* 不同，index 版會還原真正貴的那幾隻 → **48c wall +5.7~8.7%**，
+   不是 wall-free。§3 的 −1.60~−1.62% 因此是**高估**，正確值見 §7-2。
 3. **12 核 wall 不能推 48c**（見 §2）。「48c 免費」目前仍只有 M67-E 的模型 + 間接證據
    （12 核跑 41-way 並行時 wall 模型只低估 9%）⇒ **Phase 2 是 ship 的必要條件**，不是加分項。
 4. 投影用的 alpha median 錨（κ）來自 **alpha 場**；Beta 場 median 會不同 → 全網格呈現，符號不變。
@@ -138,7 +139,8 @@ Phase 2 就是去把這句話變成實測。
 
 **Phase 3（θ 綠 ∧ 多核 wall 綠才開）**：
 - ship 形 = **cores-gated tier-5**，鏡射 M45 doctrine：`_effective_cores() >= T`（建議 T=32）
-  才跳過 M42（tier-3 要不要一起放，取決於 §4-1 的 mid band 補量）；偵測失敗 / 未知 → **現行行為**。
+  才跳過 **M42（只有 M42）**；偵測失敗 / 未知 → **現行行為**。
+  ⚠️ **tier-3 不要一起放**——§7 已補量並判 RED（加進來每個 s 都變差 0.01~0.02pp）。
 - 全鏈重驗一項不能省：`rf_score_model.py` 投影 → `m49_refine_probe.py` `variant 4 big`/`8 mid`/`4 mid`
   → `regression_suite.py` 六項 → `make_submission.py all` → M67-C 的 WSL `verify_final_tar.sh` 逐位。
 - ⚠️ deadline **2026-07-31 17:00 GMT+8**。現行 tar 已四關綠 → **先上傳現行 tar**；換件前必須先確認
@@ -160,3 +162,114 @@ cd iccad2026contest; & $py iccad2026_evaluate.py --evaluate ../optimizer_constru
 ```
 
 存證：`m67f_pool_stdout.txt`、`m67f_refine_stdout.txt`、`m67f_eval_stdout.txt`、`m67f_m48_stdout.txt`。
+
+---
+
+# §7 mid band 補量（2026-07-22 同日追加）——θ_mid 綠、**ship 判 RED**；附兩項更正
+
+工具改動（皆 offline，**`optimizer_constructive.py` 一字未動、tar 未重打包**）：
+`m67_oos_probe.py` 加 `--pool0-hi`（`pool0`/`restore` 的上界，配 `--pool0-lo` 就能單獨計分一個帶）
++ `_theta_report` 的**逐帶分解**；`m67e_rf48.py` 加 `pool_restore_idx()` / `restoreIdx` 變體
++ `--idx-bands` + mid 帶稅錨與 `--theta-mid`。
+
+## 7-1 θ_mid = 0.5913（品質面 GREEN）
+
+`pool0 --pool0-lo 60`（新解 40 in-set + 80 OOS mid 案）→ `restore --arm pool --pool0-lo 60`。
+同一批抽樣、同估計量，重案端點全部沿用 cache（heavy 那 80 案零重跑，數字逐位重現 Phase 1）。
+
+| band | wContr | shipped | restore | full | 分母 S/F−1 | restore 回收 | **θ** | movers |
+|---|---|---|---|---|---|---|---|---|
+| **(60,100]** | 18.2% | 1.618048 | 1.608076 | 1.601185 | **+1.053%** | +0.620% | **0.5913** | 21/80（20 better / 1 worse）|
+| (100,130] | 81.1% | 1.659884 | 1.625062 | 1.614282 | +2.825% | +2.143% | 0.7636 | 45/80（44 / 1）|
+| 合併 n>60 | 99.3% | 1.652213 | 1.621947 | 1.611881 | +2.502% | +1.866% | 0.7504 | 66/160（64 / 2）|
+
+- **mid 帶的 OOS 稅只有 heavy 的 37%**（+1.053% vs +2.825%）——tier-3 砍 9 隻、M42 砍 22 隻，
+  砍得少、稅也少；方向一致（20 better / 1 worse）。
+- heavy 列**逐位重現 Phase 1**（1.659884 / 1.625062 / 1.614282、θ=0.7636、44/1）= 本次改動沒污染舊結果。
+- 12 核 wall（n>60）：shipped 1.84s → restore 2.72s → full 8.79s。
+
+## 7-2 🚨 更正：Phase 1 的 −1.60% 是用**錯的池**投影的
+
+θ 是拿 `ICCAD_M67F_RESTORE=1` 量的 = **index-based**（把 drop set 的 22/9 隻**全部**放回來）。
+但 §3 投影呼叫的是 `m67e_rf48.py` 的 `restore` 變體 = **dt-based**（`restore_candidates()` 只撿
+`dt ≤ max-setter` 的），**wall-free 是它的定義、不是它的發現**。兩者在 n>100 隻數相近（22 vs 22.3）
+但**身分不同**：index 版會放回 #5/#15/#16/#18 這些在某些案上**本身就是 max-setter** 的 profile。
+
+新變體 `restoreIdx`（對 100/100 案與 knob 逐案**池身分完全相同**，已 assert）：
+
+| band | dW@48c（index restore） | movers | dt-filtered 變體 |
+|---|---|---|---|
+| (0,40] / (40,60] | +0.00% | 0/20, 0/20 | +0.00%（定義使然）|
+| (60,100] | **+2.34%** | 9/40 | +0.00% |
+| (100,110] | **+8.70%** | 5/10 | +0.00% |
+| (110,inf] | **+5.68%** | 7/10 | +0.00% |
+
+代進模型（κ=3.161、48c、θ_big=0.7636、θ_mid=0.5913；mid 帶稅現在也加在 shipped 側 ⇒ 基準
+0.9926→0.9947）：
+
+| s | shipped | restoreIdx（**只放 M42**） | Δ | 〔對照〕dt-filtered |
+|---|---|---|---|---|
+| 1.00 | 0.9947 | 0.9817 | **−1.30%** | −1.74% |
+| 1.50 | 1.0771 | 1.0712 | **−0.55%** | −1.73% |
+| 2.00 | 1.1694 | 1.1664 | **−0.26%** | −1.73% |
+| 2.50 | 1.2504 | 1.2471 | **−0.26%** | −1.73% |
+
+**⇒ 真實可 ship 的上檔是 −0.26 ~ −1.30%（隨機速 s 遞減），不是 −1.60~−1.62%。** 符號仍然對，
+但量級掉一半以上，而且**最樂觀的那格（s=1）才有 −1.3%**。Phase 2 的多核 wall 實測因此更關鍵：
+模型說 index restore 在 48c 要付 +5.7~8.7% wall，這個數字必須用真機驗。
+
+## 7-3 mid band ship 判定 = **RED**（品質綠但淨值負）
+
+| `--idx-bands` | s=1.00 | s=1.50 | s=2.00 | s=2.50 |
+|---|---|---|---|---|
+| `big`（只放 M42） | **−1.30%** | **−0.55%** | **−0.26%** | **−0.26%** |
+| `mid,big`（加放 tier-3） | −1.29% | −0.53% | −0.24% | −0.24% |
+
+**加上 mid 帶在每一個 s 都比較差**（+0.01~0.02pp）。算術一行：mid 帶 restore 的品質回收
+**+0.620%**，wall 代價 `(1+0.0234)^0.3 = ` **+0.695%** → 淨負；而且 M67-E 已證 mid band
+**0/40 觸底**（完全在 RF floor 之上）⇒ 那 +2.34% wall **全額付**、沒有 floor 吸收。
+⇒ **Phase 3 的 tier-5 只放 M42，tier-3 維持現狀。** mid 帶 break-even 需要 θ_mid ≥ 0.65 左右
+（實測 0.5913，差一截）。
+
+## 7-4 🚨 附帶發現：M45 tier-3 的 strict gate 在**出貨組態**下已失效
+
+Gate B 把窗口拉到 n>60 後（同時檢 M42 與 tier-3），60 案裡 **1 案不相等**：
+
+```
+case 64 (n=85)   shipped 1.3580617332260372   restore 1.3524850027999449   -0.4106%
+```
+
+單案複驗（`shipped` / `restore` × `K=8` / `K=12`，鄰居 63/65 當對照全部四格恆等）：
+
+| 組態 | shipped 池(26) | restore 池(35) | 相等？ |
+|---|---|---|---|
+| REFINE **K=12**（= 當年推導 tier-3 的組態）| 1.3558352796522921 | 1.3558352796522921 | ✅ |
+| REFINE **K=8**（= **實際出貨**，M50）| 1.3580617332260372 | 1.3524850027999449 | ❌ **+0.41%** |
+
+**機制**：`_M45_BAND_DROP`（與 `_BIG_REDUNDANT_IDX`）是從 `audit_cache.pkl` 推的，那是
+**REFINE=12** 的 positions；M49/M50 之後在**同樣那兩個帶**疊了 K=4/K=8 overlay ⇒
+**strict selection-preserving gate 從來沒有在出貨組態下重證過**。heavy 帶運氣好（20/20 仍相等），
+mid 帶破在 case 64。
+
+- **對送件的影響：可忽略**——case 64 權重僅 0.433%，加權後 **−0.0018%**（local total 會從
+  1.326473104916827 變成 1.326448970）。方向是「我們現在比可達的略差」，不是正確性問題。
+- **對方法論的影響：不可忽略**——ledger 那句「M42/M45 逐案 cost 相等 ⇒ local 逐位不變」
+  對 tier-3 **已不再嚴格成立**。任何**重算 tier-3/M42 常數**的動作都必須在 K=4/K=8 overlay 下做，
+  不能再直接吃 `audit_cache.pkl`。
+- Gate B 因此改成兩段：**restore 比 shipped 差 = 硬 FAIL**（proxy 樣本內是 oracle-min，
+  超集池只可能弱贏 ⇒ 變差就是 knob 壞了）；**restore 比 shipped 好 = DRIFT，印出來但繼續**
+  （這是關於出貨常數的發現，不是本量測的故障）。
+
+## 7-5 重現
+
+```powershell
+$py = "C:\Users\Nordra\.conda\envs\iccadv\python.exe"
+& $py m67_oos_probe.py pool0   --pool0-lo 60                 # 40 in-set + 80 OOS mid（~13 分）
+& $py m67_oos_probe.py restore --arm pool --pool0-lo 60      # Gate A/B + 80 案 + 逐帶分解（~5 分）
+& $py m67e_rf48.py project --skip-rfmodel --idx-bands big      # ship 候選形
+& $py m67e_rf48.py project --skip-rfmodel --idx-bands mid,big  # 加 tier-3 = 更差
+# 只要 mid 一帶：--pool0-lo 60 --pool0-hi 100（另存 results_M67F_theta_pool_60_100.json）
+```
+
+存證：`m67f_mid_pool0_stdout.txt`、`m67f_mid_restore_stdout.txt`、`m67f_mid_proj_big.txt`、
+`m67f_mid_proj_midbig.txt`、`results_M67F_theta_pool_60_inf.json`。

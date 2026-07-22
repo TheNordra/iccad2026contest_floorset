@@ -97,6 +97,15 @@ OOS_TAX_FULL = 1.614282               # OOS weighted, full pool + full REFINE
 INSET_TAX_SHIP = 1.312108             # same comparison, in-set (for the record)
 INSET_TAX_FULL = 1.310721             # -> +0.106% vs the OOS +2.825%
 
+# M67-F mid-band top-up (measured 2026-07-22, same protocol, 60<n<=100):
+#   m67_oos_probe.py pool0   --pool0-lo 60 --pool0-hi 100
+#   m67_oos_probe.py restore --pool0-lo 60 --pool0-hi 100 --arm pool
+# 0.0 = not yet measured (the mid band then carries no tax, M67-E behaviour).
+OOS_TAX_MID_SHIP = 1.618048           # OOS weighted, shipped, 60<n<=100
+OOS_TAX_MID_FULL = 1.601185           # -> +1.053% (vs +2.825% on n>100)
+THETA_BIG = 0.7636                    # measured, n>100 (M67-F Phase 1)
+THETA_MID = 0.5913                    # measured, (60,100] (M67-F mid top-up)
+
 M10_COMMIT = "8565e38"                # alpha submission (M10, 14 cheap profiles)
 
 # audit_cache.pkl key signature: profile_audit.py's PROFILES = live + OM16
@@ -284,6 +293,36 @@ def restore_candidates(ci, cores=CORES_BETA, slack=1.0):
 
 def pool_restore(ci, cores=CORES_BETA, slack=1.0):
     return sorted(pool_shipped(ci, cores) + restore_candidates(ci, cores, slack))
+
+
+def pool_restore_idx(ci, cores=CORES_BETA, bands=("mid", "big")):
+    """INDEX-based restore = exactly what ICCAD_M67F_RESTORE=1 does: put back
+    ALL of _BIG_REDUNDANT_IDX (n>100) and/or _M45_BAND_DROP ((60,100]).
+
+    This is the pool theta was MEASURED on (m67_oos_probe.py restore), and it is
+    NOT the same as pool_restore(): that one keeps only the dropped profiles with
+    dt <= the max-setter, so it is wall-free by construction. The real drop sets
+    contain profiles that ARE the max-setter on some cases (#5/#15/#16/#18 on the
+    heavy band, #2/#18/#20 on the mid band), so the shippable form costs wall:
+    dW@48c = +8.7% on (100,110], +5.7% on (110,inf], +2.3% on (60,100].
+    Any projection of the MEASURED theta must use this variant, not `restore`.
+    """
+    n = NOF[ci]
+    ship = pool_shipped(ci, cores)
+    add = set()
+    if n > 100 and "big" in bands:
+        add |= BIGSET
+    if "mid" in bands:
+        for lo, hi, d in oc._M45_BAND_DROP:
+            if lo < n <= hi:
+                add |= set(d)
+    add &= set(LIVE)
+    add -= SWAPSET                       # M41 swap filter is never restored
+    if cores <= oc._M45_CORES_MAX:       # tier-4 stays applied (fail-open @48c)
+        for lo, hi, d in oc._M45_LOWCORE_DROP:
+            if lo < n <= hi:
+                add -= set(d)
+    return sorted(set(ship) | add)
 
 
 def wall(ci, pool, cores):
@@ -686,7 +725,9 @@ def gammas():
     return g_ship, g_full                   # no-overlay calibration
 
 
-VARIANTS = ("shipped", "restore", "restoreK12", "full")
+VARIANTS = ("shipped", "restore", "restoreIdx", "restoreK12", "full")
+# which bands the index-based (shippable) restore touches; set by --idx-bands
+IDX_BANDS = ("mid", "big")
 
 
 def variant_times(cores, s, slack=1.0):
@@ -705,9 +746,11 @@ def variant_times(cores, s, slack=1.0):
     for c in CASES:
         ci = c["idx"]
         pr = pool_restore(ci, cores, slack)
+        pi = pool_restore_idx(ci, cores, IDX_BANDS)
         out[ci] = {
             "shipped": g_ship[ci] * wall(ci, pool_shipped(ci, cores), cores) * s,
             "restore": g_ship[ci] * wall(ci, pr, cores) * s,
+            "restoreIdx": g_ship[ci] * wall(ci, pi, cores) * s,
             "restoreK12": g_full[ci] * wall(ci, pr, cores) * s,
             "full": g_full[ci] * wall(ci, pool_full(ci, cores), cores) * s,
         }
@@ -715,6 +758,32 @@ def variant_times(cores, s, slack=1.0):
 
 
 _TAXCACHE = {}
+
+
+def _band_pred(band):
+    return ((lambda n: n > 100) if band == "big" else (lambda n: 60 < n <= 100))
+
+
+def oos_tax_factor_band(band, cores=CORES_BETA, slack=1.0):
+    """Same anchoring as oos_tax_factor(), for an arbitrary measured band.
+    Returns 1.0 (no tax) when that band has not been measured yet."""
+    ship, full = ((OOS_TAX_SHIP, OOS_TAX_FULL) if band == "big"
+                  else (OOS_TAX_MID_SHIP, OOS_TAX_MID_FULL))
+    if not ship or not full:
+        return 1.0
+    key = ("band", band, cores, slack)
+    if key in _TAXCACHE:
+        return _TAXCACHE[key]
+    inb = _band_pred(band)
+    hs = hf = 0.0
+    for c in CASES:
+        if not inb(c["n"]):
+            continue
+        ci = c["idx"]
+        hs += c["w"] * cost(ci, select(ci, pool_shipped(ci, cores)))
+        hf += c["w"] * cost(ci, select(ci, pool_full(ci)))
+    _TAXCACHE[key] = (ship / full) / (hs / hf)
+    return _TAXCACHE[key]
 
 
 def oos_tax_factor(cores=CORES_BETA, slack=1.0):
@@ -743,24 +812,37 @@ def oos_tax_factor(cores=CORES_BETA, slack=1.0):
     return _TAXCACHE[key]
 
 
-def variant_quality(theta=0.0, tax_all=False, cores=CORES_BETA, slack=1.0):
+def variant_quality(theta=0.0, tax_all=False, cores=CORES_BETA, slack=1.0,
+                    theta_mid=None):
     """RF=1.0 per-case cost for each variant, with the M67-D OOS tax.
 
     theta in [0,1] = the fraction of the OOS gap a wall-free restore would
-    recover; unknown without an OOS run (M67-F), so the projection reports the
-    break-even theta* instead of guessing.
+    recover; measured by M67-F (0.7636 on n>100). theta_mid does the same for
+    (60,100] once the mid-band top-up has run (defaults to theta).
     """
     tax = oos_tax_factor(cores, slack)
+    tax_mid = oos_tax_factor_band("mid", cores, slack)
+    th_mid = theta if theta_mid is None else theta_mid
     out = {}
     for c in CASES:
         ci = c["idx"]
         t = tax if (tax_all or c["n"] > 100) else 1.0
+        # the mid band carries its OWN measured tax and its own theta once the
+        # mid top-up has run; before that tax_mid == 1.0 and this is inert
+        th = theta
+        if 60 < c["n"] <= 100 and tax_mid != 1.0:
+            t, th = tax_mid, th_mid
         qs = cost(ci, select(ci, pool_shipped(ci, cores)))
         qf = cost(ci, select(ci, pool_full(ci)))
         qr = cost(ci, select(ci, pool_restore(ci, cores, slack)))
+        qi = cost(ci, select(ci, pool_restore_idx(ci, cores, IDX_BANDS)))
+        touched = (("big" in IDX_BANDS and c["n"] > 100)
+                   or ("mid" in IDX_BANDS and 60 < c["n"] <= 100))
         out[ci] = {"shipped": qs * t,
                    "full": qf,
-                   "restore": qr * (t ** (1.0 - theta)),
+                   "restore": qr * (t ** (1.0 - th)),
+                   # the SHIPPABLE form: index-based pool, measured theta
+                   "restoreIdx": qi * (t ** (1.0 - th)) if touched else qs * t,
                    # K=12 restores the audit's own REFINE -> the pool cut is the
                    # only difference left vs full, so no OOS tax is carried
                    "restoreK12": qr}
@@ -920,15 +1002,44 @@ def mode_project(args):
     # prints the projection AT a measured value; the default reproduces the
     # M67F_REPORT.md section 3 table.
     if args.theta is not None and args.theta >= 0:
-        qt = variant_quality(args.theta, args.tax_all, cores, args.slack)
-        print(f"\n  projection at the MEASURED theta = {args.theta:.4f} "
-              f"(M67-F Phase 1), model A kappa={kappa0:.2f}:")
-        print(f"    {'s':>5} {'shipped':>9} {'restore':>9} {'delta':>9}")
+        tm = args.theta_mid if (args.theta_mid is not None
+                                and args.theta_mid >= 0) else None
+        qt = variant_quality(args.theta, args.tax_all, cores, args.slack, tm)
+        print(f"\n  projection at the MEASURED theta = {args.theta:.4f}"
+              f"{'' if tm is None else f' (mid band {tm:.4f})'} "
+              f"(M67-F), model A kappa={kappa0:.2f}:")
+        print("    restore    = dt-filtered pool (wall-free BY CONSTRUCTION,")
+        print("                 NOT what ICCAD_M67F_RESTORE=1 does)")
+        print(f"    restoreIdx = the SHIPPABLE index-based pool theta was measured")
+        print(f"                 on; bands={'+'.join(IDX_BANDS)}. Use THIS one.")
+        print(f"    {'s':>5} {'shipped':>9} {'restore':>9} {'d(rest)':>9} "
+              f"{'restIdx':>9} {'d(Idx)':>9}")
         for s in args.speeds:
             T = variant_times(cores, s, args.slack)
             S = project(T, quals, meds, "shipped")
             R = project(T, qt, meds, "restore")
-            print(f"    {s:>5.2f} {S:>9.4f} {R:>9.4f} {100 * (R - S) / S:>+8.2f}%")
+            I = project(T, qt, meds, "restoreIdx")
+            print(f"    {s:>5.2f} {S:>9.4f} {R:>9.4f} {100 * (R - S) / S:>+8.2f}% "
+                  f"{I:>9.4f} {100 * (I - S) / S:>+8.2f}%")
+        # what the index-based restore costs in WALL (the correction M67-F
+        # Phase 1 missed: it projected with the dt-filtered `restore` variant)
+        print(f"\n  index-restore wall @{cores}c (weighted per band; the "
+              f"dt-filtered variant is +0.00% by construction):")
+        for lo, hi in BANDS:
+            bc = [c for c in CASES if lo < c["n"] <= hi]
+            if not bc:
+                continue
+            num = den = 0.0
+            mov = 0
+            for c in bc:
+                ci = c["idx"]
+                ws = wall(ci, pool_shipped(ci, cores), cores)
+                wi = wall(ci, pool_restore_idx(ci, cores, IDX_BANDS), cores)
+                num += c["w"] * (wi / ws - 1.0)
+                den += c["w"]
+                mov += wi > ws * (1 + 1e-9)
+            print(f"    {band_name(lo, hi):>12} dW {100 * num / den:>+6.2f}%   "
+                  f"movers {mov}/{len(bc)}")
     csave()
     return 0
 
@@ -976,10 +1087,18 @@ def main():
     ap.add_argument("--tax-all", action="store_true", dest="tax_all",
                     help="apply the OOS tax to every band (n<=100 untested)")
     ap.add_argument("--skip-rfmodel", action="store_true", dest="skip_rfmodel")
-    ap.add_argument("--theta", type=float, default=0.7636,
+    ap.add_argument("--theta", type=float, default=THETA_BIG,
                     help="M67-F measured theta for the restore projection "
                          "(default = the 2026-07-22 measurement; use -1 to skip)")
+    ap.add_argument("--theta-mid", type=float, default=THETA_MID, dest="theta_mid",
+                    help="measured theta for (60,100] (default: the mid-band "
+                         "top-up value, or --theta when unmeasured)")
+    ap.add_argument("--idx-bands", default="mid,big", dest="idx_bands",
+                    help="which bands the index-based (shippable) restore "
+                         "touches: 'big', 'mid', or 'mid,big'")
     args = ap.parse_args()
+    global IDX_BANDS
+    IDX_BANDS = tuple(b.strip() for b in args.idx_bands.split(",") if b.strip())
     return {"gate0": mode_gate0, "calib": mode_calib, "fit": mode_fit,
             "project": mode_project, "report": mode_report}[args.mode](args)
 

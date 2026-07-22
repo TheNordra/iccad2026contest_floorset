@@ -87,10 +87,28 @@ cadc1075/
 > 同一批 80 案 OOS 重案:**θ_pool = 0.7636**(pilot 20 案 0.6745;movers **44 better / 1 worse**、
 > 改善 mean 3.34%/max 10.65%;48/80 案 restore 的 cost 已等於 full、9 案比 full 更好)→ **GREEN(≥0.30)**。
 > 第三臂 **θ_refine = 0.0864 RED**(15 better/6 worse ⇒ M49/M50 在 OOS 幾乎不欠品質債、**必須留**),
-> 兩者和 0.85 ⇒ 約 15% 是交互作用。代入 M67-E 模型:**官方分 −1.60~−1.62%**(s∈[1,2.5] 同號、
-> `--tax-all` −2.06%、θ=1 上界 −2.11%)。⚠️ θ 只覆蓋 **n>100 = M42 層**;(60,100] 的 M45 tier-3
-> (18.2% wContr)OOS 稅**仍未量**,Phase 3 若要一併鬆綁須先補 mid band 的 pool0+restore 兩批。
+> 兩者和 0.85 ⇒ 約 15% 是交互作用。代入 M67-E 模型:~~**官方分 −1.60~−1.62%**~~(**見下方更正**)。
 > **送件形零改動、tar 未重打包。**
+>
+> **mid band 補量 ✅ 同日完成(2026-07-22),見 `M67F_REPORT.md` §7 —— 三個結論**:
+> 1. **θ_mid = 0.5913**((60,100] 80 案 OOS、20 better/1 worse);mid 帶 OOS 稅只有 heavy 的 37%
+>    (分母 **+1.053%** vs +2.825%)、restore 回收 +0.620%。逐帶分解同一支 160 案 run,
+>    heavy 列 **逐位重現 Phase 1**(θ 0.7636)。工具:`--pool0-hi` + `_theta_report` 逐帶表。
+> 2. 🚨 **更正 A:§3 的 −1.60~−1.62% 高估**。θ 是拿 `ICCAD_M67F_RESTORE=1`(**index-based**,
+>    drop set 全放回)量的,但投影呼叫的是 `m67e_rf48.py` 的 `restore` = **dt-filtered**
+>    (只撿 `dt ≤ max-setter`)⇒ **wall-free 是它的定義、不是發現**。新變體 `restoreIdx`
+>    (池身分對 100/100 案 = knob,已 assert)量到 index restore 在 48c **要付 wall**:
+>    (100,110] **+8.70%**、(110,inf] **+5.68%**、(60,100] **+2.34%** ⇒ **真實上檔 =
+>    −1.30%(s=1) / −0.55%(1.5) / −0.26%(2~2.5)**。符號仍對,量級掉一半以上
+>    ⇒ **Phase 2 的真機 wall 實測更關鍵**。
+> 3. **mid band ship = RED**:`--idx-bands mid,big` 在每個 s 都比 `big` 差 0.01~0.02pp
+>    (回收 +0.620% < wall 代價 `(1.0234)^0.3 = +0.695%`,且 M67-E 證 mid **0/40 觸底**
+>    ⇒ 全額付、零 floor 吸收)⇒ **Phase 3 的 tier-5 只放 M42,tier-3 維持現狀。**
+> 4. 🚨 **更正 B(方法論)**:**M45 tier-3 的 strict selection-preserving gate 在出貨組態下已失效**——
+>    drop set 是從 `audit_cache.pkl`(**REFINE K=12**)推的,但 M49/M50 在同樣那兩個帶疊了
+>    K=4/K=8,**gate 從未在出貨組態重證**。in-set case 64(n=85):K=12 兩側逐位相等
+>    (1.3558352796522921)、**K=8 卻差 +0.41%**;heavy 帶仍 20/20。加權 **−0.0018%**
+>    (送件可忽略),但**任何重算 tier-3/M42 常數必須在 K=4/K=8 overlay 下做**。
 
 **背景一句話**:M67-E 證明 48c 下 wall = max-setter,M42/M45 砍掉的 22 隻 build profile 全部比 max-setter 便宜 → **加回來 dW=+0.00%**(@24c ≤+0.53%),所以那兩層在 Beta 機器上**只剩 M67-D 的 +2.825% OOS 品質稅、換不到任何 RF**。break-even **θ\*=0.000**、θ=1 上界 **−2.11%**(官方總分)。θ 無法從 cache 得知(M67-D 只量了 shipped 與 POOL=0 兩端點)。
 
@@ -110,7 +128,7 @@ cadc1075/
 - 復現方式 = 同一支旗標:`ICCAD_M67F_RESTORE=1` 跑 100 案官方 eval,比逐案 `runtime_seconds`(**只量 wall,品質已由 Phase 1 定案、不必重跑**)。本機 12 核參考值:shipped 1.59s → restore **3.17s(1.99×)** = `Σ/cores`-bound 的樣子;48 核若真是 max-bound,應該貼近 1.0×。
 
 **Phase 3 — 才輪到 ship 討論**(θ 綠 ∧ 多核 wall 綠)
-- 形態 = **cores-gated tier-5**,鏡射 M45 doctrine:`_effective_cores() >= T`(T 待定,建議 ≥32)才跳過 M42/M45;偵測失敗 / 未知 → **現行行為**(fail-safe 方向與 M45 相反但同精神:高核才鬆綁)。
+- 形態 = **cores-gated tier-5**,鏡射 M45 doctrine:`_effective_cores() >= T`(T 待定,建議 ≥32)才跳過 **M42(只有 M42——tier-3 已由 mid 補量判 RED,勿一併鬆綁)**;偵測失敗 / 未知 → **現行行為**(fail-safe 方向與 M45 相反但同精神:高核才鬆綁)。
 - 全鏈重驗,一項都不能省:`rf_score_model.py`(常數不必重算,但要重看投影)→ `m49_refine_probe.py` `variant 4 big`/`8 mid`/`4 mid` → `regression_suite.py` 六項 → `make_submission.py all` → **M67-C 的 WSL 端到端逐位複驗**(`verify_final_tar.sh`)。
 - ⚠️ **時程/風險**:deadline **2026-07-31 17:00 GMT+8**,現行 tar(md5 `b9589618d507de0561f79a55a80fd8f3`)已四關全綠。建議**先把現行 tar 提早上傳**,M67-F 平行推進;要換件必須先確認「Drive 可否覆蓋重傳」(官方只明寫**檔名錯誤**不得重交,覆蓋規則未明 → 找主辦方/組員確認)。任一 phase 沒過或時間不夠 → **維持現行送件形**,把 M67-F 結論留給 Final。
 
