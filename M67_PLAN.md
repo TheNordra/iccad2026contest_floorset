@@ -78,13 +78,25 @@ cadc1075/
 5. **🚨 主發現**:48c wall=max-setter ⇒ 被 M42/M45 砍掉的 22 隻(全部 dt ≤ max-setter)**加回來 dW = +0.00%**(重帶 13→33/34 隻、ΔΣPT ≤0.20s、`c*(restore)` ≤27.2 → **連 24 physical 都 ≤+0.53%**);in-set dQ ≈ 0 是設計使然(閘就是逐案 cost 相等)。⇒ **M42/M45 是為 12 核 `Σ/cores` 牆設計的,Beta 的 48 核把那面牆拿掉了,只剩 OOS 品質稅**:break-even **θ\*=0.000**(回收任何一點就贏)、θ=1 上界 **−2.11%**。
 6. **交接 → 見下方獨立的 §M67-F**(θ 實測;本 session 未做、送件形不動)。細節見 `M67E_REPORT.md`。
 
-### M67-F(下一個 session 的主線;⏳ 未開工)——量 θ:+2.8% OOS 稅裡有多少屬於 M42/M45 池砍
+### M67-F——量 θ:+2.8% OOS 稅裡有多少屬於 M42/M45 池砍(**Phase 1 ✅ 完成 2026-07-22 = GREEN**;Phase 2 ⏳)
+
+> **Phase 1 結果(細節見 `M67F_REPORT.md`)**:`optimizer_constructive.py` 加 offline 旋鈕
+> `ICCAD_M67F_RESTORE`(預設 off;V1 `_pool_indices`/`_band_env` 對 n=1..130 逐一 = HEAD、V2 官方 eval
+> **1.326473104916827 逐位 + 0 movers + positions 全同**、V3 m48 四 phase ×2 全 PASS)+ `m67_oos_probe.py`
+> 新 mode `restore`(Gate A 旋鈕五閘、Gate B **in-set 20/20 cost-equal** = M42 strict 閘未漂移)。
+> 同一批 80 案 OOS 重案:**θ_pool = 0.7636**(pilot 20 案 0.6745;movers **44 better / 1 worse**、
+> 改善 mean 3.34%/max 10.65%;48/80 案 restore 的 cost 已等於 full、9 案比 full 更好)→ **GREEN(≥0.30)**。
+> 第三臂 **θ_refine = 0.0864 RED**(15 better/6 worse ⇒ M49/M50 在 OOS 幾乎不欠品質債、**必須留**),
+> 兩者和 0.85 ⇒ 約 15% 是交互作用。代入 M67-E 模型:**官方分 −1.60~−1.62%**(s∈[1,2.5] 同號、
+> `--tax-all` −2.06%、θ=1 上界 −2.11%)。⚠️ θ 只覆蓋 **n>100 = M42 層**;(60,100] 的 M45 tier-3
+> (18.2% wContr)OOS 稅**仍未量**,Phase 3 若要一併鬆綁須先補 mid band 的 pool0+restore 兩批。
+> **送件形零改動、tar 未重打包。**
 
 **背景一句話**:M67-E 證明 48c 下 wall = max-setter,M42/M45 砍掉的 22 隻 build profile 全部比 max-setter 便宜 → **加回來 dW=+0.00%**(@24c ≤+0.53%),所以那兩層在 Beta 機器上**只剩 M67-D 的 +2.825% OOS 品質稅、換不到任何 RF**。break-even **θ\*=0.000**、θ=1 上界 **−2.11%**(官方總分)。θ 無法從 cache 得知(M67-D 只量了 shipped 與 POOL=0 兩端點)。
 
 **要量的東西**:`θ = (OOS_shipped − OOS_restore) / (OOS_shipped − OOS_full)`,其中 restore = 保留 M41 swap 砍 + M49/M50 REFINE band、**只**跳過 `_BIG_REDUNDANT_IDX` + `_M45_BAND_DROP` 的池。
 
-**Phase 1 — θ pilot(便宜、零風險、先做這個)**
+**Phase 1 — θ pilot(便宜、零風險、先做這個)✅ 完成 2026-07-22,結果見上方引言**
 1. `optimizer_constructive.py` 加一個**純 offline env 旋鈕**(預設 off ⇒ 送件行為逐位不變,同 `ICCAD_L1_POOL` 慣例),例如 `ICCAD_M67F_RESTORE=1`:在 `_pool_indices()` 內跳過 M42/M45 兩層、其餘不動。⚠️ 加完先跑 `m48_coldstart_dryrun.py` + 官方 eval 逐位 = `results_shipped_m51.json` 證明 off 路徑沒被汙染。
 2. `m67_oos_probe.py` 的 `pool0` 模式加 `--pool-env KEY=VAL`(或新 mode `restore`),沿用**同一批 80 案 OOS 重案 + 同 cache/協定**。
 3. **預註冊 gate**(照 M64/M65 pilot 慣例):先抽 20 案 →
@@ -93,8 +105,9 @@ cadc1075/
    - θ_pilot ≥ 0.30 ⇒ 直接補齊 80 案並進 Phase 2。
 4. ⚠️ θ 可能為**負**(池變大 → proxy 在未見過的案上更容易選錯)。這正是要量它的理由。
 
-**Phase 2 — 多核 wall 實測(ship 的第二個必要條件,與 θ 獨立)**
+**Phase 2 — 多核 wall 實測(ship 的第二個必要條件,與 θ 獨立)⏳ 下一步**
 「48c 下 restore 免費」目前只有模型 + 間接證據(12 核跑 41-way 並行時 wall 模型只低估 9%)。本機只有 12 核 → **必須在真多核機**(GPU box 的 WSL2,先確認 `nproc`)實測 shipped vs restore 池的逐案 wall;若 restore 的 wall 漲幅 >2%,免費論證破產、直接結案。
+- 復現方式 = 同一支旗標:`ICCAD_M67F_RESTORE=1` 跑 100 案官方 eval,比逐案 `runtime_seconds`(**只量 wall,品質已由 Phase 1 定案、不必重跑**)。本機 12 核參考值:shipped 1.59s → restore **3.17s(1.99×)** = `Σ/cores`-bound 的樣子;48 核若真是 max-bound,應該貼近 1.0×。
 
 **Phase 3 — 才輪到 ship 討論**(θ 綠 ∧ 多核 wall 綠)
 - 形態 = **cores-gated tier-5**,鏡射 M45 doctrine:`_effective_cores() >= T`(T 待定,建議 ≥32)才跳過 M42/M45;偵測失敗 / 未知 → **現行行為**(fail-safe 方向與 M45 相反但同精神:高核才鬆綁)。

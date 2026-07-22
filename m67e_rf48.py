@@ -914,6 +914,21 @@ def mode_project(args):
                 lo_t = mid
         print(f"    {s:>5.2f} {('%.3f' % best) if best is not None else '  >1.0':>8} "
               f"{up:>+15.2f}%")
+
+    # M67-F (2026-07-22): theta is no longer a free parameter -- measured 0.7636
+    # on the 80 OOS heavy cases (m67_oos_probe.py restore --arm pool). --theta
+    # prints the projection AT a measured value; the default reproduces the
+    # M67F_REPORT.md section 3 table.
+    if args.theta is not None and args.theta >= 0:
+        qt = variant_quality(args.theta, args.tax_all, cores, args.slack)
+        print(f"\n  projection at the MEASURED theta = {args.theta:.4f} "
+              f"(M67-F Phase 1), model A kappa={kappa0:.2f}:")
+        print(f"    {'s':>5} {'shipped':>9} {'restore':>9} {'delta':>9}")
+        for s in args.speeds:
+            T = variant_times(cores, s, args.slack)
+            S = project(T, quals, meds, "shipped")
+            R = project(T, qt, meds, "restore")
+            print(f"    {s:>5.2f} {S:>9.4f} {R:>9.4f} {100 * (R - S) / S:>+8.2f}%")
     csave()
     return 0
 
@@ -961,6 +976,9 @@ def main():
     ap.add_argument("--tax-all", action="store_true", dest="tax_all",
                     help="apply the OOS tax to every band (n<=100 untested)")
     ap.add_argument("--skip-rfmodel", action="store_true", dest="skip_rfmodel")
+    ap.add_argument("--theta", type=float, default=0.7636,
+                    help="M67-F measured theta for the restore projection "
+                         "(default = the 2026-07-22 measurement; use -1 to skip)")
     args = ap.parse_args()
     return {"gate0": mode_gate0, "calib": mode_calib, "fit": mode_fit,
             "project": mode_project, "report": mode_report}[args.mode](args)

@@ -855,9 +855,276 @@ def mode_pool0(args):
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# M67-F: theta = the share of the OOS adaptive-cut tax owned by the POOL cuts   #
+# --------------------------------------------------------------------------- #
+#   shipped   = ICCAD_ADAPTIVE_POOL=1  (M41 swap + M42/M45 pool + M49/M50 REFINE)
+#   restore   = ICCAD_M67F_RESTORE=1   (drop ONLY the M42/M45 pool layers)
+#   norefine  = ICCAD_ADAPTIVE_REFINE=0 (drop ONLY the M49/M50 REFINE band)
+#   full      = ICCAD_ADAPTIVE_POOL=0  (drop everything; mode_pool0's cache)
+# theta_pool = (S - R_pool) / (S - F);  theta_refine = (S - R_norefine) / (S - F).
+# M67-E: at 48 cores the wall is the max-setter and every M42/M45-dropped profile
+# is cheaper than it, so restoring them is wall-free there (dW=+0.00%) => any
+# theta_pool > 0 is a pure score gain (break-even theta* = 0, upper bound -2.11%).
+_ARMS = {"pool": {"ICCAD_M67F_RESTORE": "1"},
+         "refine": {"ICCAD_ADAPTIVE_REFINE": "0"}}
+
+
+def _theta_gate_a(arm):
+    """Knob self-check: the arm must change EXACTLY the intended layer. Runs
+    before any solve (a wrong knob would burn 10 minutes of solves)."""
+    ok = True
+
+    def chk(name, cond, extra=""):
+        nonlocal ok
+        ok = ok and bool(cond)
+        print(f"  [{'PASS' if cond else 'FAIL'}] {name}{(' ' + extra) if extra else ''}")
+
+    for k in _ARMS[arm]:
+        os.environ.pop(k, None)
+    off = {n: len(oc._pool_indices(n)) for n in (30, 50, 80, 105, 120)}
+    off_be = {n: dict(oc._band_env(n)) for n in (80, 120)}
+    os.environ.update(_ARMS[arm])
+    on = {n: len(oc._pool_indices(n)) for n in (30, 50, 80, 105, 120)}
+    on_be = {n: dict(oc._band_env(n)) for n in (80, 120)}
+    print(f"  arm={arm}  env={_ARMS[arm]}")
+    print(f"    pool  off {off}\n          on  {on}")
+    print(f"    band  off {off_be}\n          on  {on_be}")
+    chk("knob-off pool == shipped (35/35/26/13/13)",
+        off == {30: 35, 50: 35, 80: 26, 105: 13, 120: 13}, str(off))
+    chk("knob-off REFINE band == shipped (mid 8, big 4)",
+        off_be == {80: {"ICCAD_REFINE_ITERS": "8"},
+                   120: {"ICCAD_REFINE_ITERS": "4"}}, str(off_be))
+    if arm == "pool":
+        chk("restore pool == 35 on every band (41 - 6 swap)",
+            set(on.values()) == {35}, str(on))
+        chk("restore keeps the M49/M50 REFINE band", on_be == off_be, str(on_be))
+        chk("restore adds exactly the two drop sets @n=120",
+            set(oc._pool_indices(120)) - set(_shipped_pool(120))
+            == set(oc._BIG_REDUNDANT_IDX))
+    else:
+        chk("norefine keeps the shipped pool", on == off, str(on))
+        chk("norefine clears the REFINE band",
+            on_be == {80: {}, 120: {}}, str(on_be))
+    for k in _ARMS[arm]:
+        os.environ.pop(k, None)
+    return ok
+
+
+def _shipped_pool(n):
+    for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL"):
+        v = os.environ.pop(k, None)
+        if v is not None:
+            os.environ[f"_SAVE_{k}"] = v
+    p = oc._pool_indices(n)
+    for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL"):
+        v = os.environ.pop(f"_SAVE_{k}", None)
+        if v is not None:
+            os.environ[k] = v
+    return p
+
+
+def _theta(S, R, F):
+    """(S-R)/(S-F): the fraction of the shipped-vs-full OOS gap that this arm
+    recovers. None when the denominator is degenerate."""
+    den = S - F
+    return None if abs(den) < 1e-12 else (S - R) / den
+
+
+def mode_restore(args):
+    """M67-F Phase 1. Same 80 OOS heavy cases, same estimator and cache as
+    mode_pool0; only the middle point (one layer restored) is new."""
+    arm = args.arm
+    print("=" * 78)
+    print(f"GATE A  knob self-check (arm={arm})")
+    print("=" * 78)
+    if not _theta_gate_a(arm):
+        print("GATE A FAILED - refusing to spend solves on a wrong knob")
+        return 1
+
+    os.environ.update(_ARMS[arm])
+    os.environ["ICCAD_PROFILE_TIMEOUT"] = "600"       # wider pool oversubscribes
+    opt = oc.MyOptimizer(verbose=False)
+    st = _C.setdefault("m67f", {}).setdefault(arm, {})
+    lo = args.pool0_lo
+
+    # ---- Gate B: in-set n>100 under the restored pool ----------------------
+    ev = _inset_dataset()
+    _j, arec = _anchor()
+    in_ids = [i for i in range(100) if arec[i]["block_count"] > lo]
+    todo = [i for i in in_ids if f"IN{i}" not in st]
+    if todo:
+        print(f"\n[{arm}] in-set: {len(todo)} cases (n>{lo})")
+        for k, i in enumerate(todo):
+            lay = _inset_lay(ev, i)
+            pos, dt, _e = _solve_one(opt, lay)
+            st[f"IN{i}"] = dict(_mt(_cost(pos, lay)), n=lay["n"], runtime=dt)
+            _csave()
+            print(f"[{arm}]   in {k + 1}/{len(todo)} n={lay['n']} "
+                  f"cost={st[f'IN{i}']['cost']:.4f} t={dt:.1f}s", flush=True)
+
+    print()
+    print("=" * 78)
+    print(f"GATE B  in-set n>{lo}: {arm} vs shipped "
+          f"({'strict gate => must be EQUAL' if arm == 'pool' else 'M49/M50 trade => movers expected'})")
+    print("=" * 78)
+    bad = []
+    for i in in_ids:
+        cs, cr = float(arec[i]["cost"]), float(st[f"IN{i}"]["cost"])
+        if abs(cr - cs) > 1e-9 * max(abs(cs), 1.0):
+            bad.append((i, arec[i]["block_count"], cs, cr))
+    if arm == "pool":
+        print(f"  [{'PASS' if not bad else 'FAIL'}] "
+              f"{len(in_ids) - len(bad)}/{len(in_ids)} cases cost-equal (rel 1e-9)")
+        for i, n, cs, cr in bad:
+            print(f"    case {i:3d} n={n:3d} shipped {cs!r} restore {cr!r} "
+                  f"{(cr / cs - 1) * 100:+.4f}%")
+        if bad:
+            print("  => the M42 strict selection-preserving gate no longer holds "
+                  "(knob wrong or constants drifted). STOP.")
+            _csave()
+            return 1
+    else:
+        a = compute_total_score([arec[i]["cost"] for i in in_ids],
+                                [arec[i]["block_count"] for i in in_ids])
+        b = compute_total_score([st[f"IN{i}"]["cost"] for i in in_ids],
+                                [st[f"IN{i}"]["n"] for i in in_ids])
+        print(f"  in-set n>{lo}: shipped {a:.6f}  {arm} {b:.6f}  "
+              f"tax {(a / b - 1) * 100:+.3f}%  movers {len(bad)}/{len(in_ids)}")
+
+    # ---- OOS arm ----------------------------------------------------------
+    rows = [r for r in _rows(args) if r["n"] > lo]
+    byf = {}
+    for r in rows:
+        if f"OOS{r['key']}" not in st:
+            key, L = r["key"].rsplit("/L", 1)
+            byf.setdefault(key, []).append(int(L))
+    if byf:
+        tot = sum(len(v) for v in byf.values())
+        print(f"\n[{arm}] OOS: {tot} cases (n>{lo})")
+        t0, k = time.time(), 0
+        for key in sorted(byf):
+            d = torch.load(_path_of(key))
+            for L in sorted(byf[key]):
+                lay = _load_case(d, L)
+                lay["base"], _dev = _baseline_official(lay)
+                pos, dt, _e = _solve_one(opt, lay)
+                st[f"OOS{key}/L{L}"] = dict(_mt(_cost(pos, lay)), n=lay["n"],
+                                            runtime=dt)
+                k += 1
+            _csave()
+            el = time.time() - t0
+            print(f"[{arm}]   oos {k}/{tot} ({el:.0f}s, "
+                  f"eta {el / max(k, 1) * (tot - k):.0f}s)", flush=True)
+    _csave()
+    return _theta_report(args, arm)
+
+
+def _theta_report(args, arm):
+    lo = args.pool0_lo
+    p0 = _C.get("pool0", {})
+    st = _C.get("m67f", {}).get(arm, {})
+    rows = [r for r in _rows(args) if r["n"] > lo
+            and f"OOS{r['key']}" in p0 and f"OOS{r['key']}" in st]
+    if not rows:
+        print("[theta] no overlapping cases - run pool0 first")
+        return 1
+    trip = [dict(n=r["n"], key=r["key"], S=r["cost"], R=st[f"OOS{r['key']}"]["cost"],
+                 F=p0[f"OOS{r['key']}"]["cost"], tS=r["runtime"],
+                 tR=st[f"OOS{r['key']}"]["runtime"], tF=p0[f"OOS{r['key']}"]["runtime"])
+            for r in rows]
+
+    def tot(sub, field):
+        return _per_n_total([dict(n=t["n"], cost=t[field]) for t in sub])[0]
+
+    print()
+    print("=" * 78)
+    print(f"M67-F  THETA  (arm={arm}, n>{lo}, per-n averaged then officially "
+          f"weighted)")
+    print("=" * 78)
+    # pilot subset = first draw per n (the sample is prefix-stable in K)
+    first = {}
+    for key, L, n in _sample(_index(args.workers), args.per_n, 1)[0]:
+        first[f"{key}/L{L}"] = n
+    pilot = [t for t in trip if t["key"] in first]
+    out = {}
+    for tag, sub in (("theta_20 (pilot, checkpoint only)", pilot),
+                     ("theta_80 (VERDICT SAMPLE)", trip)):
+        if not sub:
+            continue
+        S, R, F = tot(sub, "S"), tot(sub, "R"), tot(sub, "F")
+        th = _theta(S, R, F)
+        mv = sum(1 for t in sub if abs(t["S"] - t["R"]) > 1e-9)
+        better = sum(1 for t in sub if t["R"] < t["S"] - 1e-9)
+        print(f"  {tag}   [{len(sub)} cases]")
+        print(f"    shipped {S:.6f}   {arm} {R:.6f}   full {F:.6f}")
+        print(f"    denominator (shipped vs full) {(S / F - 1) * 100:+.3f}%   "
+              f"arm recovers {(S / R - 1) * 100:+.3f}%")
+        print(f"    theta = {th if th is None else round(th, 4)}   "
+              f"movers {mv}/{len(sub)} ({better} better, {mv - better} worse)")
+        out[tag.split()[0]] = dict(cases=len(sub), S=S, R=R, F=F, theta=th,
+                                   movers=mv, better=better)
+    # verdict on theta_80 (pre-registered in the plan BEFORE the run)
+    S, R, F = tot(trip, "S"), tot(trip, "R"), tot(trip, "F")
+    th, den = _theta(S, R, F), (S / F - 1) * 100
+    if den < 1.0:
+        verdict = "UNRELIABLE (denominator < 1.0%)"
+    elif th is None:
+        verdict = "UNRELIABLE (degenerate denominator)"
+    elif th < 0:
+        verdict = "RED-PLUS (negative: the bigger pool mis-selects OOS)"
+    elif th <= 0.10:
+        verdict = "RED (<=0.10) - close it, keep M42/M45"
+    elif th < 0.30:
+        verdict = "YELLOW (0.10..0.30) - record, no Phase 2"
+    else:
+        verdict = "GREEN (>=0.30) - Phase 2 (multi-core wall)"
+    print(f"\n  PRE-REGISTERED VERDICT (theta_80): {verdict}")
+    print(f"  wall @12c (NOT extrapolable to 48c, see report): shipped "
+          f"{statistics.mean(t['tS'] for t in trip):.2f}s  {arm} "
+          f"{statistics.mean(t['tR'] for t in trip):.2f}s  full "
+          f"{statistics.mean(t['tF'] for t in trip):.2f}s")
+    d = [((t["R"] - t["S"]) / t["S"] * 100, t)
+         for t in sorted(trip, key=lambda t: (t["R"] - t["S"]) / t["S"])]
+    print(f"\n  biggest per-case moves ({arm} vs shipped, - = {arm} better):")
+    for sign, sl in ((-1, d[:6]), (1, list(reversed(d[-6:])))):
+        for pc, t in sl:
+            if sign * pc <= 1e-7:
+                continue
+            print(f"    {t['key']:<28} n={t['n']:3d} shipped {t['S']:.4f} "
+                  f"{arm} {t['R']:.4f} full {t['F']:.4f}  {pc:+.2f}%")
+    # cross-arm consistency (needs both arms measured)
+    other = "refine" if arm == "pool" else "pool"
+    ost = _C.get("m67f", {}).get(other, {})
+    cross = None
+    if all(f"OOS{t['key']}" in ost for t in trip):
+        R2 = tot([dict(n=t["n"], R2=ost[f"OOS{t['key']}"]["cost"]) for t in trip],
+                 "R2")
+        th2 = _theta(S, R2, F)
+        cross = {other: th2, "sum": None if (th is None or th2 is None) else th + th2}
+        print(f"\n  cross-arm: theta_{arm} {th:.4f} + theta_{other} {th2:.4f} "
+              f"= {th + th2:.4f}  (vs 1.0 => "
+              f"{'additive' if abs(th + th2 - 1) < 0.15 else 'INTERACTION'})")
+    dump = dict(arm=arm, lo=lo, cases=len(trip), theta=th, denominator_pct=den,
+                verdict=verdict, totals=dict(shipped=S, arm=R, full=F),
+                summary=out, cross_arm=cross,
+                wall12c=dict(shipped=statistics.mean(t["tS"] for t in trip),
+                             arm=statistics.mean(t["tR"] for t in trip),
+                             full=statistics.mean(t["tF"] for t in trip)),
+                per_case=[dict(key=t["key"], n=t["n"], shipped=t["S"], arm=t["R"],
+                               full=t["F"], t_shipped=t["tS"], t_arm=t["tR"],
+                               t_full=t["tF"]) for t in trip])
+    path = _DIR / f"results_M67F_theta_{arm}.json"
+    json.dump(dump, open(path, "w"), indent=1)
+    print(f"\n  wrote {path.name}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["gate0", "run", "report", "ref", "pool0"])
+    ap.add_argument("mode", choices=["gate0", "run", "report", "ref", "pool0",
+                                     "restore"])
+    ap.add_argument("--arm", choices=sorted(_ARMS), default="pool")
     ap.add_argument("--pool0-lo", type=int, default=100, dest="pool0_lo")
     ap.add_argument("--per-n", type=int, default=2, dest="per_n")
     ap.add_argument("--heavy-per-n", type=int, default=4, dest="heavy_per_n")
@@ -866,7 +1133,8 @@ def main():
     args = ap.parse_args()
     _cload(_sig(args))
     return {"gate0": mode_gate0, "run": mode_run, "report": mode_report,
-            "ref": mode_ref, "pool0": mode_pool0}[args.mode](args)
+            "ref": mode_ref, "pool0": mode_pool0,
+            "restore": mode_restore}[args.mode](args)
 
 
 if __name__ == "__main__":

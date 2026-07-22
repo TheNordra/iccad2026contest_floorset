@@ -528,11 +528,25 @@ def _pool_indices(block_count: int) -> List[int]:
     full = list(range(len(_PROFILES)))
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
         return full
+    # M67-F (2026-07-22): OFFLINE-ONLY measurement knob, default 0 => this
+    # function is bit-identical to shipped (same convention as ICCAD_L1_POOL).
+    # NEVER set it in the submission. Why it exists: M67-E measured that at 48
+    # cores (the Beta box) the wall is the max-setter on 100/100 cases and every
+    # profile M42/M45 drops is CHEAPER than that max-setter, so restoring them
+    # costs +0.00% wall there -- while still paying the M67-D out-of-sample
+    # quality tax (+2.825% on n>100). =1 skips exactly those two layers so
+    # m67_oos_probe.py `restore` can measure theta = the share of that OOS tax
+    # owned by the pool cuts (break-even theta* = 0, upper bound -2.11%).
+    # Deliberately NOT touched: the M41 swap filter and the M49/M50 REFINE band
+    # (_band_env) -- both are the real 48c RF levers (+53%/+15% if dropped) --
+    # and tier-4 _M45_LOWCORE_DROP, which only fires at <=8 detected cores and
+    # is therefore fail-open in both the local 12c and the Beta 48c regime.
+    restore = os.environ.get("ICCAD_M67F_RESTORE", "0") == "1"
     n_swap = int(os.environ.get("ICCAD_ADAPTIVE_N", "0"))
     n_free = int(os.environ.get("ICCAD_ADAPTIVE_FREE_N", "100"))
     drop_band: frozenset = frozenset()
-    if os.environ.get("ICCAD_ADAPTIVE_BAND", "1") != "0":        # M45 tier-3
-        for lo, hi, d in _M45_BAND_DROP:
+    if not restore and os.environ.get("ICCAD_ADAPTIVE_BAND", "1") != "0":
+        for lo, hi, d in _M45_BAND_DROP:                         # M45 tier-3
             if lo < block_count <= hi:
                 drop_band = d
                 break
@@ -547,8 +561,8 @@ def _pool_indices(block_count: int) -> List[int]:
         if block_count > n_swap and ("ICCAD_ORDER_SWAP" in p
                                      or "ICCAD_ORDER_MOVE" in p):
             continue
-        if block_count > n_free and i in _BIG_REDUNDANT_IDX:
-            continue
+        if not restore and block_count > n_free and i in _BIG_REDUNDANT_IDX:
+            continue                                             # M42
         if i in drop_band or i in drop_low:
             continue
         kept.append(i)
