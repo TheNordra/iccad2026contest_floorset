@@ -12,9 +12,8 @@ name is a DQ and re-submission is not accepted):
         requirements.txt      0 bytes (official env already has torch/shapely)
         README.md             short compile-fallback explanation
         constructive.cpp      main placer source (on-site compile fallback)
-        optimizer_claude.cpp  legacy SA source (backup material only)
-        bin/constructive_linux, bin/sa_linux   prebuilt Linux binaries
-                              (M67-C output; packaged only if present)
+        bin/constructive_linux   prebuilt Linux binary (M67-C output;
+                              packaged only if present)
     build_submission/cadc1075.tar.gz
 
 Merge mechanics (M67-B, see M67_PLAN.md): a NAIVE concatenation of
@@ -106,8 +105,8 @@ from iccad2026_evaluate import (calculate_hpwl_b2b, calculate_hpwl_p2b,
 
 # ── package spec ─────────────────────────────────────────────────────────────
 _WHITELIST = ("op_wrapper.py", "op_src.py", "requirements.txt", "README.md",
-              "constructive.cpp", "optimizer_claude.cpp")
-_BIN_FILES = ("bin/constructive_linux", "bin/sa_linux")
+              "constructive.cpp")
+_BIN_FILES = ("bin/constructive_linux",)
 _TEXT_EXT = {".py", ".md", ".txt", ".cpp"}
 _FORBIDDEN_EXT = {".pkl", ".json", ".log", ".exe", ".pyc"}
 # Absolute-path scan: the m48 phase-4 pattern family (a broader [A-Za-z]:
@@ -133,9 +132,6 @@ optimizer load time (outside the scored per-case window):
    (`g++ -O3 -std=c++17 -o constructive.exe constructive.cpp`), each candidate
    accepted only after the same 1-block smoke test;
 3. pure-Python SA fallback (embedded in op_wrapper.py) if no binary runs.
-
-`optimizer_claude.cpp` (and `bin/sa_linux`) is a legacy SA source kept as
-backup material only; `op_wrapper.py` never invokes it.
 
 `requirements.txt` is intentionally empty: only torch / shapely / numpy from
 the official environment are used.
@@ -269,7 +265,6 @@ def stage() -> bool:
     (_STAGE / "requirements.txt").write_bytes(b"")
     (_STAGE / "README.md").write_text(_README, encoding="utf-8", newline="\n")
     shutil.copyfile(_REPO / "constructive.cpp", _STAGE / "constructive.cpp")
-    shutil.copyfile(_REPO / "optimizer_claude.cpp", _STAGE / "optimizer_claude.cpp")
 
     expected = set(_WHITELIST)
     nbin = 0
