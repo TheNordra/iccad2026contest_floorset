@@ -273,3 +273,97 @@ $py = "C:\Users\Nordra\.conda\envs\iccadv\python.exe"
 
 存證：`m67f_mid_pool0_stdout.txt`、`m67f_mid_restore_stdout.txt`、`m67f_mid_proj_big.txt`、
 `m67f_mid_proj_midbig.txt`、`results_M67F_theta_pool_60_inf.json`。
+
+---
+
+## 8 Phase 2 前哨 — 本機 E-core 擁塞 probe（2026-07-23）
+
+**判定：AMBER（lean-GREEN）。M67-F 不判死；tier-5 ship 仍卡 Beta 逐案 wall。送件形零改動。**
+
+### 8-1 為什麼要量
+
+θ_pool = 0.7636 是「還原 M42/M45 池砍能在 OOS 回收多少品質稅」。它值不值得 ship，取決於
+**48c 上 restore 池的 wall 會不會漲**。整個「不會漲」的論證建立在 M67-E 的 wall 模型
+`W(pool,cores) = max(max_i dt_i, Σdt_i/cores, ΣPT)` 與它一個**從未實測的假設**：單一 profile 的
+`dt_i` 在並行度變化下**不變**（audit_cache 的 dt 只在 12 核箱 ~11-way 下量過；`m67e fit` 顯示模型
+在 41-way oversubscribe 已偏 9%）。48c 下 shipped 重帶跑 ~13 隻、restore ~34 隻，**都 <48 核不超額
+訂閱** → 唯一能讓 restore 變貴的機制 = **記憶體子系統擁塞讓 max-setter 自己變慢**，正是模型假設不
+存在的東西。本機只有 12 核不能直測 48c，但能量**擁塞斜率**：`dt(k)/dt(1)`，k=1..8。
+
+### 8-2 方法（`m67f_contention_probe.py`，純量測、永不 ship）
+
+- **釘核**：無 psutil → ctypes `SetProcessAffinityMask`（零依賴）。每隻 constructive.exe 釘單一 E-core
+  （Popen 後、寫 stdin 前釘定 = compute 全程已釘）；編排器釘 P-core（logical 0-7）免偷 E-core 週期。
+- **E-core 辨識（self-validating）**：依序把固定重案釘 logical 0-15 各跑，最慢 8 顆 = E-core。實測
+  P-core 0-7 ≈1.16-1.22s / E-core 8-15 ≈1.99-2.05s → **偵測 {8..15} 完全吻合 Alder Lake**（也證明
+  affinity 真的生效——否則 Thread Director 會把全部塞進快的 P-core）。
+- **掃描**：5 個重案 restore-池 max-setter × k=1..8，每個 k 起 **k 隻相同拷貝**、各釘不同 E-core、
+  `threading.Barrier` 同時開跑、每隻 `communicate()` 量自己 wall；REFINE=4（= Beta 對 n>100 的形）、
+  reps=4 取 median。最重案 99/#6 另加 **K=12 保守對照**（更長更密 = 更保守）。
+- **為什麼是保守上界**：Gracemont E-core 是本箱 **cache/頻寬最貧**的核（4 核 cluster 共用 2MB L2
+  ≈512KB/核、無 private LLC 切片），8 顆同時 hammer 單一 mobile 記憶體控制器 = 對單行程最嚴苛的
+  擠壓。若這裡都平 → workload 非記憶體受限 → cache/頻寬更寬的 48c ICELAKE server 上加 co-runner 更
+  平。故**本機平 ⇒ server 平**（單向安全推論）。比值 `dt(k)/dt(1)` 抵銷 E-core 絕對慢。
+
+### 8-3 結果
+
+`dt(k)/dt(1)`（mean = max-setter **自己的**時間，median of 4 reps）：
+
+| combo | n | k2 | k3 | k4 | k5 | k6 | k7 | **k8** |
+|---|---|---|---|---|---|---|---|---|
+| 99:#6 | 120 | 0.987 | 0.974 | 0.981 | 0.986 | 0.984 | 0.987 | **1.010** |
+| 95:#18 | 116 | 1.027 | 1.007 | 1.013 | 1.017 | 1.014 | 1.018 | **1.037** |
+| 96:#18 | 117 | 0.980 | 0.984 | 0.987 | 0.984 | 0.978 | 0.980 | **1.008** |
+| 98:#40 | 119 | 0.998 | 1.003 | 0.992 | 0.993 | 1.000 | 0.991 | **1.024** |
+| 86:#7 | 107 | 1.006 | 0.986 | 0.996 | 0.994 | 0.999 | 0.998 | **1.018** |
+
+- **dt(8)/dt(1)：中位 1.018、最壞 1.037（95/#18）、slope +0.0016 per co-runner、外推 k34(mean) 1.045。**
+- **K=12 保守對照（案 99/#6，k∈{1,4,8}）：dt(8)/dt(1) = 1.003**（更長更密的儀器反而更平）。
+- k1-k7 全帶平（0.98-1.03、無趨勢），只有 k=8（全 8 E-core 飽和）微升 ~2%。
+
+### 8-4 straggler 判讀（關鍵）
+
+k=8 的 **max-copy（straggler）** 卻是 **1.13-1.15**，而 **mean 只有 ~1.02**：
+
+| combo | mean8/mean1 | max8/mean1 |
+|---|---|---|
+| 99:#6 | 1.010 | 1.135 |
+| 95:#18 | 1.037 | 1.149 |
+| 96:#18 | 1.008 | 1.130 |
+| 98:#40 | 1.024 | 1.139 |
+| 86:#7 | 1.018 | 1.153 |
+
+**mean 平、只有 max 升 = 一隻拷貝落隊、其餘 7 隻貼基準 = 排程/搶佔 jitter，不是頻寬擁塞**
+（若是擁塞，所有拷貝都會慢、mean 會跟著抬；K=12 同型：mean 1.003、max 1.130）。機制 = k=8 把
+8 顆 E-core 全飽和、**零 headroom**，任何 OS/背景執行緒被迫塞進一顆 E-core 就短暫搶佔一隻拷貝。
+**這個飽和 straggler 在 Beta 不會發生**：restore 重帶 ~34 隻跑在 48 核 = **14 核空**，OS/背景全被吸收、
+不會搶佔 compute 行程；且 34-of-48 遠低於飽和，比本機 k=8 更輕。
+
+### 8-5 判定與對 ship 的意義
+
+- **預註冊 gate**（跑前寫死）：GREEN `dt(8)/dt(1) ≤1.03 ∧ extrap<1.05`；RED `≥1.10 或 extrap>1.08`；
+  中間 AMBER。worst-combo mean **1.037 > 3% GREEN bar 僅 0.7pp**、遠低 10% RED → **AMBER**。
+  ⚠️ 不 retro 移門檻求 GREEN（M64/M65 紀律）；這 0.7pp 建立在單一 combo k=1 基準的 ~1% jitter 上。
+- **對映使用者決策規則**：median 1.018 / K=12 1.003 / slope≈0 = 「dt(8)/dt(1)≈1.00 → M67-F 存活、
+  只剩 Beta 回傳的 wall 要對」的分支，**不是**「明顯上升 → 判死」。**M67-F 不判死。**
+- **Phase 2 兩必要條件**：(a) 擁塞不抬 max-setter → 本機收斂到 lean-GREEN；(b) 真 48c 逐案 wall 實測
+  （Phase-1 預註冊「>2% 漲幅即免費論證破產」= pool-vs-pool `runtime_seconds` 對比）→ **仍需 Beta 資料**。
+  本 probe 是 (b) 的 **local 前哨、非替代**（8-way 斜率外推 34-way 是推論；worst-combo 3.7% 是飽和
+  straggler-free 的 mean，且不對映 Beta 的 34/48 未飽和 regime）。tier-5（只 M42）ship 維持卡 Beta。
+- **精確淨值**（要的話）：把實測 f（保守 extrap k34 mean 1.045、更可能 ≈1.0）代進
+  `m67e_rf48.py restoreIdx`（restore 帶 wall ×f）重投影；本機 −1.30%(s=1) 上檔在 f≈1.0 下不變。
+
+### 8-6 誠實範圍
+
+8-way 斜率外推 34-way 非直測（GREEN 是外推、RED 才會是保守判死）；量 wall 非 CPU-time（釘核不超額
+訂閱下等價）；相同拷貝 = 保守（全重、總流量最大）；REFINE=12 對照更保守（mean 1.003）；未跑異質
+co-runner（`--mixed`，預期擁塞更小）。**送件形一律不動**（tar md5 `b9589618d507de0561f79a55a80fd8f3`）。
+
+### 8-7 重現
+
+```powershell
+$py = "C:\Users\Nordra\.conda\envs\iccadv\python.exe"
+& $py -u m67f_contention_probe.py > m67f_contention_stdout.txt 2>&1   # ~7-8 分
+# 產物：results_M67F_contention.json（calib/curves/summary/verdict）
+```
+
