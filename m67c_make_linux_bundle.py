@@ -200,7 +200,10 @@ LOADERS = ("litetestLoader.py", "lite_dataset_test.py", "liteLoader.py",
            "lite_dataset.py", "prime_dataset.py", "cost.py", "utils.py",
            "visualize.py")
 TEAM = "cadc1075"
-BIN_NAMES = ("constructive_linux", "sa_linux")
+BIN_NAMES = ("constructive_linux",)   # M67-G slim: sa_linux removed (unused).
+                                      # The slim submission ships only the
+                                      # constructive binary; the pure-Python SA
+                                      # fallback needs no bundled binary.
 ULP_TOL = 2e-9          # sub-2e-9 diffs are WARN (known: case 84 libm ULP)
 TOTAL_TOL = 1e-9
 T4_CASE = 50
