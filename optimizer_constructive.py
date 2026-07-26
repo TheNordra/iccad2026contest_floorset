@@ -440,6 +440,25 @@ _M45_LOWCORE_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
 # squeeze on the high-weight (100,110] band.
 _M45_CORES_MAX = 8
 
+# M67-F tier-5 (2026-07-26): the MIRROR of tier-4 — at HIGH core counts the M42
+# big-redundant cut stops buying wall and only costs quality. M67-E measured that
+# at 48 cores (the Beta box) the wall is the max-setter on 100/100 cases (sum/48
+# is only 3-27% of it) and EVERY profile _BIG_REDUNDANT_IDX drops is cheaper than
+# that max-setter -> restoring them buys the grader ~nothing in wall. M67-F Phase 1
+# then measured, on 80 held-out (never-tuned) cases, that those cuts own
+# theta_pool = 0.7636 of the +2.825% out-of-sample quality tax (44 better /
+# 1 worse, best case -10.65%). Net projection with the 48c wall cost already
+# charged (m67e_rf48.py `restoreIdx`, which does pay +5.7~8.7% wall on the heavy
+# bands): official score -1.30% (s=1) / -0.55% (1.5) / -0.26% (2~2.5) — same sign
+# at every machine speed. Threshold 32 rather than 48 so a 32-40 core grader also
+# benefits; below it the 12c regime is sum-bound and the cut still pays for itself.
+# ONLY the M42 layer is restored: mid-band tier-3 is ship-RED (recovery +0.620%
+# < wall cost +0.695%, and the mid band is 0/40 at the RF floor so it pays in
+# full). In-sample this tier is a NO-OP (M67-F Gate B: heavy band 20/20 cost-equal
+# under the shipping K=4 overlay) — the whole gain is out-of-sample.
+# ICCAD_M67F_TIER5=0 disables it.
+_M67F_CORES_MIN = 32
+
 # M49 (2026-07-07): band-gated REFINE truncation — the first MEASURED quality-
 # vs-runtime trade (M41's was inferred). REFINE is 12 of every frame's 13 packs;
 # m49_refine_probe.py (trace + variant, 20 n>100 cases x kept pool) showed:
@@ -521,6 +540,29 @@ def _effective_cores() -> int:
         return 9999
 
 
+def _effective_cores_hi() -> int:
+    """Detected parallelism for the M67-F tier-5 gate. MUST NOT reuse
+    _effective_cores(): that one maps 'unknown' to 9999 so tier-4 (fires at
+    cores <= 8) stays OFF on mis-detection, but tier-5 fires at cores >= 32, so
+    the same sentinel would turn it ON wherever detection fails. This variant
+    maps unknown to 0 so BOTH tiers fail to the shipped pool. ICCAD_ADAPTIVE_CORES
+    forces a value (shared with tier-4/M50; <=0/garbage -> auto)."""
+    v = os.environ.get("ICCAD_ADAPTIVE_CORES", "")
+    if v:
+        try:
+            c = int(v)
+            if c > 0:
+                return c
+        except ValueError:
+            pass
+    try:
+        if hasattr(os, "sched_getaffinity"):        # Linux: cgroup/affinity-aware
+            return len(os.sched_getaffinity(0)) or 0
+        return os.cpu_count() or 0
+    except Exception:
+        return 0
+
+
 def _pool_indices(block_count: int) -> List[int]:
     """Kept _PROFILES indices for this case size under the adaptive-pool tiers
     (M41 swap / M42 big-redundant / M45 band + low-core). ICCAD_ADAPTIVE_POOL=0
@@ -542,6 +584,12 @@ def _pool_indices(block_count: int) -> List[int]:
     # and tier-4 _M45_LOWCORE_DROP, which only fires at <=8 detected cores and
     # is therefore fail-open in both the local 12c and the Beta 48c regime.
     restore = os.environ.get("ICCAD_M67F_RESTORE", "0") == "1"
+    # M67-F tier-5 (SHIPPED, cores-gated — see _M67F_CORES_MIN): the same pool
+    # effect as the offline restore knob, but ONLY the M42 layer and ONLY on a
+    # >=32-core box, where M67-E proved those profiles are all cheaper than the
+    # max-setter that actually sets the wall. Fails closed (unknown cores -> 0).
+    tier5 = (os.environ.get("ICCAD_M67F_TIER5", "1") != "0"
+             and _effective_cores_hi() >= _M67F_CORES_MIN)
     n_swap = int(os.environ.get("ICCAD_ADAPTIVE_N", "0"))
     n_free = int(os.environ.get("ICCAD_ADAPTIVE_FREE_N", "100"))
     drop_band: frozenset = frozenset()
@@ -561,8 +609,9 @@ def _pool_indices(block_count: int) -> List[int]:
         if block_count > n_swap and ("ICCAD_ORDER_SWAP" in p
                                      or "ICCAD_ORDER_MOVE" in p):
             continue
-        if not restore and block_count > n_free and i in _BIG_REDUNDANT_IDX:
-            continue                                             # M42
+        if (not restore and not tier5 and block_count > n_free
+                and i in _BIG_REDUNDANT_IDX):
+            continue                                             # M42 (tier-5 keeps)
         if i in drop_band or i in drop_low:
             continue
         kept.append(i)

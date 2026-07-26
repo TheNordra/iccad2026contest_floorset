@@ -1,0 +1,20 @@
+﻿== M67-B stage ==
+  hygiene: OK (6 files)
+  tar: cadc1075.tar.gz OK (277824 bytes, 6 files under cadc1075/)
+== M67-B verify (official layout, official command) ==
+  dataset: junction; loaders: 8; evaluator overlaid
+  running (cwd=cadc1075): -u iccad2026_evaluate.py --evaluate op_wrapper.py -o results_m67b_opwrapper.json
+  eval done in 195s (exit 0)
+    | 
+    | Total Score: 1.3265
+    | Tests: 100
+    | Feasible: 100
+    | Avg Cost: 1.3927
+    | Avg Runtime: 1.65s
+    | 
+    | Results saved to results_m67b_opwrapper.json
+  new total_score=1.326473104916827 feasible=100/100 avg_runtime=1.6508431577682494
+  anchor total_score=1.326473104916827
+  bit-exact: OK (100 cases, total + costs + gaps + positions)
+
+M67-B MAKE-SUBMISSION [all]: PASS

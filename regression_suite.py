@@ -12,6 +12,10 @@ Runs, in order, the pre-submission gates CLAUDE.md requires (Beta/Final §3):
   m47b     m47b_proxy_equiv.py            PASS = exit 0 + "PASS: N comparisons,
                                           mismatches=0" (script never exits
                                           non-zero on its own -> parsed here)
+  tier5    m67g_tier5_gate.py             M67-F tier-5 pool identity: inert at
+                                          <=31 cores, == restore knob at >=32
+                                          on n>100 only, fail-CLOSED detection;
+                                          PASS = exit 0 + "M67G-TIER5 GATE: ALL PASS"
 
 Per-item PASS/FAIL summary at the end; exit 1 if anything failed. Touches no
 shipped file (pure subprocess runner; m48 works in a tempdir, m49 only writes
@@ -41,7 +45,7 @@ from pathlib import Path
 _DIR = Path(__file__).parent
 _CONDA_PY = Path(r"C:\Users\Nordra\.conda\envs\iccadv\python.exe")
 _PY_DEFAULT = str(_CONDA_PY if _CONDA_PY.exists() else Path(sys.executable))
-ALL_KEYS = ("m48", "rf", "m49big", "m49mid8", "m49mid4", "m47b")
+ALL_KEYS = ("m48", "rf", "m49big", "m49mid8", "m49mid4", "m47b", "tier5")
 TAIL = 15
 
 # Pinned mover expectations for the m49 gates (case ids whose Path-B cost moves
@@ -176,6 +180,19 @@ def check_m47b(rc, lines):
     return [("m47b proxy equivalence", ok, detail)]
 
 
+def check_tier5(rc, lines):
+    """M67-F tier-5 pool-identity gate (m67g_tier5_gate.py)."""
+    ok = rc == 0 and any("M67G-TIER5 GATE: ALL PASS" in l for l in lines)
+    nfail = sum(1 for l in lines if re.match(r"^V\d.*FAIL", l))
+    detail = "ALL PASS" if ok else f"exit={rc}"
+    if nfail:
+        detail += f"; {nfail} V-check FAIL line(s)"
+    box = _grep(lines, "this box: _effective_cores_hi")
+    if box:
+        detail += "; " + box[-1].strip()
+    return [("m67g tier-5 pool identity", ok, detail)]
+
+
 def build_runs(sel, separate_mid, py):
     """-> [(key, cmd, checker)]; the combined mid run yields two result rows."""
     runs = []
@@ -199,6 +216,8 @@ def build_runs(sel, separate_mid, py):
                          make_check_m49("mid", [4])))
     if "m47b" in sel:
         runs.append(("m47b", [py, "-u", "m47b_proxy_equiv.py"], check_m47b))
+    if "tier5" in sel:
+        runs.append(("tier5", [py, "-u", "m67g_tier5_gate.py"], check_tier5))
     return runs
 
 

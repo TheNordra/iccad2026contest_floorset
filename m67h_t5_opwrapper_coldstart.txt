@@ -1,0 +1,11 @@
+﻿cases: idx=0 n=21, idx=50 n=71, idx=99 n=120
+scratch: C:\Users\Nordra\AppData\Local\Temp\m48_coldstart_ehleh_8m (op_wrapper)
+phase 0 baseline costs: {'0': '1.2867798017633958', '50': '1.3106535809308177', '99': '1.3083538507526609'}  (9s)
+phase 1 cold start: PASS (exe=True, costs_equal=True, 20s)
+phase 2 foreign binary: PASS (recompiled 32B -> 702305B, 15s)
+phase 3 compile chain: PASS (skipped bogus compiler, 15s)
+phase 4 absolute C:\ paths in shipped files:
+  op_wrapper.py:677: compilers.insert(0, r"C:\msys64\ucrt64\bin\g++.exe")
+  (expected: only the nt-gated msys compiler candidate in op_wrapper.py)
+
+M48 COLD-START DRY-RUN (op_wrapper): ALL PASS
