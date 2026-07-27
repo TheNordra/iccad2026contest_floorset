@@ -452,12 +452,24 @@ _M45_CORES_MAX = 8
 # bands): official score -1.30% (s=1) / -0.55% (1.5) / -0.26% (2~2.5) — same sign
 # at every machine speed. Threshold 32 rather than 48 so a 32-40 core grader also
 # benefits; below it the 12c regime is sum-bound and the cut still pays for itself.
+# 2026-07-27 CALIBRATION (raised 32 -> 40): the restored pool's c* = sum(dt)/max(dt)
+# — the core count at which it stops being sum-bound — is min 15.5 / median 19.3 /
+# MAX 22.5 over the 20 n>100 cases. At or above ~24 cores every heavy case is
+# max-bound and the cost saturates at +6.0% (flat through 32/40/48/64), which is
+# what the projection already charges. Below c* the wall grows like sum/cores and
+# gets expensive fast: measured on this 16-LOGICAL box, restoring doubled the n>100
+# wall (+97%, worst case +113%) because its EFFECTIVE parallelism is only ~10
+# (12 physical, 8 of them slow E-cores; the model reproduces the measurement at
+# ceff=10). Detected cores are therefore an UPPER bound on effective cores, so the
+# threshold needs headroom over 22.5: at 32 detected a box with this one's 0.63
+# effective ratio would land at ~20 < 22.5 and pay the sum-bound penalty. 40 keeps
+# ~1.8x margin, still fires on the 48-core Beta box, and costs nothing there.
 # ONLY the M42 layer is restored: mid-band tier-3 is ship-RED (recovery +0.620%
 # < wall cost +0.695%, and the mid band is 0/40 at the RF floor so it pays in
 # full). In-sample this tier is a NO-OP (M67-F Gate B: heavy band 20/20 cost-equal
 # under the shipping K=4 overlay) — the whole gain is out-of-sample.
 # ICCAD_M67F_TIER5=0 disables it.
-_M67F_CORES_MIN = 32
+_M67F_CORES_MIN = 40
 
 # M49 (2026-07-07): band-gated REFINE truncation — the first MEASURED quality-
 # vs-runtime trade (M41's was inferred). REFINE is 12 of every frame's 13 packs;

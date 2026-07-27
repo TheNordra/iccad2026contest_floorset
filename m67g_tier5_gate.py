@@ -1,10 +1,15 @@
 """OFFLINE ONLY — M67-F tier-5 pool-identity gate (never shipped).
 
-Tier-5 restores the M42 `_BIG_REDUNDANT_IDX` cut when >=32 cores are detected
-(_M67F_CORES_MIN), because at 48c the wall is the max-setter and every dropped
-profile is cheaper than it (M67-E), while the cut still pays theta_pool = 0.7636
-of the +2.825% out-of-sample quality tax (M67-F Phase 1). It is the FIRST tier
-whose gate fires on a HIGH core count, which makes two things newly fallible:
+Tier-5 restores the M42 `_BIG_REDUNDANT_IDX` cut when >=_M67F_CORES_MIN (40)
+cores are detected, because past the restored pool's c* = sum(dt)/max(dt)
+(min 15.5 / median 19.3 / MAX 22.5 over the 20 n>100 cases) the wall is the
+max-setter and the cost saturates at +6.0%, while the cut still pays
+theta_pool = 0.7636 of the +2.825% out-of-sample quality tax (M67-F Phase 1).
+Below c* the wall grows like sum/cores and gets expensive fast (measured: on a
+16-logical box whose EFFECTIVE parallelism is only ~10, restoring doubled the
+n>100 wall), which is why the threshold carries ~1.8x headroom over c*max.
+It is the FIRST tier whose gate fires on a HIGH core count, which makes two
+things newly fallible:
 
   1. fail direction — `_effective_cores()` maps unknown to 9999 so tier-4
      (cores <= 8) stays off; reusing it for a `>= 32` test would make tier-5
@@ -88,22 +93,33 @@ def main() -> int:
     fails = 0
 
     # ---- V1: inert everywhere it must be inert ------------------------------
-    if head_has_t5:
-        print("V1 skipped (HEAD already contains tier-5; compare is vacuous)")
-    else:
-        for cores in (None, 4, 8, 12, 16, 24, 31):
-            a, b = _sweep(live, cores), _sweep(head, cores)
-            bad = [n for n in NS if a[n] != b[n]]
-            print(f"V1 live==HEAD @ {'auto' if cores is None else str(cores)+'c':>5}: "
-                  f"{'PASS' if not bad else 'FAIL ' + str(bad[:6])}")
-            fails += bool(bad)
-        a, b = _sweep(live, 48, {"ICCAD_M67F_TIER5": "0"}), _sweep(head, 48)
+    # Reference = tier-5 switched OFF. Once tier-5 is committed, HEAD contains it
+    # too, so comparing against HEAD is vacuous; the kill switch is the invariant
+    # that keeps testing "tier-5 does nothing below _M67F_CORES_MIN" forever.
+    # HEAD is still used as a second reference while it predates tier-5.
+    for cores in (None, 4, 8, 12, 16, 24, 32, 39):
+        a = _sweep(live, cores)
+        b = _sweep(live, cores, {"ICCAD_M67F_TIER5": "0"})
         bad = [n for n in NS if a[n] != b[n]]
-        print(f"V1 kill-switch @48c   : {'PASS' if not bad else 'FAIL ' + str(bad[:6])}")
+        tag = "auto" if cores is None else f"{cores}c"
+        extra = ""
+        if not head_has_t5:
+            h = _sweep(head, cores)
+            hbad = [n for n in NS if a[n] != h[n]]
+            fails += bool(hbad)
+            extra = f"; ==HEAD: {'PASS' if not hbad else 'FAIL ' + str(hbad[:6])}"
+        print(f"V1 tier-5 inert @ {tag:>5}: "
+              f"{'PASS' if not bad else 'FAIL ' + str(bad[:6])}{extra}")
         fails += bool(bad)
+    # and the switch must also neutralise it ABOVE the threshold
+    a = _sweep(live, 48, {"ICCAD_M67F_TIER5": "0"})
+    b = _sweep(live, 12, {"ICCAD_M67F_TIER5": "0"})
+    bad = [n for n in NS if a[n] != b[n]]
+    print(f"V1 kill-switch @48c   : {'PASS' if not bad else 'FAIL ' + str(bad[:6])}")
+    fails += bool(bad)
 
     # ---- V2: at >=32c == restore knob on n>100, shipped on n<=100 -----------
-    for cores in (32, 48, 96):
+    for cores in (40, 48, 96):
         t5 = _sweep(live, cores)
         knob = _sweep(live, cores, {"ICCAD_M67F_TIER5": "0",
                                     "ICCAD_M67F_RESTORE": "1"})
