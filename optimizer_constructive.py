@@ -531,6 +531,41 @@ def _band_env(block_count: int) -> Dict[str, str]:
     return {}
 
 
+# M71 (2026-07-29): cluster composite-item candidate enrichment, ported from the
+# teammate's donor branch and re-verified here bit-for-bit (their local100 json is
+# reproduced to the last digit by our own run). Two C++ knobs, both default-OFF in
+# constructive.cpp so the binary alone stays bit-identical; the wrapper turns them
+# on for every profile of every case:
+#   ICCAD_CLUSTER_BND_EXPOSE    - in make_group_item(), rank the cluster's internal
+#     candidate layouts by (boundary_bad, fragments, area, aspect) instead of
+#     (fragments, boundary_bad, ...), AND add, for each candidate, a variant with
+#     every boundary member pushed onto the item's own matching edge (kept only if
+#     it stays overlap-free).
+#   ICCAD_CLUSTER_BND_EDGE_PACK - add one more candidate layout: boundary members
+#     laid around the item's rim, interior members filling the middle.
+# This is the axis M33/M34/M37/M39 never touched: those searched cluster member
+# ASPECT, never the composite item's candidate SET or its ranking key. M63 had
+# already located the target (case 89's four pure-movable cluster-g1 boundary
+# violators, the largest single-case term of the T2 violation bound) - and the
+# movers match: 91/84/76/73/85/89/65 all improve.
+# Measured (official eval, this box): 1.326473104916827 -> 1.305389893450635
+# (-1.5894% weighted, 100/100 feasible, 56 better / 17 worse / 27 identical) with
+# avg runtime 1.748 -> 1.521s, i.e. quality AND RuntimeFactor both improve. The
+# heavy bands get FASTER (ratio 0.92/0.84/0.67 on (60,100]/(100,110]/(110,inf]).
+# ICCAD_M71=0 restores the pre-M71 shipped behaviour bit-for-bit.
+_M71_ENV: Dict[str, str] = {"ICCAD_CLUSTER_BND_EXPOSE": "1",
+                            "ICCAD_CLUSTER_BND_EDGE_PACK": "1"}
+
+
+def _m71_env() -> Dict[str, str]:
+    """Per-profile env overlay for the M71 cluster-item knobs (default ON).
+    Deliberately independent of ICCAD_ADAPTIVE_POOL/ADAPTIVE_REFINE: this is a
+    pure quality/runtime win, not part of the RuntimeFactor tier stack."""
+    if os.environ.get("ICCAD_M71", "1") == "0":
+        return {}
+    return dict(_M71_ENV)
+
+
 def _effective_cores() -> int:
     """Detected parallelism for tier-4 gating. Conservative: logical count
     over-estimates effective cores -> mis-detection direction is 'tier stays
@@ -974,8 +1009,12 @@ class MyOptimizer(FloorplanOptimizer):
         #    profile of an n>100 case runs with ICCAD_REFINE_ITERS=4 (measured:
         #    19/20 case costs bit-identical, +0.027% local, band wall -48%;
         #    ICCAD_ADAPTIVE_REFINE=0 disables). See _M49_REFINE_BAND.
+        #  M71 (2026-07-29): the cluster composite-item knobs ride the same
+        #    per-profile overlay (see _m71_env); unlike the M49/M50 band they
+        #    apply to every case size and are independent of the adaptive tiers.
         if not self._single:
-            band = _band_env(block_count)
+            band = dict(_band_env(block_count))
+            band.update(_m71_env())
             profiles = [dict(_PROFILES[i], **band) if band else _PROFILES[i]
                         for i in _pool_indices(block_count)]
 
