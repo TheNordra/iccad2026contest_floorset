@@ -36,7 +36,13 @@ CORES = 12          # physical cores (wrapper wall model)
 WORKERS = 11        # leave one core for this process -> clean dt measurements
 CACHE = _DIR / "audit_cache.pkl"
 
-PROFILES = list(oc._PROFILES)
+# M72 (2026-07-30): _PROFILES carries the appended _M55_EXTRA tier (ICCAD_M55_POOL,
+# ship-RED, default OFF). It is NOT part of the shipped pool -- _pool_indices() never
+# emits those indices unless the env gate is set -- and every drop-set constant is an
+# index frozenset over 0.._M55_BASE_LEN-1. Key the cache on the SHIPPED pool so the
+# gated-off tier cannot invalidate audit_cache.pkl, while any change to the 41 live
+# profiles still does.
+PROFILES = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
 N_LIVE = len(PROFILES)                       # live pool (selection baseline)
 OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
         "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"}

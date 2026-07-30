@@ -111,8 +111,10 @@ M10_COMMIT = "8565e38"                # alpha submission (M10, 14 cheap profiles
 # audit_cache.pkl key signature: profile_audit.py's PROFILES = live + OM16
 OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
         "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"}
-PROFILES = list(oc._PROFILES) + [OM16]
-N_LIVE = len(oc._PROFILES)
+# M72: exclude the appended, gated-off _M55_EXTRA tier (see profile_audit.py).
+_SHIPPED = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
+PROFILES = _SHIPPED + [OM16]
+N_LIVE = len(_SHIPPED)
 FPR = repr(PROFILES)
 LIVE = list(range(N_LIVE))
 SWAPSET = {k for k in LIVE if "ICCAD_ORDER_SWAP" in PROFILES[k]

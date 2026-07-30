@@ -10,7 +10,7 @@ docker-linux-coldstart-verify) that:
       fallback, 4 phases)
   T3  extracts the staged cadc1075.tar.gz, injects the T1 binaries, runs the
       OFFICIAL command `python iccad2026_evaluate.py --evaluate op_wrapper.py`
-      and bit-compares all 100 cases vs results_shipped_m51.json with a
+      and bit-compares all 100 cases vs results_shipped_m71.json with a
       <2e-9 ULP warn band (expected: case 84 only) -- plus the hard
       bundled-binary-first proof: no constructive.exe compile artifact
   T4  corrupts bin/constructive_linux and re-runs ONE case: the M67-A
@@ -39,7 +39,7 @@ _SOURCES = (
     "constructive.cpp", "optimizer_claude.cpp",
     "optimizer_constructive.py", "optimizer_claude.py",
     "make_submission.py", "m48_coldstart_dryrun.py",
-    "results_shipped_m51.json",
+    "results_shipped_m71.json", "results_M73_cores48.json",
 )
 
 # ── embedded WSL2 scripts (written with LF endings) ──────────────────────────
@@ -137,7 +137,16 @@ PY="$HOME/m67c_venv/bin/python"
 if [ -z "${1:-}" ] || [ ! -f "$1" ]; then
   echo "usage: bash verify_final_tar.sh <path-to-final-cadc1075.tar.gz>"; exit 2
 fi
-"$PY" m67c_tier3.py final "$1"
+rc=0
+"$PY" m67c_tier3.py final   "$1" || rc=1
+echo
+echo "== round 2b: tier-5 path (ICCAD_ADAPTIVE_CORES=48) =="
+echo "   WSL nproc=$(nproc) < 40 -> tier-5 stays OFF by default; this pass forces"
+echo "   the high-core branch so the M42-restore pool is proven to RUN on Linux."
+"$PY" m67c_tier3.py final48 "$1" || rc=1
+echo
+if [ "$rc" = 0 ]; then echo "VERIFY_FINAL_TAR: ALL PASS"; else echo "VERIFY_FINAL_TAR: FAILURES"; fi
+exit $rc
 """
 
 _SMOKE_PY = r'''"""M67-C T1 smoke: each built binary must run a trivial 1-block case
@@ -178,12 +187,17 @@ t3           extract cadc1075.tar.gz, overlay evaluator + loader closure +
              dataset symlink (mirrors make_submission.verify mechanics),
              inject the T1 binaries, run the OFFICIAL command, assert
              bundled-binary-first engaged (no on-site compile artifact),
-             ULP-tolerant bit-compare vs results_shipped_m51.json
+             ULP-tolerant bit-compare vs results_shipped_m71.json
 t4           fresh extract, corrupt bin/constructive_linux, run ONE case via
              ContestEvaluator: the M67-A fallthrough must on-site-compile
              (constructive.exe appears) and stay digit-equal
 final <tar>  t3 flow on a given FINAL tar (binaries already inside; nothing
              injected)
+final48 <tar>
+             same, but with ICCAD_ADAPTIVE_CORES=48 so the M67-F tier-5 branch
+             actually fires on Linux (WSL nproc is 16 -> tier-5 would stay off).
+             Compares against results_M73_cores48.json (1.295547821428148); the
+             5 heavy-band movers (85/87/89/91/96) are EXPECTED, not a regression.
 """
 import json
 import os
@@ -195,7 +209,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-ANCHOR = ROOT / "results_shipped_m51.json"
+ANCHOR = ROOT / "results_shipped_m71.json"
+ANCHOR48 = ROOT / "results_M73_cores48.json"   # tier-5 fired (ADAPTIVE_CORES=48)
 LOADERS = ("litetestLoader.py", "lite_dataset_test.py", "liteLoader.py",
            "lite_dataset.py", "prime_dataset.py", "cost.py", "utils.py",
            "visualize.py")
@@ -235,9 +250,9 @@ def clean_env() -> dict:
     return env
 
 
-def compare(new_path: Path) -> bool:
+def compare(new_path: Path, anchor: Path = None) -> bool:
     new = json.loads(new_path.read_text(encoding="utf-8"))
-    old = json.loads(ANCHOR.read_text(encoding="utf-8"))
+    old = json.loads((anchor or ANCHOR).read_text(encoding="utf-8"))
     fails, warns = [], []
     dt = abs(new["total_score"] - old["total_score"])
     print(f"   total new={new['total_score']!r}")
@@ -285,8 +300,9 @@ def compare(new_path: Path) -> bool:
     return True
 
 
-def t3(tar_path: Path, inject: bool, workname: str) -> bool:
-    print(f"-- layout from {tar_path.name} -> {workname}/")
+def t3(tar_path: Path, inject: bool, workname: str, cores: int = None) -> bool:
+    print(f"-- layout from {tar_path.name} -> {workname}/"
+          + (f"  [ICCAD_ADAPTIVE_CORES={cores}]" if cores else ""))
     pkg = build_layout(ROOT / workname, tar_path)
     if inject:
         (pkg / "bin").mkdir(exist_ok=True)
@@ -306,8 +322,11 @@ def t3(tar_path: Path, inject: bool, workname: str) -> bool:
     cmd = [sys.executable, "-u", "iccad2026_evaluate.py", "--evaluate",
            "op_wrapper.py", "-o", res_name]
     print(f"-- official cmd (cwd={TEAM}): {' '.join(cmd[1:])}")
+    env = clean_env()
+    if cores:
+        env["ICCAD_ADAPTIVE_CORES"] = str(cores)
     t0 = time.time()
-    r = subprocess.run(cmd, cwd=str(pkg), env=clean_env(),
+    r = subprocess.run(cmd, cwd=str(pkg), env=env,
                        capture_output=True, encoding="utf-8",
                        errors="replace", timeout=3600)
     print(f"-- eval done in {time.time() - t0:.0f}s (exit {r.returncode})")
@@ -334,7 +353,7 @@ def t3(tar_path: Path, inject: bool, workname: str) -> bool:
         ok = False
     else:
         print("   bundled-first: OK (no on-site compile artifact)")
-    ok &= compare(pkg / res_name)
+    ok &= compare(pkg / res_name, ANCHOR48 if cores else ANCHOR)
     return ok
 
 
@@ -382,6 +401,9 @@ def main():
         ok = t4()
     elif mode == "final" and len(sys.argv) > 2:
         ok = t3(Path(sys.argv[2]).resolve(), inject=False, workname="t_final")
+    elif mode == "final48" and len(sys.argv) > 2:
+        ok = t3(Path(sys.argv[2]).resolve(), inject=False,
+                workname="t_final48", cores=48)
     else:
         print(__doc__)
         sys.exit(2)
@@ -436,13 +458,19 @@ def main():
     with tarfile.open(sub_tar, "r:gz") as tf:
         members = {m.name for m in tf.getmembers() if m.isfile()}
         opw = tf.extractfile(f"{make_submission._TEAM}/op_wrapper.py").read()
+    # M67-C round 1 predated bin/: stage() shipped 5 files. Since the binaries
+    # landed in the repo, stage() also copies _BIN_FILES, so the expected member
+    # set must follow whatever is actually present (the bundle's T3 injects its
+    # own freshly built bin_out/ binaries on top anyway).
     want = {f"{make_submission._TEAM}/{f}" for f in make_submission._WHITELIST}
+    want |= {f"{make_submission._TEAM}/{f}" for f in make_submission._BIN_FILES
+             if (_REPO / f).exists()}
     if members != want:
         print(f"FATAL: embedded submission tar members unexpected:\n"
               f"  extra={sorted(members - want)}\n  missing={sorted(want - members)}")
         sys.exit(1)
-    print(f"  embedded {sub_tar.name}: {len(members)} members (no bin/, OK for "
-          f"this stage)  md5={_md5(sub_tar.read_bytes())}")
+    print(f"  embedded {sub_tar.name}: {len(members)} members  "
+          f"md5={_md5(sub_tar.read_bytes())}")
     print(f"  op_wrapper.py inside: md5={_md5(opw)} ({len(opw)} bytes)")
 
     # 2. sanity: every bundled repo file exists

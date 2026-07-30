@@ -37,7 +37,7 @@ Modes:
                                        OFFICIAL command (cwd=verify/cadc1075):
                                            python iccad2026_evaluate.py --evaluate op_wrapper.py
                                        and bit-compare all 100 cases against
-                                       results_shipped_m51.json
+                                       results_shipped_m71.json (1.305389893450635)
     python make_submission.py all      both (default)
 
 Importable without side effects; m48_coldstart_dryrun.py's `opwrapper` variant
@@ -61,7 +61,7 @@ _BUILD = _REPO / "build_submission"
 _STAGE = _BUILD / _TEAM
 _TAR = _BUILD / f"{_TEAM}.tar.gz"
 _VERIFY = _BUILD / "verify"
-_ANCHOR = _REPO / "results_shipped_m51.json"
+_ANCHOR = _REPO / "results_shipped_m71.json"
 _RESULTS_NAME = "results_m67b_opwrapper.json"
 
 _CONDA_PY = Path(r"C:\Users\Nordra\.conda\envs\iccadv\python.exe")

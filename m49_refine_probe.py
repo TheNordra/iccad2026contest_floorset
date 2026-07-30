@@ -59,8 +59,10 @@ os.environ["ICCAD_ADAPTIVE_CORES"] = "12"
 # must match profile_audit.py's cache signature (live pool + OM16 stand-by)
 OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
         "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"}
-PROFILES = list(oc._PROFILES) + [OM16]
-N_LIVE = len(oc._PROFILES)
+# M72: exclude the appended, gated-off _M55_EXTRA tier (see profile_audit.py).
+_SHIPPED = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
+PROFILES = _SHIPPED + [OM16]
+N_LIVE = len(_SHIPPED)
 FPR = repr(PROFILES)
 SWAPSET = {k for k in range(N_LIVE) if "ICCAD_ORDER_SWAP" in PROFILES[k]
            or "ICCAD_ORDER_MOVE" in PROFILES[k]}
