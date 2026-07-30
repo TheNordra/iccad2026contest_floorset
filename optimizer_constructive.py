@@ -381,6 +381,41 @@ if os.environ.get("ICCAD_L1_POOL", "0") == "1":
     _PROFILES.extend(_L1_EXTRA)
     _PROFILES.extend(dict(p, ICCAD_REFINE_ITERS="24") for p in _L1_BASE)
 
+# M72 (2026-07-30, ported from the teammate's b716753 + our own fix): the SAME six
+# cluster-boundary knobs M71 exports GLOBALLY, but as four extra PROFILES instead.
+# OFF by default (ICCAD_M55_POOL=1 enables) -> _pool_indices() is bit-identical to
+# shipped, so no rf_score_model/m49 re-gate is needed to carry the knob.
+#
+# WHY a tier and not more global knobs: M71 (EXPOSE+EDGE_PACK on every profile)
+# buys -1.5894% but REGRESSES 17/100 cases - in global mode a regressing case has
+# nowhere to escape, because every candidate in the pool carries the knobs. The
+# teammate measured a per-case 2-way oracle between the knob-off and knob-on
+# portfolios at 1.299157, i.e. most of the residual value is in ESCAPING those 17.
+# A pool tier gives the proxy both worlds per case.
+#   knob-on-always (our shipped M71)          1.305390   56 better / 17 WORSE
+#   4-profile tier on a knob-off base (M72)   1.306635   31 better /  0 worse
+#   per-case 2-way oracle                     1.299157
+# Their four recipes mirror the donor M55 block (teammate_m43 idx 43-46) on this
+# engine's host recipe; profile_vs_portfolio oracle-min vs the knob-off 41-pool:
+# +1.287% / +1.518% / +1.531% / +1.497% (25-30x the 0.05% bar), and case 89 - the
+# highest-cost case in the set - moves 1.5232 -> 1.3707, i.e. NOT the M39
+# FREE_CLUSTER_BND pattern where the hard cases never moved.
+# Appended at the END on purpose: _BIG_REDUNDANT_IDX / _M45_BAND_DROP /
+# _M45_LOWCORE_DROP are index-based frozensets over 0..40, so indices >=41 cannot
+# disturb them. NEVER insert or reorder _PROFILES.
+# Extended UNCONDITIONALLY (indices stay stable) and gated at CALL time inside
+# _pool_indices(): m67_oos_probe.py flips env vars AFTER importing this module, so
+# an import-time gate would silently be a no-op and the probe would measure a fake
+# "zero difference" (a false negative). Same convention as ICCAD_M67F_RESTORE.
+_M55_EXTRA: List[Dict[str, str]] = [
+    {"ICCAD_CLUSTER_BND_EXPOSE": "1", "ICCAD_CLUSTER_BND_CORNER": "1", "ICCAD_CLUSTER_BND_PERMUTE": "1", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # m55_cluster_bnd_permute (+1.287%)
+    {"ICCAD_CLUSTER_BND_EXPOSE": "1", "ICCAD_CLUSTER_BND_CORNER": "1", "ICCAD_CLUSTER_BND_PERMUTE": "1", "ICCAD_CLUSTER_BND_EDGE_PACK": "1", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # m55_cluster_bnd_edge_pack (+1.518%)
+    {"ICCAD_CLUSTER_BND_EXPOSE": "1", "ICCAD_CLUSTER_BND_CORNER": "1", "ICCAD_CLUSTER_BND_PERMUTE": "1", "ICCAD_FRAME_SCALES": "1.00,1.025,1.05,1.10", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"},  # m55_area_tight_cluster_bnd (+1.531%)
+    {"ICCAD_HPWL_SAFE_CLUSTER_SLIDE": "1", "ICCAD_CLUSTER_BND_EXPOSE": "1", "ICCAD_CLUSTER_BND_CORNER": "1", "ICCAD_FREE_CLUSTER": "1", "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0", "ICCAD_FREE_ASPECT": "1", "ICCAD_WIRE_BFS": "1", "ICCAD_BFS_PIN": "1", "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20", "ICCAD_WIRE_MULT": "2.0"},  # m55_hpwl_safe_cluster_slide (+1.497%)
+]
+_M55_BASE_LEN = len(_PROFILES)
+_PROFILES.extend(_M55_EXTRA)
+
 # M42 (2026-06-26): 2nd-order RuntimeFactor lever — indices into _PROFILES of the
 # BUILD-time profiles that are NEVER the selected winner on any case with n>100
 # (per-big-n redundancy; the M41 swap argument applied to the build profiles).
@@ -614,7 +649,13 @@ def _pool_indices(block_count: int) -> List[int]:
     """Kept _PROFILES indices for this case size under the adaptive-pool tiers
     (M41 swap / M42 big-redundant / M45 band + low-core). ICCAD_ADAPTIVE_POOL=0
     returns the full pool."""
-    full = list(range(len(_PROFILES)))
+    # M72 (2026-07-30): call-time gate for the _M55_EXTRA tier. Read BEFORE the
+    # ADAPTIVE_POOL=0 early return on purpose - the teammate's port checks it only
+    # inside the loop below, so their `full` path leaks the four M72 profiles into
+    # every ADAPTIVE_POOL=0 run (the offline quality anchor, the M53 L1/L3 modes and
+    # this probe's own `full` endpoint), silently changing what those measure.
+    m55 = os.environ.get("ICCAD_M55_POOL", "0") == "1"
+    full = [i for i in range(len(_PROFILES)) if m55 or i < _M55_BASE_LEN]
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
         return full
     # M67-F (2026-07-22): OFFLINE-ONLY measurement knob, default 0 => this
@@ -653,6 +694,8 @@ def _pool_indices(block_count: int) -> List[int]:
                 break
     kept = []
     for i, p in enumerate(_PROFILES):
+        if i >= _M55_BASE_LEN and not m55:
+            continue                                             # M72, default off
         if block_count > n_swap and ("ICCAD_ORDER_SWAP" in p
                                      or "ICCAD_ORDER_MOVE" in p):
             continue

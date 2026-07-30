@@ -884,8 +884,19 @@ def mode_pool0(args):
 # M67-E: at 48 cores the wall is the max-setter and every M42/M45-dropped profile
 # is cheaper than it, so restoring them is wall-free there (dW=+0.00%) => any
 # theta_pool > 0 is a pure score gain (break-even theta* = 0, upper bound -2.11%).
+#
+# M72 arms (2026-07-30). The teammate's b716753 tier: the same six cluster-boundary
+# knobs our shipped M71 exports GLOBALLY, packaged as 4 extra PROFILES instead, so
+# a case that M71 hurts can escape to a knob-free profile. Two arms because our
+# shipped baseline already carries M71 globally, unlike theirs:
+#   m55  = tier ON, M71 global OFF  -> reproduces their M72 exactly (vs a knob-free
+#                                     base, so it answers "does their number hold")
+#   m55x = tier ON, M71 global ON   -> the union; the only form that is a candidate
+#                                     for OUR tar, since M71 is already shipped
 _ARMS = {"pool": {"ICCAD_M67F_RESTORE": "1"},
-         "refine": {"ICCAD_ADAPTIVE_REFINE": "0"}}
+         "refine": {"ICCAD_ADAPTIVE_REFINE": "0"},
+         "m55": {"ICCAD_M55_POOL": "1", "ICCAD_M71": "0"},
+         "m55x": {"ICCAD_M55_POOL": "1"}}
 
 
 def _theta_gate_a(arm):
@@ -928,6 +939,39 @@ def _theta_gate_a(arm):
         chk("restore adds exactly _M45_BAND_DROP @n=80",
             set(oc._pool_indices(80)) - set(_shipped_pool(80)) == mid_drop,
             f"(tier-3 = {sorted(mid_drop)})")
+    elif arm in ("m55", "m55x"):
+        # The tier must add exactly its own 4 indices, on every band, and must not
+        # disturb the M41/M42/M45 layers or the REFINE overlay.
+        chk("tier adds exactly 4 profiles on every band",
+            all(on[n] == off[n] + 4 for n in off), f"{off} -> {on}")
+        chk("added indices are exactly the M55 tier",
+            all(set(oc._pool_indices(n)) - set(_shipped_pool(n))
+                == set(range(oc._M55_BASE_LEN, len(oc._PROFILES)))
+                for n in (30, 80, 120)))
+        chk("tier keeps the M49/M50 REFINE band", on_be == off_be, str(on_be))
+        # ADAPTIVE_POOL=0 must NOT leak the tier (the teammate's port does; ours
+        # reads the gate before the early return). Checked with the knob ON, since
+        # that is the only state where a leak could hide.
+        os.environ["ICCAD_ADAPTIVE_POOL"] = "0"
+        f_on = len(oc._pool_indices(120))
+        os.environ["ICCAD_M55_POOL"] = "0"
+        f_off = len(oc._pool_indices(120))
+        os.environ["ICCAD_M55_POOL"] = "1"
+        os.environ.pop("ICCAD_ADAPTIVE_POOL", None)
+        chk("ADAPTIVE_POOL=0 pool tracks the gate (no leak when off)",
+            f_off == oc._M55_BASE_LEN and f_on == len(oc._PROFILES),
+            f"off {f_off} on {f_on}")
+        # M71 global overlay: OFF for the m55 arm (their baseline), ON for m55x.
+        want = {} if arm == "m55" else dict(oc._M71_ENV)
+        chk(f"_m71_env() == {'{}' if arm == 'm55' else 'M71 knobs'}",
+            oc._m71_env() == want, str(oc._m71_env()))
+        # RUNTIME flip works (an import-time gate would make this arm a silent
+        # no-op and the run would report a fake 'zero difference').
+        os.environ["ICCAD_M55_POOL"] = "0"
+        flipped_off = len(oc._pool_indices(120))
+        os.environ["ICCAD_M55_POOL"] = "1"
+        chk("RUNTIME flip works (gate resolves per call)",
+            flipped_off == off[120] and len(oc._pool_indices(120)) == on[120])
     else:
         chk("norefine keeps the shipped pool", on == off, str(on))
         chk("norefine clears the REFINE band",
@@ -938,12 +982,14 @@ def _theta_gate_a(arm):
 
 
 def _shipped_pool(n):
-    for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL"):
+    for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
+              "ICCAD_M55_POOL"):
         v = os.environ.pop(k, None)
         if v is not None:
             os.environ[f"_SAVE_{k}"] = v
     p = oc._pool_indices(n)
-    for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL"):
+    for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
+              "ICCAD_M55_POOL"):
         v = os.environ.pop(f"_SAVE_{k}", None)
         if v is not None:
             os.environ[k] = v
@@ -996,8 +1042,17 @@ def mode_restore(args):
     print("=" * 78)
     gates = ("M42" if lo >= 100 else
              ("M45 tier-3" if hi <= 100 else "M42 + M45 tier-3"))
-    expect = (f"{gates} strict gate: restore must never be WORSE" if arm == "pool"
-              else "M49/M50 trade => movers expected")
+    if arm in ("pool", "m55x"):
+        # Superset of the shipped pool with the same per-profile env => the proxy
+        # (oracle-min in-sample) can only weakly improve. Worse => knob bug.
+        gates = gates if arm == "pool" else "M72 tier"
+        expect = f"{gates} strict gate: {arm} must never be WORSE"
+    elif arm == "m55":
+        # NOT a superset: this arm also turns the M71 global overlay OFF, so it is
+        # the teammate's knob-free base + their tier. Movers both ways are expected.
+        expect = "M71 global OFF + M72 tier => movers both ways expected"
+    else:
+        expect = "M49/M50 trade => movers expected"
     print(f"GATE B  in-set {sel}: {arm} vs shipped ({expect})")
     print("=" * 78)
     # Two different claims, and only one of them is an invariant:
@@ -1020,13 +1075,16 @@ def mode_restore(args):
         elif cr < cs - 1e-9 * max(abs(cs), 1.0):
             better.append((i, arec[i]["block_count"], cs, cr))
     bad = worse + better
-    if arm == "pool":
-        print(f"  [{'PASS' if not worse else 'FAIL'}] restore never worse "
+    if arm in ("pool", "m55x"):
+        print(f"  [{'PASS' if not worse else 'FAIL'}] {arm} never worse "
               f"({len(worse)} worse) - the invariant")
-        print(f"  [{'PASS' if not better else 'DRIFT'}] "
+        # For m55x "better" is the POINT of the tier (an in-sample quality add),
+        # not a drift in a gate that was supposed to be cost-neutral.
+        gain_tag = "GAIN" if arm == "m55x" else "DRIFT"
+        print(f"  [{'PASS' if not better else gain_tag}] "
               f"{len(in_ids) - len(bad)}/{len(in_ids)} cases cost-equal "
               f"(rel 1e-9) - the {gates} gate as originally proven")
-        for tag, lst in (("WORSE", worse), ("DRIFT", better)):
+        for tag, lst in (("WORSE", worse), (gain_tag, better)):
             for i, n, cs, cr in lst:
                 print(f"    [{tag}] case {i:3d} n={n:3d} shipped {cs!r} "
                       f"restore {cr!r} {(cr / cs - 1) * 100:+.4f}%")
@@ -1035,7 +1093,13 @@ def mode_restore(args):
                   "wrong. STOP.")
             _csave()
             return 1
-        if better:
+        if better and arm == "m55x":
+            wt = {i: math.exp(arec[i]["block_count"] / 12.0) for i in range(100)}
+            dw = sum(wt[i] * (cr - cs) for i, _n, cs, cr in better)
+            print(f"  => in-set {sel} quality add from the tier: "
+                  f"{100 * dw / sum(wt.values()) / IN_SET_TOTAL:+.4f}% of the "
+                  f"local total ({len(better)} cases).")
+        elif better:
             wt = {i: math.exp(arec[i]["block_count"] / 12.0) for i in range(100)}
             dw = sum(wt[i] * (cr - cs) for i, _n, cs, cr in better)
             print(f"  => the {gates} gate has DRIFTED (derived at REFINE K=12, "
@@ -1079,6 +1143,76 @@ def mode_restore(args):
     return _theta_report(args, arm)
 
 
+def _ab_report(args, arm):
+    """Straight OOS A/B of one arm against the shipped baseline on the same cases,
+    same per-n-averaged-then-officially-weighted estimator as _theta_report. Used
+    when the `full` endpoint is not cached (theta undefined) -- for the M72 arms the
+    ship decision is this A/B, since the shipped side already carries M71."""
+    lo, hi = _sel(args)
+    sel = _selname(lo, hi)
+    st = _C.get("m67f", {}).get(arm, {})
+    rows = [r for r in _rows(args) if _in_sel(r["n"], lo, hi)
+            and f"OOS{r['key']}" in st]
+    if not rows:
+        print(f"[ab] arm {arm} has no cached OOS cases in {sel}")
+        return 1
+    pair = [dict(n=r["n"], key=r["key"], S=r["cost"], R=st[f"OOS{r['key']}"]["cost"],
+                 tS=r["runtime"], tR=st[f"OOS{r['key']}"]["runtime"],
+                 feas=st[f"OOS{r['key']}"].get("feasible", True))
+            for r in rows]
+
+    def tot(sub, field):
+        return _per_n_total([dict(n=t["n"], cost=t[field]) for t in sub])[0]
+
+    print()
+    print("=" * 78)
+    print(f"M72  OOS A/B  (arm={arm}, {sel}, per-n averaged then officially "
+          f"weighted)")
+    print("=" * 78)
+    S, R = tot(pair, "S"), tot(pair, "R")
+    better = [t for t in pair if t["R"] < t["S"] - 1e-9]
+    worse = [t for t in pair if t["R"] > t["S"] + 1e-9]
+    tS = sum(t["tS"] for t in pair) / len(pair)
+    tR = sum(t["tR"] for t in pair) / len(pair)
+    nfeas = sum(1 for t in pair if not t["feas"])
+    print(f"  cases {len(pair)}   shipped {S:.6f}   {arm} {R:.6f}   "
+          f"gain {(S / R - 1) * 100:+.3f}%")
+    print(f"  movers {len(better) + len(worse)}/{len(pair)} "
+          f"({len(better)} better, {len(worse)} worse)   infeasible {nfeas}")
+    print(f"  runtime/case (this 12c box, sum/cores-bound - NOT 48c): "
+          f"{tS:.2f}s -> {tR:.2f}s ({tR / tS:.2f}x)")
+    # median-independent RF-aware sign check: cost * t^0.3 per case (no floor).
+    num = den = 0.0
+    for t in pair:
+        w = math.exp(t["n"] / 12.0)
+        num += w * t["R"] * (t["tR"] / t["tS"]) ** 0.3
+        den += w * t["S"]
+    print(f"  RF-aware @12c wall ratio, no floor (sign check only): "
+          f"{(num / den - 1) * 100:+.3f}%")
+    print("    ^ 12c is sum/cores-bound; at 48c M67-E says wall = max-setter, so "
+          "this\n      is an UPPER bound on the runtime cost, not the projection.")
+    if worse:
+        print(f"\n  worst regressions:")
+        for t in sorted(worse, key=lambda t: t["S"] - t["R"])[:5]:
+            print(f"    n={t['n']:3d} {t['key']}  {t['S']:.4f} -> {t['R']:.4f} "
+                  f"({(t['R'] / t['S'] - 1) * 100:+.2f}%)")
+    if better:
+        print(f"  best improvements:")
+        for t in sorted(better, key=lambda t: t["R"] - t["S"])[:5]:
+            print(f"    n={t['n']:3d} {t['key']}  {t['S']:.4f} -> {t['R']:.4f} "
+                  f"({(t['R'] / t['S'] - 1) * 100:+.2f}%)")
+    out = {"arm": arm, "sel": sel, "cases": len(pair), "S": S, "R": R,
+           "gain_pct": (S / R - 1) * 100, "better": len(better),
+           "worse": len(worse), "infeasible": nfeas, "tS": tS, "tR": tR,
+           "rf_sign_pct": (num / den - 1) * 100,
+           "rows": [{k: t[k] for k in ("n", "key", "S", "R", "tS", "tR")}
+                    for t in pair]}
+    p = Path(f"results_M72_ab_{arm}.json")
+    json.dump(out, open(p, "w"), indent=1)
+    print(f"\n  wrote {p}")
+    return 0
+
+
 def _theta_report(args, arm):
     lo, hi = _sel(args)
     sel = _selname(lo, hi)
@@ -1087,8 +1221,13 @@ def _theta_report(args, arm):
     rows = [r for r in _rows(args) if _in_sel(r["n"], lo, hi)
             and f"OOS{r['key']}" in p0 and f"OOS{r['key']}" in st]
     if not rows:
-        print("[theta] no overlapping cases - run pool0 first")
-        return 1
+        # theta needs the `full` endpoint (mode_pool0). Without it the arm can
+        # still be judged as a straight A/B against the shipped baseline, which is
+        # the whole decision for the M72 arms (theta's denominator only matters
+        # when the question is "what share of the full-pool gap does this recover").
+        print("[theta] no `full` endpoint cached (mode_pool0 not run for this "
+              "signature) -> A/B report vs shipped instead")
+        return _ab_report(args, arm)
     trip = [dict(n=r["n"], key=r["key"], S=r["cost"], R=st[f"OOS{r['key']}"]["cost"],
                  F=p0[f"OOS{r['key']}"]["cost"], tS=r["runtime"],
                  tR=st[f"OOS{r['key']}"]["runtime"], tF=p0[f"OOS{r['key']}"]["runtime"])
