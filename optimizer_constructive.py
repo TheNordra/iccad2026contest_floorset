@@ -421,16 +421,21 @@ _PROFILES.extend(_M55_EXTRA)
 # (per-big-n redundancy; the M41 swap argument applied to the build profiles).
 # After M41 drops the 6 swap profiles, the big-case (n>=110, 60% weight) wall is
 # sum/cores-bound by the ~20 expensive (~8s) FREE/CA/FC profiles; these 22
-# (21 at M42; M51's re-audit added #18) win NO n>100 case, so dropping them
-# there is wall-only (rf_score_model.py: local RF=1.0
-# stays 1.3277 BIT-IDENTICALLY — every capped case keeps Qcap/Qbase=1.0000 — while
-# the n=120 wall halves 15.6->8.0s, projecting a FURTHER ~-11% real total @ M=11,
-# robust over median in [6,20]s and all 20 n>100 cases stay median-INDEPENDENT
-# WINs). The kept 13 build profiles are the cluster/anchored/MIB stacks that
-# structurally dominate big cases + a few aspect/free winners. REGENERATE after any
-# _PROFILES edit: rf_score_model.py M42 section prints the recommended set.
-_BIG_REDUNDANT_IDX = frozenset({0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 16, 18,
-                                20, 24, 28, 29, 30, 31, 32, 33})
+# win NO n>100 case, so dropping them there is wall-only (every capped case keeps
+# Qcap/Qbase=1.0000 while the heavy wall roughly halves, and all 20 n>100 cases
+# stay median-INDEPENDENT WINs). The kept 13 build profiles are the
+# cluster/anchored/MIB stacks that structurally dominate big cases + a few
+# aspect/free winners. REGENERATE after any _PROFILES edit OR any constructive.exe
+# rebuild: rf_score_model.py's M42 section prints the recommended set.
+#
+# M74 (2026-07-30) REGENERATED under the shipping configuration. The previous set
+# came from a 2026-07-10 audit_cache.pkl built on the PRE-M71 binary at REFINE=12;
+# M71 moved every position, so that redundancy tally was stale. Still 22 indices
+# and still all-win at T=100, but the MEMBERSHIP moved a lot ({1,3,6,18,20} out,
+# {8,12,13,21,40} in). Model: local RF=1.0 1.2935, bit-identical to the M41
+# post-swap baseline; projected real gain +2.88% @M=11.
+_BIG_REDUNDANT_IDX = frozenset({0, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                21, 24, 28, 29, 30, 31, 32, 33, 40})
 
 # M45 (2026-07-02): per-band pool tiers — the M42 redundancy generalized from
 # CUMULATIVE ("wins no n>T case") to BAND-scoped ("wins no lo<n<=hi case"), which
@@ -447,26 +452,43 @@ _BIG_REDUNDANT_IDX = frozenset({0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 16, 18,
 #   tier-4 _M45_LOWCORE_DROP: applied only when detected cores <= _M45_CORES_MAX;
 #     on high-core machines these bands are max-setter-bound (gain exactly 0, see
 #     the 2026-07-02 3rd-tier verification) so the tier stays off = zero risk.
+# M74 (2026-07-30): all four sets REGENERATED on audit_cache_ship.pkl, i.e. under
+# the M71 knobs AND the shipping K=4/K=8 REFINE overlay. M67-F correction B
+# (M67F_REPORT.md:249-258) had flagged that the old sets were fitted at REFINE=12
+# and that the strict gate no longer held in the shipped configuration; on top of
+# that the cache predated M71 entirely. Every band re-passes strict all-equal, and
+# the mid cut got BIGGER (9 -> 15 profiles) at zero quality cost: local RF=1.0 is
+# 1.2935 for shipped / +uni / +lowcore alike, while the mid-band wall @12c drops
+# 2.21 -> 1.44s (-35%, vs -20% for the old 9-profile set).
+# Derived on the SECOND ship cache, i.e. under the retuned mid K=6 (the first pass
+# ran at K=8 and returned #5 where this one returns #10) -- the pool sets and the
+# REFINE band are mutually dependent, so the chain was iterated to a fixpoint.
+#
+# M74 ALSO DEMOTED THIS TIER FROM UNIVERSAL TO CORES-GATED (_M45_MID_CORES_MAX
+# below). The strict in-sample gate still holds exactly, but the M67-D/M55/M72
+# doctrine says in-sample equality does not transfer -- and here it measurably
+# does not: on the 80 held-out (60,100] cases, running the FULL mid pool scores
+# -0.702% (30 better / 0 worse) against this cut. Meanwhile the cut buys almost
+# nothing on a high-core grader: at 48 cores the mid band is max-setter-bound
+# (c* max 15.2), its wall only moves 1.32 -> 1.30s, and rf_score_model projects
+# +0.00% there. Paying 0.7% out-of-sample quality for a +0.00% wall is exactly
+# the mistake tier-5 was introduced to undo on the M42 layer.
 _M45_BAND_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
-    # mid cases: 9 profiles win nothing in n=61..100 (40 cases, kept 25); several
-    # (#2/#13/#17/#18) are n>110 winners — band scoping is what frees them here.
-    # sum-bound at any cores -> universal. Projected -1.2..-1.5% real @ M=11.
-    (60, 100, frozenset({2, 8, 13, 17, 18, 20, 28, 30, 33})),
+    # mid cases: 15 profiles win nothing in n=61..100 (40 cases, kept 20).
+    # Sum-bound (so worth cutting) only BELOW _M45_MID_CORES_MAX.
+    (60, 100, frozenset({1, 6, 8, 10, 12, 14, 18, 21, 23, 24, 28, 30, 31, 32, 33})),
 )
 _M45_LOWCORE_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
     # small band: deep floor at 12c (gain ~0) but sum-bound and scoring at low
-    # cores; drops 21/35, kept 14 (strict-equal over its 20 cases; M51 adds #40).
-    (40, 60, frozenset({2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14,
-                        24, 25, 26, 27, 29, 31, 32, 33, 40})),
-    # (100,110]: kept 8 — #17 sets some walls even at 12c, but diversity floor
-    # + high weight keeps this tier-4 (conservative). #19 stays (band winner);
-    # M51: #18 moved into _BIG_REDUNDANT_IDX (whole n>100), #40 wins only in
-    # (110,inf] so it drops here at low cores.
-    (100, 110, frozenset({2, 13, 17, 21, 40})),
-    # (110,inf): D4 — #19 is the case-90 winner (exact tie with #21, proxy
-    # 2.766374981 / cost 1.330092901 both) and is KEPT; only true non-winners go.
-    # M51: #40 (case-99 winner) is KEPT here.
-    (110, 10**9, frozenset({8, 12, 26, 27})),
+    # cores; drops 24/35, kept 11 (strict-equal over its 20 cases).
+    # Band wall @4c 4.57 -> 1.69s.
+    (40, 60, frozenset({1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 17,
+                        20, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 40})),
+    # (100,110]: kept 8 — diversity floor + high weight keep this tier-4
+    # (conservative); band wall @4c 4.70 -> 2.89s.
+    (100, 110, frozenset({3, 6, 19, 23, 26})),
+    # (110,inf): kept 7 — only true non-winners go; band wall @4c 5.37 -> 2.83s.
+    (110, 10**9, frozenset({1, 2, 17, 18, 20, 27})),
 )
 # tier-4 activation: at 8 detected cores the tier still adds ~-2.2% real @ M=11
 # (some walls are sum-bound there) and the strict gate makes it weakly winning at
@@ -474,6 +496,19 @@ _M45_LOWCORE_DROP: Tuple[Tuple[int, int, frozenset], ...] = (
 # larger. Above 8 the increment (~-0.9% @12c) is not worth the kept-8 diversity
 # squeeze on the high-weight (100,110] band.
 _M45_CORES_MAX = 8
+
+# M74 tier-3 activation (NEW): the mid-band cut fires only at or below this many
+# detected cores. Threshold from the measured crossover c* = sum_i/max_i on the
+# (60,100] band: p50 13.4 / MAX 15.2, i.e. from ~16 cores up every mid case is
+# max-setter-bound and removing cheap profiles cannot shorten the wall (measured:
+# 1.32 -> 1.30s at 48c, +0.00% projected). Below it the band is sum-bound and the
+# cut is worth real time (@12c 2.21 -> 1.44s, @8c 3.32 -> 2.15s, @4c 6.64 -> 4.29s).
+# 16 rather than 15.2 exactly because detected cores OVER-estimate effective ones
+# (this 16-logical box has ~10 effective), so a box that reports 16 is still
+# sum-bound and should keep cutting. Direction of mis-detection: _effective_cores()
+# maps unknown -> 9999, so an undetectable box gets the tier OFF = the full pool =
+# the quality-safe side, matching tier-4's fail-open convention.
+_M45_MID_CORES_MAX = 16
 
 # M67-F tier-5 (2026-07-26): the MIRROR of tier-4 — at HIGH core counts the M42
 # big-redundant cut stops buying wall and only costs quality. M67-E measured that
@@ -536,8 +571,21 @@ _M67F_CORES_MIN = 40
 #     tier-4 doctrine) dominates K=8 there: @4c -2.0~-3.5% at EVERY M, @8c wins
 #     for M<=14 (worst @8c M=20 +0.05%); band wall -45%, sum -46% (sum-bound).
 # Ship = two tiers: universal mid K=8 below, low-core mid K=4 override next.
+# M74 (2026-07-30) re-swept K in [4,12] on both bands under M71 + the regenerated
+# pool (m49_refine_probe.py variant 4,6,8,10 big|mid). Two changes of substance:
+#   - big K=4 is now a quality WIN, not a quality trade: weighted local delta
+#     -0.056% (movers 87 and 94, BOTH better; M49 measured +0.027% with case 85
+#     the only mover). Band wall @12c -52.0%, 20/20 median-independent WINs, and
+#     every projected cell over M in [6,20] x cores in {4,8,12,16} gains. M71
+#     changed the sign: truncating REFINE now helps the heavy band.
+#   - mid 8 -> 6. K=6 WEAKLY DOMINATES K=8 at every projected cell (e.g. @4c M=6
+#     -2.13% vs -1.63%, @12c M=11 -0.10% both) at the same local quality
+#     (+0.019% vs +0.018%, a 1e-6 difference) because it cuts more wall
+#     (-31.0% vs -25.0% @12c). Worst cell +0.02%, inside the +0.03% M50 bar.
+#     K=4 ungated still fails the mid bar (+0.049% local, worst cell +0.05%) and
+#     so stays the low-core tier below.
 _M49_REFINE_BAND: Tuple[Tuple[int, int, str], ...] = (
-    (60, 100, "8"),                              # M50 universal tier
+    (60, 100, "6"),                              # M50 universal tier (M74: 8 -> 6)
     (100, 10**9, "4"),                           # M49
 )
 # M50 low-core tier: replaces the universal band value when _effective_cores()
@@ -681,7 +729,11 @@ def _pool_indices(block_count: int) -> List[int]:
     n_swap = int(os.environ.get("ICCAD_ADAPTIVE_N", "0"))
     n_free = int(os.environ.get("ICCAD_ADAPTIVE_FREE_N", "100"))
     drop_band: frozenset = frozenset()
-    if not restore and os.environ.get("ICCAD_ADAPTIVE_BAND", "1") != "0":
+    # M74: tier-3 is cores-gated now (see _M45_MID_CORES_MAX). Above the
+    # threshold the mid band is max-setter-bound, so the cut buys ~0 wall while
+    # still costing out-of-sample quality (-0.702% on 80 held-out mid cases).
+    if (not restore and os.environ.get("ICCAD_ADAPTIVE_BAND", "1") != "0"
+            and _effective_cores() <= _M45_MID_CORES_MAX):
         for lo, hi, d in _M45_BAND_DROP:                         # M45 tier-3
             if lo < block_count <= hi:
                 drop_band = d

@@ -31,6 +31,7 @@ model mode — RF projection (needs dep cache):
   matrix vs no-LP, the strict weak-win search and a per-case table.
 """
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -245,12 +246,21 @@ OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
 
 def load_walls():
     """audit-cache wall model, mirroring the deployed pool at each cores."""
-    profiles = list(oc._PROFILES) + [OM16]
+    # M74: match profile_audit.py's key exactly -- shipped prefix (M72 appended
+    # four gated-off profiles), plus the overlay mode and the binary md5. NOTE
+    # this probe is RED-archive (M54 in-window LP): its published numbers were
+    # measured pre-M71, so a green signature here does not make them current.
+    _exe = _DIR / "constructive.exe"
+    profiles = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN",
+                                          len(oc._PROFILES))]) + [OM16]
+    sig = repr((repr(profiles),
+                repr(("base", repr(sorted(oc._m71_env().items())))),
+                hashlib.md5(_exe.read_bytes()).hexdigest()))
     c = pickle.load(open(_DIR / "audit_cache.pkl", "rb"))
-    assert c.get("profiles") == repr(profiles), \
+    assert c.get("profiles") == sig, \
         "audit_cache signature != current pool -> re-run profile_audit.py"
     data = c["data"]
-    n_live = len(oc._PROFILES)
+    n_live = len(profiles) - 1
     swap = {k for k in range(n_live)
             if "ICCAD_ORDER_SWAP" in profiles[k]
             or "ICCAD_ORDER_MOVE" in profiles[k]}
@@ -260,9 +270,10 @@ def load_walls():
         n = l3.CASES[ci]["n"]
         p = [k for k in range(n_live)
              if k not in swap and not (n > 100 and k in big)]
-        for lo, hi, D in oc._M45_BAND_DROP:
-            if lo < n <= hi:
-                p = [k for k in p if k not in D]
+        if cores <= oc._M45_MID_CORES_MAX:        # M74: tier-3 is cores-gated
+            for lo, hi, D in oc._M45_BAND_DROP:
+                if lo < n <= hi:
+                    p = [k for k in p if k not in D]
         if cores <= oc._M45_CORES_MAX:
             for lo, hi, D in oc._M45_LOWCORE_DROP:
                 if lo < n <= hi:

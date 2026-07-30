@@ -111,12 +111,26 @@ def main() -> int:
         print(f"V1 tier-5 inert @ {tag:>5}: "
               f"{'PASS' if not bad else 'FAIL ' + str(bad[:6])}{extra}")
         fails += bool(bad)
-    # and the switch must also neutralise it ABOVE the threshold
+    # and the switch must also neutralise it ABOVE the threshold.
+    # M74: this used to compare 48c vs 12c and demand equality on every n. That
+    # premise died when tier-3 became cores-gated (_M45_MID_CORES_MAX): with
+    # tier-5 off, 48c and 12c are now LEGITIMATELY different on the mid band,
+    # because tier-3 fires at 12c and not at 48c. Split the claim in two so it
+    # still isolates tier-5:
+    #   (a) two core counts BOTH above the tier-3 threshold must agree on every
+    #       n -- nothing else varies up there, so any diff is tier-5 leaking;
+    #   (b) n>100, where tier-3 never applies, must still match the 12c pool.
+    mid_max = live._M45_MID_CORES_MAX
     a = _sweep(live, 48, {"ICCAD_M67F_TIER5": "0"})
-    b = _sweep(live, 12, {"ICCAD_M67F_TIER5": "0"})
+    b = _sweep(live, mid_max + 1, {"ICCAD_M67F_TIER5": "0"})
+    c12 = _sweep(live, 12, {"ICCAD_M67F_TIER5": "0"})
     bad = [n for n in NS if a[n] != b[n]]
-    print(f"V1 kill-switch @48c   : {'PASS' if not bad else 'FAIL ' + str(bad[:6])}")
-    fails += bool(bad)
+    bad_big = [n for n in NS if n > 100 and a[n] != c12[n]]
+    print(f"V1 kill-switch @48c   : "
+          f"vs {mid_max + 1}c (tier-3 off both sides) "
+          f"{'PASS' if not bad else 'FAIL ' + str(bad[:6])}; "
+          f"n>100 vs 12c {'PASS' if not bad_big else 'FAIL ' + str(bad_big[:6])}")
+    fails += bool(bad) + bool(bad_big)
 
     # ---- V2: at >=32c == restore knob on n>100, shipped on n<=100 -----------
     for cores in (40, 48, 96):

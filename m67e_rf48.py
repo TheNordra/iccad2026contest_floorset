@@ -115,7 +115,10 @@ OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
 _SHIPPED = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
 PROFILES = _SHIPPED + [OM16]
 N_LIVE = len(_SHIPPED)
-FPR = repr(PROFILES)
+# M74: signature pins the binary and the overlay mode too (see profile_audit.py).
+_MODE_KEY = repr(("base", repr(sorted(oc._m71_env().items()))))
+_EXE_MD5 = hashlib.md5((_DIR / "constructive.exe").read_bytes()).hexdigest()
+FPR = repr((repr(PROFILES), _MODE_KEY, _EXE_MD5))
 LIVE = list(range(N_LIVE))
 SWAPSET = {k for k in LIVE if "ICCAD_ORDER_SWAP" in PROFILES[k]
            or "ICCAD_ORDER_MOVE" in PROFILES[k]}
@@ -268,9 +271,10 @@ def pool_shipped(ci, cores=CORES_BETA):
     m46_pool; tier-4 / M50 low-core only fire at cores <= _M45_CORES_MAX)."""
     n = NOF[ci]
     pool = [k for k in LIVE if k not in SWAPSET and not (n > 100 and k in BIGSET)]
-    for lo, hi, d in oc._M45_BAND_DROP:
-        if lo < n <= hi:
-            pool = [k for k in pool if k not in d]
+    if cores <= oc._M45_MID_CORES_MAX:            # M74: tier-3 is cores-gated
+        for lo, hi, d in oc._M45_BAND_DROP:
+            if lo < n <= hi:
+                pool = [k for k in pool if k not in d]
     if cores <= oc._M45_CORES_MAX:
         for lo, hi, d in oc._M45_LOWCORE_DROP:
             if lo < n <= hi:

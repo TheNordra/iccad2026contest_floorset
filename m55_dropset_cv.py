@@ -23,6 +23,7 @@ Artifacts: m55_cv_cache.pkl (PM + lazy-cost persistence), results_M55_cv.json.
 Never shipped; touches no shipped file.
 """
 import argparse
+import hashlib
 import json
 import math
 import pickle
@@ -52,7 +53,10 @@ OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
 _SHIPPED = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
 PROFILES = _SHIPPED + [OM16]
 N_LIVE = len(_SHIPPED)
-FPR = repr(PROFILES)
+# M74: signature pins the binary and the overlay mode too (see profile_audit.py).
+_MODE_KEY = repr(("base", repr(sorted(oc._m71_env().items()))))
+_EXE_MD5 = hashlib.md5((_DIR / "constructive.exe").read_bytes()).hexdigest()
+FPR = repr((repr(PROFILES), _MODE_KEY, _EXE_MD5))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--seed", type=int, default=None,

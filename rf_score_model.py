@@ -21,7 +21,7 @@ total reproduces the official 1.3269 (sanity gate). It then:
 Run (after profile_audit.py has refreshed the cache for the current pool):
   python -u rf_score_model.py
 """
-import os, sys, math, pickle
+import os, sys, math, pickle, hashlib
 from pathlib import Path
 _DIR = Path(__file__).parent
 sys.path.insert(0, str(_DIR / "iccad2026contest")); sys.path.insert(0, str(_DIR))
@@ -34,7 +34,27 @@ RH = 1.4
 CORES = 12                       # physical cores -> wrapper wall = max(max_i, sum_i/CORES)
 GAMMA = 0.3                      # official runtime damping
 FLOOR = 0.7                      # official RF floor
-CACHE = _DIR / "audit_cache.pkl"
+# M74: the drop sets MUST be derived from positions produced under the SHIPPING
+# REFINE overlay (K=4 for n>100, K=8 for 60<n<=100), not under the K=12
+# counterfactual -- M67-F correction B (M67F_REPORT.md:249-258) showed the M45
+# strict selection-preserving gate had never been re-proved in that
+# configuration and already fails on case 64. audit_cache_ship.pkl is built by
+# `python profile_audit.py ship`.
+CACHE = _DIR / "audit_cache_ship.pkl"
+# M74: ICCAD_REGEN=1 downgrades the three shipped-constant drift asserts to
+# warnings so ONE run can print all three recommended sets. Without it the first
+# assert (_BIG_REDUNDANT_IDX) aborts before the M45 section ever runs. Default
+# (gate) behaviour is unchanged -> regression_suite.py is unaffected.
+REGEN = os.environ.get("ICCAD_REGEN", "0") == "1"
+
+
+def drift(ok, msg):
+    if ok:
+        return
+    if REGEN:
+        print(f"REGEN drift (assert downgraded): {msg}", flush=True)
+    else:
+        raise AssertionError(msg)
 
 # Must match profile_audit.py's cache key exactly (its PROFILES = live + OM16).
 OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
@@ -43,7 +63,16 @@ OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
 _SHIPPED = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
 PROFILES = _SHIPPED + [OM16]
 N_LIVE = len(_SHIPPED)           # OM16 (index N_LIVE) is a stand-by, NOT in the live pool
-FPR = repr(PROFILES)
+# M74: signature pins the binary and the overlay the positions were produced
+# under (see profile_audit.py). "ship" additionally pins the REFINE band
+# constants, so retuning K invalidates this cache instead of silently reusing
+# positions from the old K.
+_MODE_KEY = repr(("ship", repr(sorted(oc._m71_env().items())),
+                  repr(sorted(oc._M49_REFINE_BAND)),
+                  repr(sorted(oc._M50_REFINE_LOWCORE)),
+                  oc._M45_CORES_MAX))
+_EXE_MD5 = hashlib.md5((_DIR / "constructive.exe").read_bytes()).hexdigest()
+FPR = repr((repr(PROFILES), _MODE_KEY, _EXE_MD5))
 
 
 def pname(prof):
@@ -167,7 +196,12 @@ def rf_total(pool_fn, M, cores=CORES):
 # ── report ──────────────────────────────────────────────────────────────────
 print(f"pool: {N_LIVE} live profiles + OM16 stand-by   cores={CORES}")
 loc_full = local_total(full)
-print(f"SANITY: full-pool RF=1.0 total = {loc_full:.4f}  (official M37 = 1.3269)\n")
+# M74: the cache now carries the SHIPPING REFINE overlay, so this "full pool"
+# is 41 profiles at K=4/K=8 -- NOT the ICCAD_ADAPTIVE_POOL=0 configuration (which
+# also restores full REFINE) and NOT the pre-M71 1.3269. No official anchor
+# matches it by construction; it is a stability reference across regen runs.
+print(f"SANITY: full-pool(ship-overlay) RF=1.0 total = {loc_full:.4f}  "
+      f"(pre-M71 K=12 reference was 1.3269)\n")
 
 big = [c_ for c_ in CASES if c_["n"] >= 110]
 bigw = sum(c_["w"] for c_ in big) / totW
@@ -364,11 +398,16 @@ print("\n" + "=" * 64)
 print("M45: per-band tiers - band-scoped redundancy, strict gate")
 print("=" * 64)
 
-BIGSET = set(oc._BIG_REDUNDANT_IDX)
 R100r, _ = refine(100)
-assert set(R100r) == BIGSET, (
-    f"shipped _BIG_REDUNDANT_IDX drift: model {sorted(R100r)} vs {sorted(BIGSET)}")
-print(f"shipped-chain check: refine(100) == _BIG_REDUNDANT_IDX ({len(BIGSET)} idx) OK")
+drift(set(R100r) == set(oc._BIG_REDUNDANT_IDX),
+      f"shipped _BIG_REDUNDANT_IDX drift: model {sorted(R100r)} "
+      f"vs {sorted(oc._BIG_REDUNDANT_IDX)}")
+# M74: under REGEN the band tiers must sit on top of the NEW M41+M42 chain --
+# deriving them against the stale shipped BIGSET would fit tier-3/tier-4 to a
+# pool that no longer exists.
+BIGSET = set(R100r) if REGEN else set(oc._BIG_REDUNDANT_IDX)
+print(f"shipped-chain check: refine(100) == _BIG_REDUNDANT_IDX ({len(BIGSET)} idx) "
+      f"{'[REGEN: using model set as the M45 baseline]' if REGEN else 'OK'}")
 
 
 def shipped_pool(ci):
@@ -552,19 +591,24 @@ print("M46: max-setter speedup sensitivity (uniform / FREE-stack alpha)")
 print("=" * 64)
 
 # shipped-constant drift checks (mirrors the M42 assert)
-assert coarse_mid == set(oc._M45_BAND_DROP[0][2]), "tier-3 drift vs shipped"
+# M74: under ICCAD_REGEN=1 these report instead of aborting, and everything
+# below (the M46 sensitivity section) still reads the STALE oc._M45_* constants
+# -- re-run without REGEN after pasting to get the real M46 numbers.
+drift(coarse_mid == set(oc._M45_BAND_DROP[0][2]), "tier-3 drift vs shipped")
 for lo, hi, d in oc._M45_LOWCORE_DROP:
-    assert set(d) == set(BAND_R.get((lo, hi), [])), f"tier-4 drift ({lo},{hi}]"
-print("shipped-chain check: M45 tier-3/tier-4 constants match model OK")
+    drift(set(d) == set(BAND_R.get((lo, hi), [])), f"tier-4 drift ({lo},{hi}]")
+print("shipped-chain check: M45 tier-3/tier-4 constants match model "
+      f"{'[REGEN: drift downgraded]' if REGEN else 'OK'}")
 
 
 def m46_pool(ci, cores):
     """The ACTUAL shipped pool at a given cores count (tier-4 auto-gates)."""
     n = CASES[ci]["n"]
     pool = shipped_pool(ci)
-    for lo, hi, D in oc._M45_BAND_DROP:
-        if lo < n <= hi:
-            pool = [k for k in pool if k not in D]
+    if cores <= oc._M45_MID_CORES_MAX:            # M74: tier-3 is cores-gated
+        for lo, hi, D in oc._M45_BAND_DROP:
+            if lo < n <= hi:
+                pool = [k for k in pool if k not in D]
     if cores <= oc._M45_CORES_MAX:
         for lo, hi, D in oc._M45_LOWCORE_DROP:
             if lo < n <= hi:
@@ -590,11 +634,15 @@ def rf46(M, cores, af):
 
 
 ONE = lambda k: 1.0
-# sanity: alpha=1 must reproduce the M45 projections at matching cores
+# sanity: alpha=1 must reproduce the M45 projections at matching cores.
+# M74: m46_pool() reads the SHIPPED oc._M45_* constants while V_uni/V_low are the
+# model's freshly derived sets, so under ICCAD_REGEN=1 (constants not pasted yet)
+# this necessarily disagrees -> same drift() downgrade as the other three.
 for cores_, ref in ((12, V_uni), (4, V_low)):
     a, b = rf46(11, cores_, ONE), rf_total(ref, 11, cores_)
-    assert abs(a - b) < 1e-9, f"alpha=1 sanity failed @cores={cores_}: {a} vs {b}"
-print("sanity: alpha=1.0 reproduces shipped projections @12c/@4c OK")
+    drift(abs(a - b) < 1e-9, f"alpha=1 sanity failed @cores={cores_}: {a} vs {b}")
+print("sanity: alpha=1.0 reproduces shipped projections @12c/@4c "
+      f"{'[REGEN: drift downgraded]' if REGEN else 'OK'}")
 
 # max-setter record (regen after any exe rebuild)
 from collections import Counter

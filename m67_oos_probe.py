@@ -94,8 +94,20 @@ def _sig(args):
     """Solver identity only. Sample knobs (--per-n/--heavy-per-n/--workers) stay
     OUT: the sample is prefix-stable in K and cases are keyed individually, so a
     wider sample reuses everything already solved."""
+    # M74: the cached records are whole opt.solve() outputs, so EVERY constant
+    # that steers the shipped portfolio is part of the solver identity. The old
+    # key covered only the binary and _PROFILES, so regenerating the adaptive
+    # drop sets or retuning the REFINE band would have silently reused positions
+    # from the previous constants (the same failure mode audit_cache.pkl had).
     return repr(("m67d", VERSION, SEED, _exe_md5(), len(oc._PROFILES),
-                 repr(oc._PROFILES)))
+                 repr(oc._PROFILES),
+                 sorted(oc._BIG_REDUNDANT_IDX),
+                 repr(sorted(oc._M45_BAND_DROP)),
+                 repr(sorted(oc._M45_LOWCORE_DROP)),
+                 oc._M45_CORES_MAX, oc._M67F_CORES_MIN,
+                 repr(sorted(oc._M49_REFINE_BAND)),
+                 repr(sorted(oc._M50_REFINE_LOWCORE)),
+                 repr(sorted(oc._M71_ENV.items()))))
 
 
 # --------------------------------------------------------------------------- #
@@ -402,12 +414,17 @@ def mode_gate0(args):
     print(f"  stripped from env at import: {_STRIPPED or '(none)'}")
     left = sorted(k for k in os.environ if k.startswith("ICCAD_"))
     chk("no ICCAD_* remains", not left, str(left))
-    chk("_PROFILES == 41 (shipped pool, not L1)", len(oc._PROFILES) == 41,
-        f"got {len(oc._PROFILES)}")
+    # M74: anchor on the SHIPPED prefix, not on len(_PROFILES). M72 appended the
+    # four gated-off _M55_EXTRA profiles (41 -> 45), which made the old literal
+    # `== 41` report a spurious FAIL. What this actually guards is "the shipped
+    # pool is the 41-profile one, not the 84-profile L1 pool".
+    chk("_M55_BASE_LEN == 41 (shipped pool, not L1)", oc._M55_BASE_LEN == 41,
+        f"got {oc._M55_BASE_LEN} (len(_PROFILES)={len(oc._PROFILES)})")
     for n in (30, 80, 120):
         print(f"    n={n:3d}  pool={len(oc._pool_indices(n)):2d}  "
               f"band_env={oc._band_env(n) or '{}'}")
-    chk("adaptive pool active on n=120", len(oc._pool_indices(120)) < 41)
+    chk("adaptive pool active on n=120",
+        len(oc._pool_indices(120)) < oc._M55_BASE_LEN)
     chk("constructive binary present", Path(oc._BIN).exists(), f"md5 {_exe_md5()}")
 
     print()
@@ -919,10 +936,18 @@ def _theta_gate_a(arm):
     print(f"  arm={arm}  env={_ARMS[arm]}")
     print(f"    pool  off {off}\n          on  {on}")
     print(f"    band  off {off_be}\n          on  {on_be}")
-    chk("knob-off pool == shipped (35/35/26/13/13)",
-        off == {30: 35, 50: 35, 80: 26, 105: 13, 120: 13}, str(off))
-    chk("knob-off REFINE band == shipped (mid 8, big 4)",
-        off_be == {80: {"ICCAD_REFINE_ITERS": "8"},
+    # M74: mid pool 26 -> 20 (tier-3 regenerated, 9 -> 15 dropped) and mid REFINE
+    # K 8 -> 6 (K=6 weakly dominates K=8 at every projected cell). tier-3 is also
+    # cores-gated now, so the expected mid size depends on THIS box: 20 where the
+    # tier fires (<= _M45_MID_CORES_MAX), 35 where it does not (e.g. the 48c
+    # grader, which is the whole point of the gate).
+    _t3_on = oc._effective_cores() <= oc._M45_MID_CORES_MAX
+    _mid_exp = 20 if _t3_on else 35
+    chk(f"knob-off pool == shipped (35/35/{_mid_exp}/13/13, tier-3 "
+        f"{'ON' if _t3_on else 'OFF'} at {oc._effective_cores()} cores)",
+        off == {30: 35, 50: 35, 80: _mid_exp, 105: 13, 120: 13}, str(off))
+    chk("knob-off REFINE band == shipped (mid 6, big 4)",
+        off_be == {80: {"ICCAD_REFINE_ITERS": "6"},
                    120: {"ICCAD_REFINE_ITERS": "4"}}, str(off_be))
     if arm == "pool":
         chk("restore pool == 35 on every band (41 - 6 swap)",
@@ -931,14 +956,17 @@ def _theta_gate_a(arm):
         chk("restore adds exactly the two drop sets @n=120",
             set(oc._pool_indices(120)) - set(_shipped_pool(120))
             == set(oc._BIG_REDUNDANT_IDX))
-        # mid band: the layer the (60,100] top-up measures is M45 tier-3 alone
+        # mid band: the layer the (60,100] top-up measures is M45 tier-3 alone.
+        # M74: tier-3 is cores-gated, so on a box above _M45_MID_CORES_MAX it is
+        # already off and `restore` has nothing left to add there.
         mid_drop = set()
-        for _lo, _hi, _d in oc._M45_BAND_DROP:
-            if _lo < 80 <= _hi:
-                mid_drop = set(_d)
+        if oc._effective_cores() <= oc._M45_MID_CORES_MAX:
+            for _lo, _hi, _d in oc._M45_BAND_DROP:
+                if _lo < 80 <= _hi:
+                    mid_drop = set(_d)
         chk("restore adds exactly _M45_BAND_DROP @n=80",
             set(oc._pool_indices(80)) - set(_shipped_pool(80)) == mid_drop,
-            f"(tier-3 = {sorted(mid_drop)})")
+            f"(tier-3 = {sorted(mid_drop) or 'off at this core count'})")
     elif arm in ("m55", "m55x"):
         # The tier must add exactly its own 4 indices, on every band, and must not
         # disturb the M41/M42/M45 layers or the REFINE overlay.

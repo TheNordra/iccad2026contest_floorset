@@ -31,6 +31,7 @@ m55_cv_cache.pkl when fresh), results_M56_percase.json.
 Never shipped; touches no shipped file.
 """
 import argparse
+import hashlib
 import json
 import math
 import pickle
@@ -63,7 +64,10 @@ OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
 _SHIPPED = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
 PROFILES = _SHIPPED + [OM16]
 N_LIVE = len(_SHIPPED)
-FPR = repr(PROFILES)
+# M74: signature pins the binary and the overlay mode too (see profile_audit.py).
+_MODE_KEY = repr(("base", repr(sorted(oc._m71_env().items()))))
+_EXE_MD5 = hashlib.md5((_DIR / "constructive.exe").read_bytes()).hexdigest()
+FPR = repr((repr(PROFILES), _MODE_KEY, _EXE_MD5))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("mode", choices=["oracle", "cv"])
@@ -226,9 +230,10 @@ def chain_pool(ci, cores):
     mirrors rf_score_model.m46_pool / wrapper _pool_indices)."""
     n = CASES[ci]["n"]
     pool = [k for k in live if k not in SWAPset and not (n > 100 and k in BIGSET)]
-    for lo, hi, D in oc._M45_BAND_DROP:
-        if lo < n <= hi:
-            pool = [k for k in pool if k not in D]
+    if cores <= oc._M45_MID_CORES_MAX:            # M74: tier-3 is cores-gated
+        for lo, hi, D in oc._M45_BAND_DROP:
+            if lo < n <= hi:
+                pool = [k for k in pool if k not in D]
     if cores <= oc._M45_CORES_MAX:
         for lo, hi, D in oc._M45_LOWCORE_DROP:
             if lo < n <= hi:

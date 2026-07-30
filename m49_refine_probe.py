@@ -32,7 +32,7 @@ wrapper band env, zero quality risk (M45/M46 class). Path B = M41-precedent
 bar: @12c M=11 real gain >= 1%, positive over M in [6,12], weighted local
 loss <= +0.10%. Neither -> NO-GO, data to the dead-end ledger.
 """
-import os, sys, math, time, pickle, re, subprocess, concurrent.futures
+import os, sys, math, time, pickle, re, hashlib, subprocess, concurrent.futures
 from pathlib import Path
 from collections import Counter, defaultdict
 
@@ -63,7 +63,12 @@ OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
 _SHIPPED = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
 PROFILES = _SHIPPED + [OM16]
 N_LIVE = len(_SHIPPED)
-FPR = repr(PROFILES)
+# M74: the signature also pins the binary and the env overlay the cached
+# positions were produced under (see profile_audit.py). This probe's control
+# arm is REFINE=12 + the M71 knobs, i.e. the "base" cache.
+_MODE_KEY = repr(("base", repr(sorted(oc._m71_env().items()))))
+_EXE_MD5 = hashlib.md5((_DIR / "constructive.exe").read_bytes()).hexdigest()
+FPR = repr((repr(PROFILES), _MODE_KEY, _EXE_MD5))
 SWAPSET = {k for k in range(N_LIVE) if "ICCAD_ORDER_SWAP" in PROFILES[k]
            or "ICCAD_ORDER_MOVE" in PROFILES[k]}
 BIGSET = set(oc._BIG_REDUNDANT_IDX)
@@ -104,9 +109,10 @@ def pool_at(ci, cores):
     n = CASES[ci]["n"]
     pool = [k for k in range(N_LIVE)
             if k not in SWAPSET and not (n > 100 and k in BIGSET)]
-    for lo, hi, d in oc._M45_BAND_DROP:
-        if lo < n <= hi:
-            pool = [k for k in pool if k not in d]
+    if cores <= oc._M45_MID_CORES_MAX:            # M74: tier-3 is cores-gated
+        for lo, hi, d in oc._M45_BAND_DROP:
+            if lo < n <= hi:
+                pool = [k for k in pool if k not in d]
     if cores <= oc._M45_CORES_MAX:
         for lo, hi, d in oc._M45_LOWCORE_DROP:
             if lo < n <= hi:
@@ -177,7 +183,12 @@ def cost_of(ps, ci, key):
 
 # ── subprocess runner ────────────────────────────────────────────────────────
 def run_case(exe, ci, k, extra_env):
-    env = dict(os.environ); env.update(PROFILES[k]); env.update(extra_env)
+    # M74: _m71_env() was missing here, so every K arm (control included) ran the
+    # pre-M71 placer -- the C++ knobs default OFF, so the gate stayed green while
+    # measuring the wrong binary behaviour. extra_env stays last: it carries
+    # ICCAD_REFINE_ITERS, which is the variable under test.
+    env = dict(os.environ); env.update(PROFILES[k])
+    env.update(oc._m71_env()); env.update(extra_env)
     t0 = time.perf_counter()
     r = subprocess.run([exe], input=CASES[ci]["txt"], capture_output=True,
                        text=True, env=env, timeout=300)
@@ -209,10 +220,17 @@ RT_FIX = re.compile(r"^RTRACE fixpoint f=(\d+) r=(\d+)")
 
 
 def mode_trace(band_tag):
+    # M74 CAVEAT: EXE46 (constructive_m46.exe, 2026-07-07) predates M71, so it
+    # has no ICCAD_CLUSTER_BND_* knobs and silently ignores the overlay -> its
+    # positions can no longer match the M71 cache and the position-vs-cache line
+    # below will report mismatches. trace is diagnostic only (not a gate, not in
+    # regression_suite); the K decision is made by `variant`, which runs the
+    # shipped exe. Rebuild an RTRACE-instrumented M71 exe before trusting trace.
     band = BAND_BIG if band_tag == "big" else BAND_MID
     jobs = [(ci, k) for ci in band for k in KEPT[ci]]
     print(f"TRACE band={band_tag}: {len(band)} cases x kept pool "
-          f"({len(jobs)} runs) on instrumented exe", flush=True)
+          f"({len(jobs)} runs) on instrumented exe "
+          f"[M74: EXE46 is pre-M71 -> mismatches expected]", flush=True)
     res = run_pool(EXE46, jobs, {"ICCAD_REFINE_TRACE": "1"}, "trace")
 
     mism = []

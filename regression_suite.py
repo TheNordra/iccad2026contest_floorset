@@ -7,7 +7,7 @@ Runs, in order, the pre-submission gates CLAUDE.md requires (Beta/Final §3):
                                           tier-3/4 drift, alpha=1 sanity);
                                           PASS = exit 0 + "RF MODEL DONE"
   m49big   m49_refine_probe.py variant 4 big   control K=12 vs cache EXACT 100%
-  m49mid8  m49_refine_probe.py variant 8 mid   + movers == pinned expectation
+  m49mid6  m49_refine_probe.py variant 6 mid   + movers == pinned expectation
   m49mid4  m49_refine_probe.py variant 4 mid   (mid4 has none pinned -> review)
   m47b     m47b_proxy_equiv.py            PASS = exit 0 + "PASS: N comparisons,
                                           mismatches=0" (script never exits
@@ -45,17 +45,21 @@ from pathlib import Path
 _DIR = Path(__file__).parent
 _CONDA_PY = Path(r"C:\Users\Nordra\.conda\envs\iccadv\python.exe")
 _PY_DEFAULT = str(_CONDA_PY if _CONDA_PY.exists() else Path(sys.executable))
-ALL_KEYS = ("m48", "rf", "m49big", "m49mid8", "m49mid4", "m47b", "tier5")
+ALL_KEYS = ("m48", "rf", "m49big", "m49mid6", "m49mid4", "m47b", "tier5")
 TAIL = 15
 
 # Pinned mover expectations for the m49 gates (case ids whose Path-B cost moves
-# vs the K=12 control). Sources: M49 ship (big K=4 -> case 85 only) and M50 ship
-# (mid K=8 -> the 6 predicted movers); both re-confirmed at the M51 re-gate.
-# mid K=4 was never pinned as a gate criterion (M50 measured ~11 movers) ->
-# None = report the list for human review, control-EXACT is still the hard gate.
+# vs the K=12 control).
+# M74 (2026-07-30) re-pinned: M71 moved every position and the M42/M45 pool sets
+# were regenerated, so the pre-M71 sets ({85} big, {49,54,61,64,68,70} mid @K=8)
+# no longer describe this tree. Measured on the final pool at the shipped K:
+#   big K=4 -> 87 (-1.92%) and 94 (-0.05%), BOTH improvements; weighted -0.056%
+#   mid K=6 -> 5 worse (48/54/61/62/72) + 2 better (51/67); weighted +0.017%
+# mid K=4 stays unpinned (it is the low-core tier, ~12 movers) -> None = report
+# the list for human review; control-EXACT remains the hard gate for it.
 EXPECT_MOVERS = {
-    (4, "big"): {85},
-    (8, "mid"): {49, 54, 61, 64, 68, 70},
+    (4, "big"): {87, 94},
+    (6, "mid"): {48, 51, 54, 61, 62, 67, 72},
     (4, "mid"): None,
 }
 
@@ -203,14 +207,14 @@ def build_runs(sel, separate_mid, py):
     if "m49big" in sel:
         runs.append(("m49big", [py, "-u", "m49_refine_probe.py", "variant", "4", "big"],
                      make_check_m49("big", [4])))
-    mid8, mid4 = "m49mid8" in sel, "m49mid4" in sel
-    if mid8 and mid4 and not separate_mid:
-        runs.append(("m49mid", [py, "-u", "m49_refine_probe.py", "variant", "8,4", "mid"],
-                     make_check_m49("mid", [8, 4])))
+    mid6, mid4 = "m49mid6" in sel, "m49mid4" in sel
+    if mid6 and mid4 and not separate_mid:
+        runs.append(("m49mid", [py, "-u", "m49_refine_probe.py", "variant", "6,4", "mid"],
+                     make_check_m49("mid", [6, 4])))
     else:
-        if mid8:
-            runs.append(("m49mid8", [py, "-u", "m49_refine_probe.py", "variant", "8", "mid"],
-                         make_check_m49("mid", [8])))
+        if mid6:
+            runs.append(("m49mid6", [py, "-u", "m49_refine_probe.py", "variant", "6", "mid"],
+                         make_check_m49("mid", [6])))
         if mid4:
             runs.append(("m49mid4", [py, "-u", "m49_refine_probe.py", "variant", "4", "mid"],
                          make_check_m49("mid", [4])))
