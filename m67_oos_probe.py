@@ -1207,7 +1207,9 @@ def _ab_report(args, arm):
            "rf_sign_pct": (num / den - 1) * 100,
            "rows": [{k: t[k] for k in ("n", "key", "S", "R", "tS", "tR")}
                     for t in pair]}
-    p = Path(f"results_M72_ab_{arm}.json")
+    # band in the filename: the same arm is measured on more than one window
+    # (heavy n>100 vs mid 60<n<=100) and a bare arm name silently overwrites.
+    p = Path(f"results_M72_ab_{arm}_{lo}_{hi if hi < 10 ** 9 else 'inf'}.json")
     json.dump(out, open(p, "w"), indent=1)
     print(f"\n  wrote {p}")
     return 0
