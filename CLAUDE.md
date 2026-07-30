@@ -11,8 +11,8 @@
 - 真天花板 **1.1079**（`fp_sol` verbatim），headroom 100% 在 quality（violation 已贏）。組員 1.0322 是 **label oracle**（hidden test 不適用）；legit 上限 ~1.62。
 - 但 **reconstruction 本身 RED**（M40）：X 結構無法從 connectivity 還原、Y 序需 label。⇒ 走「更好的 placer / 更聰明的 portfolio」而非「還原」。
 
-### 現況一句話（2026-07-29）
-- **local 最佳 = 1.3054（M71，已在 repo、regression_suite 7/7）**；**已上傳的 Beta tar 還是 1.3265（M67-G slim）** ⇒ 主要待辦 = 換件。
+### 現況一句話（2026-07-30）
+- **local 最佳 = 1.3054（M71）＝ 已上傳的 Beta tar**（M73 換件完成 2026-07-30，md5 `ba694bc6…`）⇒ **Beta 主線結案**，剩下都是 Final 議題。
 - 四大軸狀態：**quality 軸**——M26/M27/M40 三面天花板仍成立，但 **M71 證明 cluster 複合 item 的「候選集合／排序 key」是漏掉的軸**（−1.589% in-set / −4.04% OOS）；**RF 軸**——M41-M50 七槍 + tier-5 已 ship；**LP 軸**——offline GREEN（錨 1.2914）、in-window RED（M54/M62/組員 80cc719）；**ML 軸**——四種插入點全 RED（M52 生成、M56 selector、M68 seed、LP refinement）。
 - 送件 hardening（M43/M48/M67-A~G）全部完成，Linux binary 雙邊逐位驗過。
 
@@ -35,8 +35,9 @@
 - ⚠️ **已量化缺口**：M42/M45/M49/M50 的常數是舊 placer 的 `audit_cache.pkl` 推的，M71 下 adaptive stack 的 in-set 品質稅 **+0.128% → +0.967%**（1.3054 vs `ADAPTIVE_POOL=0` 的 **1.2929**）。regen 是目前桌上最大的已知肉（~0.84%）。
 
 ### 📦 送件狀態（Beta deadline **2026-07-31 17:00 GMT+8**）
-- **已上傳 = M67-G slim tar**（6 檔、md5 `06979081e47002a01d705cbfb9fc8f18`、Windows+Linux 雙邊逐位 `1.326473104916827`）。
-- **M71 與 tier-5 都還沒進 tar** ⇒ 換件是最高優先。換件鏈 = `regression_suite.py`（7 項）→ `make_submission.py all` → `m67c_make_linux_bundle.py` + GPU 機 WSL `verify_final_tar.sh` → 確認 Drive 可覆蓋重傳。
+- **✅ 已上傳 = M73 包（M71 + tier-5），2026-07-30 覆蓋成功**：6 檔、tar md5 `ba694bc6c4c40485b12146d6696dbf7b`（299257 B）、**`op_wrapper.py` md5 `c2e27c9993afd20b5c14934f6ceea8c3`**。⚠️ **tar md5 不可重現**（gzip 內嵌 mtime，每次 stage 都變）⇒ **身分一律看 op_wrapper md5**。
+- 驗證矩陣（Windows / GPU 機 WSL2 **雙邊逐位相同**）：預設 `1.305389893450635`（\|d\|=0、0 ULP warn）、`ICCAD_ADAPTIVE_CORES=48`（tier-5 觸發）`1.295547821428148`；兩輪皆 feasible 100/100、bundled-first OK（無 `constructive.exe` 產物）。48c 的 movers 恰 5 案 85/87/89/91/96、n≤100 逐位不變。
+- 換件鏈（已跑完一輪，Final 照走）= `regression_suite.py`（7 項）→ `make_submission.py all` → `m67c_make_linux_bundle.py` + GPU 機 WSL `verify_final_tar.sh`（現含 round 2b = `final48`）→ Drive 覆蓋。
 - 格式硬規則：entry 必名 `op_wrapper.py`、禁絕對路徑、禁多餘 optimizer .py、禁未使用的大 binary（違反可能 DQ）。Beta 環境 = 每隊獨佔 **48c ICELAKE + A100**、真 hidden cases。
 - alpha 成績：官方 **1.0286 = Rank 3**（送的是 M10 raw 1.4528 × cost-加權 RF 0.7081≈floor）；alpha 測資 = 本地 validation set 逐位相同。
 
@@ -68,11 +69,12 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 
 ## 下一步（依 ROI）
 
-1. **🚨 換件（deadline 前，唯一主線）**：把 M71 打包進 tar。**tier-5 的疑問已於 2026-07-30 解答**——在 M71 下它**不再是 no-op、而是大幅加分**（in-set heavy −0.742%、OOS +2.289% / 46-0）⇒ 候選 tar 比原先估的更好，照原鏈走（regression_suite 7 項 → `make_submission.py all` → WSL `verify_final_tar.sh` → Drive 覆蓋）。強制 `ICCAD_ADAPTIVE_CORES=48` 的那次 eval 現在**預期會與預設值不同**（會更好），不要再把「逐位相同」當通過條件。
-2. **adaptive stack 常數 regen**：M71 下 in-set 品質稅 +0.967% 的來源已定位——heavy band（M42 層）**−0.742%** 由 tier-5 在 ≥40 核自動回收；mid band（tier-3）**−0.157%**，但 OOS 回收 +0.528% < 48c wall 代價 +0.695% ⇒ 放寬仍 RED（見 ledger M67-F mid 條）。⇒ **regen 的價值主要在 Final、不在 Beta**；真要做：`profile_audit.py` → `rf_score_model.py` → `m49_refine_probe.py` 三 gate，⚠️ **必須在 REFINE K=4/K=8 overlay 下做**（M67-F 更正 B）。
-3. **M71 剩下四個 gated-off 旗標**（`CLUSTER_BND_CORNER` / `ANCHORED_BND_REPACK` / `CLUSTER_BND_PERMUTE` / `HPWL_SAFE_CLUSTER_SLIDE`）：⚠️ **不要照組員的做法包成 pool tier**（M72 已證 RED，見 ledger）。若要試，走 M71 的形式 = **全域 overlay**（加進 `_M71_ENV` 或作為 per-profile 變體），且**判準用 OOS 不用 local100**（M72 的教訓：in-sample 打平會藏住 1.4% OOS 差距）。
-4. **低優先**：M62 micro-cap skip gate（唯一還活著的 in-window LP 形態，前置 = pre-build 時間預測器 + 機速校準）。
-5. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它變便宜」的變體（組員 80cc719 已證死）。
+> **換件（M73）已於 2026-07-30 完成並上傳**，見「📦 送件狀態」。以下全是 Final 議題。
+
+1. **adaptive stack 常數 regen**：M71 下 in-set 品質稅 +0.967% 的來源已定位——heavy band（M42 層）**−0.742%** 由 tier-5 在 ≥40 核自動回收；mid band（tier-3）**−0.157%**，但 OOS 回收 +0.528% < 48c wall 代價 +0.695% ⇒ 放寬仍 RED（見 ledger M67-F mid 條）。⇒ **regen 的價值主要在 Final、不在 Beta**；真要做：`profile_audit.py` → `rf_score_model.py` → `m49_refine_probe.py` 三 gate，⚠️ **必須在 REFINE K=4/K=8 overlay 下做**（M67-F 更正 B）。
+2. **M71 剩下四個 gated-off 旗標**（`CLUSTER_BND_CORNER` / `ANCHORED_BND_REPACK` / `CLUSTER_BND_PERMUTE` / `HPWL_SAFE_CLUSTER_SLIDE`）：⚠️ **不要照組員的做法包成 pool tier**（M72 已證 RED，見 ledger）。若要試，走 M71 的形式 = **全域 overlay**（加進 `_M71_ENV` 或作為 per-profile 變體），且**判準用 OOS 不用 local100**（M72 的教訓：in-sample 打平會藏住 1.4% OOS 差距）。
+3. **低優先**：M62 micro-cap skip gate（唯一還活著的 in-window LP 形態，前置 = pre-build 時間預測器 + 機速校準）。
+4. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它變便宜」的變體（組員 80cc719 已證死）。
 
 ## 死路 ledger（勿重試）
 
@@ -83,7 +85,8 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 - **組員 M72 boundary-aware cluster tier ❌ RED for us（2026-07-30 我方獨立 OOS 驗證；`[[m72-tier-vs-m71-global]]`）**——組員 `b716753`+`2a0ac94`：**同一批六個 knob**，但包成 **4 隻額外 profile**（`ICCAD_M55_POOL` gate）而非 M71 的全域 overlay，動機 = 讓被 M71 弄壞的 17 案「逃生」到無 knob 的 profile（他們的 2-way per-case oracle 1.299157）。其 constructive.cpp = 我們的 + 一個 BOM ⇒ 無需重編。已移植進 repo（預設 off、off-path 七 regime × n=1..130 逐一等於 HEAD）**並修掉他們一個漏洞**：他們的 gate 只在 loop 內檢查 ⇒ `ADAPTIVE_POOL=0` 路徑會漏進那 4 隻（污染離線錨／M53 L1-L3／probe 自己的 `full` 端點）；我們在 early-return 前就讀 gate。**M67-F 同一批 80 案 held-out n>100**：pre-M71 1.659884 → **M71 1.595348** → 他們的 M72 **1.618303**（逐位重現他們回報值 ⇒ 量測本身沒問題，但**錨的是 knob-free 的 M67-G，我們早就不是了**）⇒ **M72 比我們的 M71 差 1.418%**（17 好 / 40 壞）。**tier 疊在 M71 上（m55x）= in-set n>100 20/20 逐案相等、OOS 僅 +0.057%（2 movers）、12c wall ×1.42** ⇒ 不採用（tier 留在 tree 內預設 off 當量測旋鈕）。**🔑 教訓（新 doctrine）**：**in-sample 打平可以藏住 1.4% 的 OOS 差距**——heavy band in-set M71 1.296813 vs M72 1.296769（+0.003% = 平手），OOS 卻差 1.42%。機制：全域 overlay 讓 41 隻 profile **每一隻**都帶機制（aspect×frame×knob 的組合數最大化），4 隻固定 recipe 的 tier 只有在未見案剛好合其中一隻時才有用；他們的「0 regressions」是**樣本內、由 proxy 達成非 guard 保證**。⚠️ 組員所有 headline 一律當 in-sample 看，且**要看他們錨的是哪一版**。
 - **M41-M50 RF 七槍**：M41 砍 swap、M42 砍 n>100 build 冗餘、M45 band tiers（tier-3 universal + tier-4 cores≤8）、M46 C++ hot-path exact、M47 wrapper overhead、M49 REFINE band-cut（n>100 K→4）、M50 mid-band 兩層 tier。gate = **strict selection-preserving**（逐案 cost 相等才砍）。詳見 memory `[[m41-runtime-factor]]`…`[[m50-midband-refine-tiers]]`。
 - **M67-F tier-5**（2026-07-26 實作 / 07-27 校準；`[[m67f-tier5-implemented]]`）：偵測 **≥40 核**才把 M42 的 22 隻放回 n>100（只動 M42 層）。**in-sample no-op**（強制 48c 亦逐位 1.326473104916827），增益 100% 在 OOS（θ_pool 0.7636），投影官方分 −0.26~−1.30%。門檻 32→40 的依據 = 實測 `c* = Σdt/max dt` 中位 19.3 / max **22.5**，≥24 核起全部 max-bound；偵測核是有效核的**上界**（本機 16 邏輯核 ≈10 有效）。🚨 **新 doctrine：高核 gate 必須 fail-CLOSED**——用 `_effective_cores_hi()`（unknown→0），**不可**沿用 `_effective_cores()`（unknown→9999，那是 tier-4「≤8」的安全方向）。gate = `m67g_tier5_gate.py`（regression_suite 第七項）。殘餘賭注 = Beta 有效並行度是否 ≥22.5。**🚨 2026-07-30 在 M71 下重量測（同 80 案 held-out n>100）：tier-5 變得嚴格更值錢**——OOS **+2.289%（46 better / 0 worse**，pre-M71 是 +2.143% / 44-1），且**不再是 in-sample no-op**：heavy band 5/20 案還原後變好 = **−0.742% of local total**（case 89 **−9.33%**、85 −4.51%、87 −3.79%、91 −2.57%、96 −0.89%）⇒ M71 正好把 M42 當年剪掉的那 22 隻「解凍」了。舊投影（官方分 −0.26~−1.30%）現在是**下界**。復現 = `m67_oos_probe.py restore --arm pool`。
-- **送件 hardening**：M43（`[[m43-submission-hardening]]`）、M48 編譯鏈+binary smoke+三層安全網（`[[m48-submission-hardening]]`）、M67-A~C Linux bundled-binary-first（`[[m67c-linux-binary-green]]`）、M67-G slim 6 檔包（`[[beta-package-slim]]`）。
+- **送件 hardening**：M43（`[[m43-submission-hardening]]`）、M48 編譯鏈+binary smoke+三層安全網（`[[m48-submission-hardening]]`）、M67-A~C Linux bundled-binary-first（`[[m67c-linux-binary-green]]`）、M67-G slim 6 檔包 → **M73 換件（`[[beta-package-slim]]`）**。
+- **M73 換件（2026-07-30 SHIPPED；`[[audit-cache-sig-shipped-pool]]`）**——把 M71+tier-5 打包上傳。路上修掉三個**只有真的跑換件鏈才會現形**的問題：(a) **`audit_cache.pkl` 的 sig 用 `repr(_PROFILES)`**，M72 append 4 隻 gated-off profile（41→45）就讓 **rf + m49×3 共 4/7 gate FAIL**（`cache profile signature != current pool`）⇒ 六個離線 gate 全改錨出貨池 `_PROFILES[:_M55_BASE_LEN]`，守衛語意不變、**不需重跑 `profile_audit.py`**（cache 實際存的就是 41+OM16、4200 combos 完整）；(b) `verify_final_tar.sh` 在 WSL（nproc 16）**永遠不會觸發 tier-5** ⇒ 新增 `final48` 模式 + round 2b，證實 Linux 上 `1.295547821428148` 與 Windows 逐位相同；(c) `m67c` bundle 的 embedded-tar 成員斷言早於 `bin/` 存在（5 檔 vs 現在 6 檔）會讓 builder 直接 abort。⚠️ **更正**：換件當下以為「比對錨還指著 pre-M71」是 bug——其實 M71 那次已把 `results_shipped_m51.json` 的**內容**換成 M71 結果（舊值另存 `results_shipped_preM71.json`），所以只是**檔名過期**；現已更名 `results_shipped_m71.json`。
 
 ### 離線 GREEN、但 in-window RED（LP 家族）
 - **M53 L1 品質池 ✅ offline SHIPPED**（`[[m53_l1_quality_mode]]`）：84-pool（41 base + 2 `_L1_EXTRA` + 41×K24 tier）→ 1.3176。復現 = `ICCAD_ADAPTIVE_POOL=0` + `ICCAD_L1_POOL=1` + `ICCAD_PROFILE_TIMEOUT=600`。**REFINE 向上只能走 portfolio tier**（全域 override 全池退步）；`PUSH_PASSES`/`COMPACT_ITERS` 向上逐位 no-op（early-break）。**M65**：補齊 84 池缺的兩隻 K24-extra = RED（贏處逐位 no-op、輸處全毒，期望值恰 0）。
@@ -154,6 +157,8 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - 新增重 profile 前先查它自己的 per-case cpu（每案 wall ≈ 最重 profile 的 max 項，非池總量）
 - **判 feasibility 用 `SolutionMetrics.is_feasible`，不可用 cost**：SA fallback 的 9.999999 是 feasible 品質上限、被 `%.4f` 進位成「10.0000」
 - **任何 in-window LP 不可留 HiGHS `time_limit`**（組員 80cc719 證：觸發即 run-to-run 非確定）
+- **`make_submission.py verify` 不要丟 background**：harness 可能回報「完成」但 python 子行程仍在跑，留下的 `constructive.exe`（Windows 端會 on-site compile）鎖住 `build_submission/verify/` ⇒ 下次 `shutil.rmtree` 噴 `PermissionError [WinError 5]`。清法 = `Get-CimInstance Win32_Process` 找 `make_submission`/`iccad2026_evaluate` 的 PID 砍掉、再砍 `constructive`，然後刪 `verify/`。**M73 踩過一次，還誤砍了活著那輪的子行程**
+- **tar md5 不可重現**（gzip 內嵌 mtime）：`m67c_make_linux_bundle.py` 會**重跑 `make_submission.stage()`** ⇒ 建 bundle 後 tar 就換一顆 md5。要送哪顆就對哪顆跑 `verify`，身分比對一律用 `op_wrapper.py` 的 md5
 
 ## env 旋鈕
 
@@ -185,13 +190,13 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 
 - **`regression_suite.py`** — 送件前一鍵七項 gate（m48 四 phase → rf_score_model asserts → m49 三 variant → m47b proxy 等價 → m67g tier-5），子行程先剝 `ICCAD_*`，~13 分鐘
 - **`make_submission.py`** `stage|verify|all` — 產 `build_submission/cadc1075/`（6 檔）+ tar，verify = 官方指令 100 案逐位比對
-- **`m67c_make_linux_bundle.py`** + WSL `run_all.sh` / `verify_final_tar.sh` — Linux 四關（build+smoke / m48 opwrapper / 官方 100 案 bundled-first 逐位 / 破壞 binary 落編譯鏈）
+- **`m67c_make_linux_bundle.py`** + WSL `run_all.sh` / `verify_final_tar.sh` — Linux 四關（build+smoke / m48 opwrapper / 官方 100 案 bundled-first 逐位 / 破壞 binary 落編譯鏈）。`m67c_tier3.py` 模式：`t3` / `t4` / `final <tar>` / **`final48 <tar>`（M73 新增：強制 `ICCAD_ADAPTIVE_CORES=48` 讓 tier-5 在 WSL 也跑得到，錨 `results_M73_cores48.json`）**；`verify_final_tar.sh` 現在兩輪都跑，末行 `VERIFY_FINAL_TAR: ALL PASS`。⚠️ 換 bundle 要**整包重傳**（md5 對不上就是舊的，grep `final48` 可秒判）
 - **`m48_coldstart_dryrun.py`** — 冷啟動四 phase（含 `opwrapper` variant）
 - **`rf_score_model.py`** — RF 投影 + M42/M45 drop 常數 regen + drift asserts；**`m67e_rf48.py`** — 48c 投影（`gate0/calib/fit/project/report`，投影看 `restoreIdx`）
 - **`m49_refine_probe.py`** `trace|variant K [big|mid]` — REFINE band gate；**`m67g_tier5_gate.py`** — tier-5 池身分閘（V1 基準用 kill switch，不可比 HEAD）
 - **`m67_oos_probe.py`** — OOS 泛化（`gate0/run/report/ref/pool0/restore`，`--pool0-lo/-hi` 選帶）；`m67_oos_cache.pkl`。**arms = `pool`（M42+tier-3 還原）/`refine`/`m55`（M72 tier + M71 全域 off = 組員原形）/`m55x`（tier 疊在 M71 上）**；無 `full` 端點時自動退成 A/B 報告並 dump `results_M72_ab_<arm>_<lo>_<hi>.json`。⚠️ cache sig 含 `repr(_PROFILES)` ⇒ **加/減 profile 會清空整個 cases 桶**；若已證 knob-off 池逐位不變，可改寫 sig 保留（2026-07-30 M72 移植即如此，備份 `m67_oos_cache.pkl.preM72`）
 - **`profile_audit.py`**（audit_cache）、**`profile_vs_portfolio.py KEY=VAL`**（新 profile 增益，bar 0.05%）、`analyze_constructive.py`、`portfolio_ceiling.py`、`rh_sweep.py`、`proxy_analysis.py`（27 個工具依賴，勿刪）
-- **`m53_diff_results.py`** — 兩份官方 results json 的總分/加權 delta/逐案 movers。錨：`results_L1_final.json`、`results_L3_port_top32_area.json`、`results_shipped_m51.json`、`results_shipped_preM71.json`
+- **`m53_diff_results.py`** — 兩份官方 results json 的總分/加權 delta/逐案 movers。錨：`results_L1_final.json`、`results_L3_port_top32_area.json`、**`results_shipped_m71.json`（= 出貨錨 1.305389893450635，`make_submission.verify` / `m67c` T3 都比這顆）**、`results_M73_cores48.json`（48c/tier-5 錨 1.295547821428148）、`results_shipped_preM71.json`（1.3265）、`results_shipped_m51.json`（**檔名誤導**：內容已是 M71，留著相容舊 probe）。⚠️ 這些錨檔**未進 git**（沿用舊慣例），但 gate 依賴它們——換機器要一起帶。
 - **RED 存檔 probe（勿重跑求更好的數字）**：`m52_phase0_probe.py`、`m53_l2_probe.py`、`m53_l3_probe.py`、`m54_lp_rf_model.py`、`m55_dropset_cv.py`、`m56_percase_oracle.py`、`m57`~`m61`（各配 `constructive_mXX.cpp`）、`m62_break_even.py`、`m63_vio_bound.py`、`m64_flip_probe.py`、`m65_l1_cell.py`、`m66_equiv_cv.py`、`m67f_contention_probe.py`、`m68_ml_seed_probe.py`、`oracle_perm_probe.py`、`dbg_seqpair.py`、`recon_slice_probe.py`、`tree_decode_probe.py`
 
 ## 檔案結構（要點）
