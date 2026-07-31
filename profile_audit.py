@@ -20,6 +20,7 @@ Two phases, resumable (incremental pickle cache audit_cache.pkl):
 M74 (2026-07-30) MODE argument — which env overlay the cached positions carry:
   base  (default) -> audit_cache.pkl       profile + _m71_env(), REFINE=12
   ship             -> audit_cache_ship.pkl  profile + _band_env(n) + _m71_env()
+  esc  (M76)       -> audit_cache_esc.pkl   profile + _band_env(n), M71 knobs OFF
 Both are needed and they are NOT interchangeable:
   - m49_refine_probe.py's determinism gate requires a REFINE=12 control that
     matches the cache bit-for-bit, so the K=12 reference (base) must survive;
@@ -29,9 +30,16 @@ Both are needed and they are NOT interchangeable:
 Cases with n<=60 carry an empty _band_env() so both caches must agree there
 bit-for-bit; the ship run prints that cross-check.
 
+`esc` is the M76 escape-tier measurement: an escape index is the ONE thing in the
+pool that _solve_impl deliberately does not apply _m71_env() to, so its positions
+and its dt need their own cache. Paired with audit_cache_ship.pkl it gives the
+knob-ON/knob-OFF pair for every (case, profile) — which is what decides whether a
+knob-off duplicate becomes the 48-core max-setter.
+
 Run detached with the machine otherwise idle (timings feed the om16 decision):
   python -u profile_audit.py base > m74_audit_base.txt
   python -u profile_audit.py ship > m74_audit_ship.txt
+  python -u profile_audit.py esc  > m76_audit_esc.txt
 """
 import os, sys, math, time, pickle, hashlib, subprocess, concurrent.futures
 from pathlib import Path
@@ -49,15 +57,16 @@ os.environ["ICCAD_ADAPTIVE_CORES"] = "12"
 import optimizer_constructive as oc
 
 MODE = (sys.argv[1] if len(sys.argv) > 1 else "base").lower()
-if MODE not in ("base", "ship"):
-    sys.exit(f"unknown mode {MODE!r} (expected 'base' or 'ship')")
+if MODE not in ("base", "ship", "esc"):
+    sys.exit(f"unknown mode {MODE!r} (expected 'base', 'ship' or 'esc')")
 
 ev = ContestEvaluator(data_path=str(_DIR), verbose=False); ev._load_dataset()
 EXE = str(_DIR / "constructive.exe")
 RH = 1.4
 CORES = 12          # physical cores (wrapper wall model)
 WORKERS = 11        # leave one core for this process -> clean dt measurements
-CACHE = _DIR / ("audit_cache.pkl" if MODE == "base" else "audit_cache_ship.pkl")
+CACHE = _DIR / {"base": "audit_cache.pkl", "ship": "audit_cache_ship.pkl",
+                "esc": "audit_cache_esc.pkl"}[MODE]
 BASE_CACHE = _DIR / "audit_cache.pkl"
 
 # M72 (2026-07-30): _PROFILES carries the appended _M55_EXTRA tier (ICCAD_M55_POOL,
@@ -91,9 +100,15 @@ def _exe_md5(p):
 # ship cache's positions depend on _M49_REFINE_BAND / _M50_REFINE_LOWCORE, so
 # retuning K (e.g. mid 8 -> 6) must invalidate it, while the base cache is always
 # REFINE=12 and must NOT be invalidated by a K change it does not depend on.
-_M71_SIG = repr(sorted(oc._m71_env().items()))
-if MODE == "ship":
-    _MODE_KEY = repr(("ship", _M71_SIG,
+#
+# M76 (2026-08-01) adds a third mode, `esc`: the SHIP overlay with the M71 knobs
+# deliberately OFF, i.e. exactly what an escape-tier profile runs. Its _M71_SIG is
+# therefore the EMPTY overlay -- pinning the live _m71_env() instead would make the
+# cache look stale the moment someone exports ICCAD_M71=0 in their shell, and would
+# not distinguish it from the ship cache at all.
+_M71_SIG = repr(sorted(({} if MODE == "esc" else oc._m71_env()).items()))
+if MODE in ("ship", "esc"):
+    _MODE_KEY = repr((MODE, _M71_SIG,
                       repr(sorted(oc._M49_REFINE_BAND)),
                       repr(sorted(oc._M50_REFINE_LOWCORE)),
                       oc._M45_CORES_MAX))
@@ -167,9 +182,12 @@ _CHILD_BASE = {k: v for k, v in os.environ.items() if not k.startswith("ICCAD_")
 
 def _overlay(n):
     """The wrapper's per-case env overlay, in its exact precedence order
-    (optimizer_constructive.py:1058-1062: profile dict, then band, then M71)."""
-    ov = dict(oc._band_env(n)) if MODE == "ship" else {}
-    ov.update(oc._m71_env())
+    (optimizer_constructive.py:1058-1062: profile dict, then band, then M71).
+    MODE=esc stops before the M71 step on purpose: an escape-tier index is the
+    one thing in the pool that _solve_impl does NOT apply _m71_env() to."""
+    ov = dict(oc._band_env(n)) if MODE in ("ship", "esc") else {}
+    if MODE != "esc":
+        ov.update(oc._m71_env())
     return ov
 
 
@@ -184,7 +202,8 @@ def run_one(job):
 
 
 print(f"MODE={MODE}  cache={CACHE.name}  exe md5={_exe_md5(EXE)[:12]}", flush=True)
-print(f"  m71 overlay: {oc._m71_env()}")
+print(f"  m71 overlay: {{}} (esc: knobs deliberately OFF)" if MODE == "esc"
+      else f"  m71 overlay: {oc._m71_env()}")
 for _lo, _hi in ((0, 60), (60, 100), (100, 10**9)):
     _n = next((c["n"] for c in CASES if _lo < c["n"] <= _hi), None)
     if _n is not None:
@@ -231,6 +250,31 @@ if MODE == "ship" and BASE_CACHE.exists():
               f"overlay cases {len(diff_n)} -> {moved} combos differ", flush=True)
         if bad:
             sys.exit("ship/base disagree where the band overlay is empty")
+
+# M76 cross-check: esc differs from ship by exactly the two M71 knobs, so the
+# combos that differ ARE M71's per-profile liveness on this corpus. Informational
+# (no invariant to assert) but it catches the failure that would otherwise be
+# invisible: if the overlay plumbing dropped the knobs, esc == ship everywhere and
+# every escape-tier number in M76 would silently be a measurement of nothing.
+if MODE == "esc":
+    SHIP_CACHE = _DIR / "audit_cache_ship.pkl"
+    if SHIP_CACHE.exists():
+        try:
+            _s = pickle.load(open(SHIP_CACHE, "rb"))["data"]
+        except Exception as e:
+            _s = None
+            print(f"cross-check skipped (ship cache unreadable: {e})", flush=True)
+        if _s:
+            pairs = [(ci, k) for ci in range(len(CASES))
+                     for k in range(len(PROFILES)) if (ci, k) in _s]
+            moved = [p for p in pairs if data[p][0] != _s[p][0]]
+            mcase = len({ci for ci, _ in moved})
+            print(f"cross-check vs ship cache (= M71 liveness): "
+                  f"{len(moved)}/{len(pairs)} (case,profile) pairs differ, "
+                  f"{mcase}/{len(CASES)} cases touched", flush=True)
+            if not moved:
+                sys.exit("esc == ship on every combo -> the M71 overlay never "
+                         "reached the binary; refusing to publish a null cache")
 
 # ── PHASE2: analysis ────────────────────────────────────────────────────────
 print("PHASE2 proxy metrics...", flush=True)

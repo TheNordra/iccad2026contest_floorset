@@ -36,7 +36,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import torch
 
@@ -415,6 +415,53 @@ _M55_EXTRA: List[Dict[str, str]] = [
 ]
 _M55_BASE_LEN = len(_PROFILES)
 _PROFILES.extend(_M55_EXTRA)
+_M55_IDX = frozenset(range(_M55_BASE_LEN, len(_PROFILES)))
+
+# M76 (2026-08-01): the teammate's M73 knob-OFF ESCAPE tier (their 7403758),
+# ported for measurement under OUR M74 baseline. OFFLINE/EXPERIMENTAL, default OFF.
+#
+# MECHANISM. Shipped M71 rides a per-profile overlay applied to EVERY index in the
+# pool (see _m71_env), so a case the two cluster knobs hurt has nowhere to escape
+# to. The tier appends knob-OFF DUPLICATES of chosen hosts and _solve_impl
+# deliberately skips the M71 overlay on exactly those indices, so the pool carries
+# both variants of a host and the proxy arbitrates per case. It is the MIRROR of
+# M72 (which added knob-ON profiles to a knob-off base and measured -1.418% OOS
+# for us); this direction is the one that matches what we actually shipped.
+#
+# WHY ALL 41 HOSTS ARE APPENDED. The active subset is chosen at CALL time from
+# ICCAD_M73_SRC, not at import: m67_oos_probe.py's arm mechanism does
+# os.environ.update() AFTER importing this module, so an import-time source list
+# could not be swept and every arm would silently measure the same thing. Trimming
+# _M73_ESCAPE to the final set is a SHIP-time step, not a measurement-time one.
+#
+# The teammate's set was fitted to M71 with the PRE-M74 adaptive constants, on the
+# 7 highest weighted-recoverable of the 17 cases M71 regressed (#22/#23/#25 rescue
+# 4/7 each, #2 is the only rescuer of case 94). Under M74 all four survive the
+# heavy pool (13 profiles @12c, 35 @48c) but only #2/#22/#25 survive the mid pool
+# at <=16 cores, because M74's tier-3 drops #23 there.
+_M73_ESCAPE: List[Dict[str, str]] = [dict(p) for p in _PROFILES[:_M55_BASE_LEN]]
+_M73_BASE = len(_PROFILES)              # _M73_BASE + h == knob-off twin of host h
+_M73_IDX = frozenset(range(_M73_BASE, _M73_BASE + len(_M73_ESCAPE)))
+_PROFILES.extend(_M73_ESCAPE)
+_M73_SRC: Tuple[int, ...] = (2, 22, 23, 25)     # teammate's measured default
+
+
+def _m73_active() -> FrozenSet[int]:
+    """Escape indices this call should add, resolved from the environment.
+
+    Read at CALL time (never at import) for the reason above. A malformed
+    ICCAD_M73_SRC falls back to _M73_SRC rather than raising: this runs inside
+    solve() on the grader, where an exception would cost the whole case."""
+    if os.environ.get("ICCAD_M73_ESCAPE", "0") != "1":
+        return frozenset()
+    raw = os.environ.get("ICCAD_M73_SRC", "")
+    src: Tuple[int, ...] = _M73_SRC
+    if raw:
+        try:
+            src = tuple(int(x) for x in raw.split(",") if x.strip())
+        except ValueError:
+            src = _M73_SRC
+    return frozenset(_M73_BASE + h for h in src if 0 <= h < _M55_BASE_LEN)
 
 # M42 (2026-06-26): 2nd-order RuntimeFactor lever — indices into _PROFILES of the
 # BUILD-time profiles that are NEVER the selected winner on any case with n>100
@@ -649,6 +696,20 @@ def _m71_env() -> Dict[str, str]:
     return dict(_M71_ENV)
 
 
+def _profile_env(i: int, block_count: int) -> Dict[str, str]:
+    """The per-profile env overlay _solve_impl applies to pool index `i`, in the
+    wrapper's precedence order (profile dict, then band, then M71).
+
+    An escape-tier index (M76) deliberately does NOT receive the M71 knobs — that
+    omission IS the mechanism, and it is the one thing about the tier that cannot
+    be checked from _pool_indices() alone, so it lives in a function the gates can
+    call instead of being inlined in solve()."""
+    ov = dict(_band_env(block_count))
+    if i not in _M73_IDX:
+        ov.update(_m71_env())
+    return ov
+
+
 def _effective_cores() -> int:
     """Detected parallelism for tier-4 gating. Conservative: logical count
     over-estimates effective cores -> mis-detection direction is 'tier stays
@@ -703,7 +764,18 @@ def _pool_indices(block_count: int) -> List[int]:
     # every ADAPTIVE_POOL=0 run (the offline quality anchor, the M53 L1/L3 modes and
     # this probe's own `full` endpoint), silently changing what those measure.
     m55 = os.environ.get("ICCAD_M55_POOL", "0") == "1"
-    full = [i for i in range(len(_PROFILES)) if m55 or i < _M55_BASE_LEN]
+    # M76: same call-time-and-before-the-early-return discipline for the escape
+    # tier. ICCAD_M73_MIN_N band-gates it (0 = every band, 100 = heavy only), which
+    # is the variant the teammate's own wall analysis pointed at: their all-band
+    # RED came from a 12-core box where the mid band is sum-bound, and at 48 cores
+    # the mid band is max-setter-bound (M74's c* max 15.2 is why tier-3 is now
+    # cores-gated). One code path, two values, so both are measurable as arms.
+    esc = _m73_active()
+    if esc and block_count <= int(os.environ.get("ICCAD_M73_MIN_N", "0") or 0):
+        esc = frozenset()
+    extra = (_M55_IDX if m55 else frozenset()) | esc
+    full = [i for i in range(len(_PROFILES))
+            if i < _M55_BASE_LEN or i in extra]
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
         return full
     # M67-F (2026-07-22): OFFLINE-ONLY measurement knob, default 0 => this
@@ -746,8 +818,14 @@ def _pool_indices(block_count: int) -> List[int]:
                 break
     kept = []
     for i, p in enumerate(_PROFILES):
-        if i >= _M55_BASE_LEN and not m55:
-            continue                                             # M72, default off
+        if i >= _M55_BASE_LEN and i not in extra:
+            continue                             # M72 / M76 tiers, default off
+        # M41 stays CONTENT-based, so it also filters an escape twin of a swap
+        # profile — that filter is about subprocess cost, which a knob-off copy
+        # pays just as much. The INDEX-based drops below (M42/M45) deliberately do
+        # not reach the appended tiers: their frozensets are over 0.._M55_BASE_LEN-1
+        # and were derived on the shipped pool, so an escape twin is never pruned
+        # by them. Same behaviour as the teammate's tier.
         if block_count > n_swap and ("ICCAD_ORDER_SWAP" in p
                                      or "ICCAD_ORDER_MOVE" in p):
             continue
@@ -1107,11 +1185,16 @@ class MyOptimizer(FloorplanOptimizer):
         #  M71 (2026-07-29): the cluster composite-item knobs ride the same
         #    per-profile overlay (see _m71_env); unlike the M49/M50 band they
         #    apply to every case size and are independent of the adaptive tiers.
+        #  M76 (2026-08-01): ...except the escape tier, which deliberately runs
+        #    knob-OFF so the pool carries both variants of a host and the proxy
+        #    arbitrates per case. Skipping the M71 update on those indices IS the
+        #    mechanism — without it the tier would be a pure duplicate of its host
+        #    and cost wall for nothing.
         if not self._single:
-            band = dict(_band_env(block_count))
-            band.update(_m71_env())
-            profiles = [dict(_PROFILES[i], **band) if band else _PROFILES[i]
-                        for i in _pool_indices(block_count)]
+            profiles = []
+            for i in _pool_indices(block_count):
+                ov = _profile_env(i, block_count)
+                profiles.append(dict(_PROFILES[i], **ov) if ov else _PROFILES[i])
 
         # M47: compute each profile's proxy on the MAIN thread as soon as that
         # profile finishes (as_completed), overlapping the still-running slower

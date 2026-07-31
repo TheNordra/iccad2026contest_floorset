@@ -109,8 +109,16 @@ def _sig(args):
     # key covered only the binary and _PROFILES, so regenerating the adaptive
     # drop sets or retuning the REFINE band would have silently reused positions
     # from the previous constants (the same failure mode audit_cache.pkl had).
-    return repr(("m67d", VERSION, SEED, _exe_md5(), len(oc._PROFILES),
-                 repr(oc._PROFILES),
+    # M76: anchored on the SHIPPED PREFIX, not the whole list. _PROFILES carries
+    # two appended, gated-off tiers (M72's 4, M76's 41 escape twins) and neither
+    # can change a single cached solve while its gate is off -- _pool_indices()
+    # never emits those indices. Keying on the whole list made every port of a
+    # gated tier throw away 240 cached cases for no reason (the same fix M73's
+    # ship chain applied to audit_cache.pkl). Anything that DOES steer the shipped
+    # portfolio is still in the key below.
+    _ship = oc._PROFILES[:oc._M55_BASE_LEN]
+    return repr(("m67d", VERSION, SEED, _exe_md5(), len(_ship),
+                 repr(_ship),
                  sorted(oc._BIG_REDUNDANT_IDX),
                  repr(sorted(oc._M45_BAND_DROP)),
                  repr(sorted(oc._M45_LOWCORE_DROP)),
@@ -144,10 +152,24 @@ def _cload(sig):
 
 
 def _csave():
+    """Atomic cache write, with a retry on the Windows replace.
+
+    M76: os.replace() raised PermissionError [WinError 5] once mid-run and killed
+    an arm 64 solves into its in-set pass. On Windows the destination can be
+    transiently locked by a scanner or an indexer; the write itself had succeeded,
+    so the only correct response is to wait and retry rather than lose the run.
+    Re-raises after the last attempt so a REAL permission problem is still loud."""
     tmp = CACHE_PATH.with_suffix(".tmp")
     with open(tmp, "wb") as f:
         pickle.dump(_C, f, protocol=pickle.HIGHEST_PROTOCOL)
-    os.replace(tmp, CACHE_PATH)
+    for attempt in range(6):
+        try:
+            os.replace(tmp, CACHE_PATH)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.5 * (attempt + 1))
 
 
 def _shuffled(seq, seedstr):
@@ -933,10 +955,27 @@ _M75_KNOBS = {"m71corner": "ICCAD_CLUSTER_BND_CORNER",
               "m71repack": "ICCAD_ANCHORED_BND_REPACK",
               "m71slide": "ICCAD_HPWL_SAFE_CLUSTER_SLIDE"}
 
+# M76 arms (2026-08-01). The teammate's M73 knob-OFF ESCAPE tier (7403758): the
+# MIRROR of M72 -- instead of adding knob-ON profiles to a knob-off base, it adds
+# knob-OFF twins to our knob-ON base, so the 17 cases M71 regressed can escape.
+# Offline (audit_cache_ship.pkl x audit_cache_esc.pkl, m76_escape_probe.py) the
+# in-set picture at 48c pools is:
+#   src=(2,22,23,25) all bands  quality +0.243%  dRF@48c +0.088%  NET +0.155%
+#   src=(2,22,23,25) n>100      quality +0.191%  dRF@48c +0.020%  NET +0.171%
+#   src=(21,23,2,22) n>100      quality +0.318%  dRF@48c +0.020%  NET +0.298%
+# The third is our own greedy under M74 and is therefore an IN-SAMPLE fit on 20
+# cases; these arms exist to find out which of the three survives out of sample.
+_M76_SRC_X = "21,23,2,22"
+
 _ARMS = {"pool": {"ICCAD_M67F_RESTORE": "1"},
          "refine": {"ICCAD_ADAPTIVE_REFINE": "0"},
          "m55": {"ICCAD_M55_POOL": "1", "ICCAD_M71": "0"},
-         "m55x": {"ICCAD_M55_POOL": "1"}}
+         "m55x": {"ICCAD_M55_POOL": "1"},
+         "m73": {"ICCAD_M73_ESCAPE": "1"},
+         "m73big": {"ICCAD_M73_ESCAPE": "1", "ICCAD_M73_MIN_N": "100"},
+         "m73x": {"ICCAD_M73_ESCAPE": "1", "ICCAD_M73_MIN_N": "100",
+                  "ICCAD_M73_SRC": _M76_SRC_X}}
+_M76_ARMS = frozenset({"m73", "m73big", "m73x"})
 _ARMS.update({a: {k: "1"} for a, k in _M75_KNOBS.items()})
 # Combination arms for the M75 phase-2 pairwise matrix + full union. Named by
 # joining the single-arm names with "_" so the knob set is readable from the
@@ -944,7 +983,7 @@ _ARMS.update({a: {k: "1"} for a, k in _M75_KNOBS.items()})
 for _n in range(2, len(_M75_KNOBS) + 1):
     for _combo in itertools.combinations(sorted(_M75_KNOBS), _n):
         _ARMS["_".join(_combo)] = {_M75_KNOBS[a]: "1" for a in _combo}
-_M75_ARMS = frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"}
+_M75_ARMS = frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"} - _M76_ARMS
 
 # Liveness screen cases: a spread over the three weight bands, biased to cases
 # that carry the cluster structures these knobs act on. The screen is PER
@@ -1028,9 +1067,18 @@ def _theta_gate_a(arm):
     # grader, which is the whole point of the gate).
     _t3_on = oc._effective_cores() <= oc._M45_MID_CORES_MAX
     _mid_exp = 20 if _t3_on else 35
-    chk(f"knob-off pool == shipped (35/35/{_mid_exp}/13/13, tier-3 "
-        f"{'ON' if _t3_on else 'OFF'} at {oc._effective_cores()} cores)",
-        off == {30: 35, 50: 35, 80: _mid_exp, 105: 13, 120: 13}, str(off))
+    # M76: the HEAVY expectation has to be cores-aware for the same reason. It was
+    # hard-coded to 13 (the M42 cut), which is only the low-core shape — at >=40
+    # detected cores tier-5 puts _BIG_REDUNDANT_IDX back and the heavy pool is 35.
+    # Without this, --force-cores 48 (the grader's shape, and the one that decides
+    # a ship) fails Gate A on a correct pool.
+    _t5_on = oc._effective_cores_hi() >= oc._M67F_CORES_MIN
+    _big_exp = 35 if _t5_on else 13
+    chk(f"knob-off pool == shipped (35/35/{_mid_exp}/{_big_exp}/{_big_exp}, "
+        f"tier-3 {'ON' if _t3_on else 'OFF'} / tier-5 "
+        f"{'ON' if _t5_on else 'OFF'} at {oc._effective_cores()} cores)",
+        off == {30: 35, 50: 35, 80: _mid_exp, 105: _big_exp, 120: _big_exp},
+        str(off))
     chk("knob-off REFINE band == shipped (mid 6, big 4)",
         off_be == {80: {"ICCAD_REFINE_ITERS": "6"},
                    120: {"ICCAD_REFINE_ITERS": "4"}}, str(off_be))
@@ -1085,6 +1133,59 @@ def _theta_gate_a(arm):
         os.environ["ICCAD_M55_POOL"] = "1"
         chk("RUNTIME flip works (gate resolves per call)",
             flipped_off == off[120] and len(oc._pool_indices(120)) == on[120])
+    elif arm in _M76_ARMS:
+        env = _ARMS[arm]
+        src = tuple(int(x) for x in
+                    env.get("ICCAD_M73_SRC",
+                            ",".join(str(s) for s in oc._M73_SRC)).split(","))
+        min_n = int(env.get("ICCAD_M73_MIN_N", "0"))
+
+        def _want(n):
+            """Escape indices this band should gain. The M41 swap filter is
+            CONTENT-based, so it removes the twin of a swap profile too — spelling
+            that out here rather than assuming len(src) is what makes this gate
+            catch a source list that silently loses a member."""
+            if n <= min_n:
+                return set()
+            return {oc._M73_BASE + h for h in src
+                    if not ("ICCAD_ORDER_SWAP" in oc._PROFILES[h]
+                            or "ICCAD_ORDER_MOVE" in oc._PROFILES[h])}
+
+        chk(f"tier adds exactly its escape indices (src={src}, min_n={min_n})",
+            all(set(oc._pool_indices(n)) - set(_shipped_pool(n)) == _want(n)
+                for n in off),
+            f"{off} -> {on}")
+        chk("tier keeps the M49/M50 REFINE band", on_be == off_be, str(on_be))
+        # THE MECHANISM: an escape index must NOT receive the M71 overlay, while
+        # every shipped index still must. Without this the tier is a pure duplicate
+        # of its host and buys nothing but wall.
+        esc_i = sorted(_want(120))
+        ship_i = [i for i in oc._pool_indices(120) if i < oc._M55_BASE_LEN]
+        knobs = set(oc._M71_ENV)
+        chk("escape indices get NO M71 knobs (this is the mechanism)",
+            bool(esc_i) and all(not (knobs & set(oc._profile_env(i, 120)))
+                                for i in esc_i),
+            f"escape={esc_i[:4]} env={oc._profile_env(esc_i[0], 120) if esc_i else {}}")
+        chk("shipped indices still get the M71 knobs",
+            all(knobs <= set(oc._profile_env(i, 120)) for i in ship_i))
+        # ADAPTIVE_POOL=0 must NOT leak the tier (the teammate's port does; ours
+        # reads the gate before the early return).
+        os.environ["ICCAD_ADAPTIVE_POOL"] = "0"
+        f_on = len(oc._pool_indices(120))
+        os.environ["ICCAD_M73_ESCAPE"] = "0"
+        f_off = len(oc._pool_indices(120))
+        os.environ["ICCAD_M73_ESCAPE"] = "1"
+        os.environ.pop("ICCAD_ADAPTIVE_POOL", None)
+        chk("ADAPTIVE_POOL=0 pool tracks the gate (no leak when off)",
+            f_off == oc._M55_BASE_LEN and f_on == oc._M55_BASE_LEN + len(_want(120)),
+            f"off {f_off} on {f_on}")
+        # RUNTIME flip works (an import-time gate would make this arm a silent
+        # no-op and the run would report a fake 'zero difference').
+        os.environ["ICCAD_M73_ESCAPE"] = "0"
+        flipped_off = len(oc._pool_indices(120))
+        os.environ["ICCAD_M73_ESCAPE"] = "1"
+        chk("RUNTIME flip works (gate resolves per call)",
+            flipped_off == off[120] and len(oc._pool_indices(120)) == on[120])
     elif arm in _M75_ARMS:
         # A pure C++ knob must move the BINARY and nothing on the Python side.
         chk("knob leaves every pool untouched (C++-only arm)", on == off,
@@ -1125,13 +1226,15 @@ def _theta_gate_a(arm):
 
 def _shipped_pool(n):
     for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
-              "ICCAD_M55_POOL"):
+              "ICCAD_M55_POOL", "ICCAD_M73_ESCAPE", "ICCAD_M73_MIN_N",
+              "ICCAD_M73_SRC"):
         v = os.environ.pop(k, None)
         if v is not None:
             os.environ[f"_SAVE_{k}"] = v
     p = oc._pool_indices(n)
     for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
-              "ICCAD_M55_POOL"):
+              "ICCAD_M55_POOL", "ICCAD_M73_ESCAPE", "ICCAD_M73_MIN_N",
+              "ICCAD_M73_SRC"):
         v = os.environ.pop(f"_SAVE_{k}", None)
         if v is not None:
             os.environ[k] = v
@@ -1184,10 +1287,13 @@ def mode_restore(args):
     print("=" * 78)
     gates = ("M42" if lo >= 100 else
              ("M45 tier-3" if hi <= 100 else "M42 + M45 tier-3"))
-    if arm in ("pool", "m55x"):
+    if arm in ("pool", "m55x") or arm in _M76_ARMS:
         # Superset of the shipped pool with the same per-profile env => the proxy
         # (oracle-min in-sample) can only weakly improve. Worse => knob bug.
-        gates = gates if arm == "pool" else "M72 tier"
+        # M76: the escape tier is such a superset — every shipped index keeps its
+        # exact overlay and the knob-off twins are ADDED — so it belongs here.
+        gates = ("M72 tier" if arm == "m55x"
+                 else "M76 escape tier" if arm in _M76_ARMS else gates)
         expect = f"{gates} strict gate: {arm} must never be WORSE"
     elif arm == "m55":
         # NOT a superset: this arm also turns the M71 global overlay OFF, so it is
@@ -1527,7 +1633,19 @@ def main():
     ap.add_argument("--heavy-per-n", type=int, default=4, dest="heavy_per_n")
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--force-cores", type=int, default=0, dest="force_cores",
+                    help="M76: re-export ICCAD_ADAPTIVE_CORES AFTER the ICCAD_* "
+                         "strip above, so the run uses the grader's pool shape "
+                         "(48 => tier-5 on, tier-3 off) instead of this box's. "
+                         "Uses a SEPARATE cache file: _sig() does not include the "
+                         "core count, so sharing one would silently reuse solves "
+                         "from the other pool shape.")
     args = ap.parse_args()
+    if args.force_cores:
+        global CACHE_PATH
+        os.environ["ICCAD_ADAPTIVE_CORES"] = str(args.force_cores)
+        CACHE_PATH = _DIR / f"m67_oos_cache_c{args.force_cores}.pkl"
+        print(f"[m76] forced cores={args.force_cores} -> cache {CACHE_PATH.name}")
     _cload(_sig(args))
     return {"gate0": mode_gate0, "run": mode_run, "report": mode_report,
             "ref": mode_ref, "pool0": mode_pool0,
