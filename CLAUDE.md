@@ -11,10 +11,10 @@
 - 真天花板 **1.1079**（`fp_sol` verbatim），headroom 100% 在 quality（violation 已贏）。組員 1.0322 是 **label oracle**（hidden test 不適用）；legit 上限 ~1.62。
 - 但 **reconstruction 本身 RED**（M40）：X 結構無法從 connectivity 還原、Y 序需 label。⇒ 走「更好的 placer / 更聰明的 portfolio」而非「還原」。
 
-### 現況一句話（2026-07-30）
+### 現況一句話（2026-07-31）
 - **已上傳的 Beta tar = 1.3054（M71/M73，md5 `ba694bc6…`）⇒ Beta 主線結案**。
-- **tree 上的 local 最佳 = 1.293461（M74 常數 regen，2026-07-30）**，比已上傳的包好 **−0.769%**（48c 形狀 −0.158%），**尚未出貨**（Final 議題，換件鏈見 `M74_REPORT.md` §7）。
-- 四大軸狀態：**quality 軸**——M26/M27/M40 三面天花板仍成立，但 **M71 證明 cluster 複合 item 的「候選集合／排序 key」是漏掉的軸**（−1.589% in-set / −4.04% OOS）；**RF 軸**——M41-M50 七槍 + tier-5 已 ship；**LP 軸**——offline GREEN（錨 1.2914）、in-window RED（M54/M62/組員 80cc719）；**ML 軸**——四種插入點全 RED（M52 生成、M56 selector、M68 seed、LP refinement）。
+- **tree 上的 local 最佳 = 1.293461（M74 常數 regen，2026-07-30）**，比已上傳的包好 **−0.769%**（48c 形狀 −0.158%），**尚未出貨**（Final 議題，deadline 2026-08-21，換件鏈見 `M74_REPORT.md` §7）。M74 的 **OOS 240 = 1.576749**，對 M71 的 1.586461 是 **−0.616%**（同號、幅度相當 ⇒ 非樣本內過擬合）。
+- 四大軸狀態：**quality 軸**——M26/M27/M40 三面天花板仍成立；M71 曾證明 cluster 複合 item 的「候選集合／排序 key」是漏掉的軸（−1.589% in-set / −4.04% OOS），但 **M75 已把該軸的殘量掃完＝四個旗標全 RED ⇒ M71 軸關閉**；**RF 軸**——M41-M50 七槍 + tier-5 已 ship；**LP 軸**——offline GREEN（錨 1.2914）、in-window RED（M54/M62/組員 80cc719）；**ML 軸**——四種插入點全 RED（M52 生成、M56 selector、M68 seed、LP refinement）。
 - 送件 hardening（M43/M48/M67-A~G）全部完成，Linux binary 雙邊逐位驗過。
 
 ## 評分公式（2026-05-23 確認）
@@ -64,7 +64,7 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 - **proxy 自 M13 起 = per-case oracle ceiling**（selection 不是瓶頸；加 profile 全額 realize）
 - ⚠️ vrel **必須用 shapely**（wrapper `_proxy_metrics`），不可用 C++ union-find
 
-里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）。
+里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）→ M75 M71 殘餘四旗標全 RED（軸關閉，分數不動）。
 
 ## 🔑 戰略結論（哪些軸封了、哪些沒）
 
@@ -80,9 +80,13 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 > **換件（M73）已於 2026-07-30 完成並上傳**，見「📦 送件狀態」。以下全是 Final 議題。
 
 1. ~~**adaptive stack 常數 regen**~~ ✅ **2026-07-30 做完 = M74（GREEN，1.293461，未出貨）**，見 `M74_REPORT.md`。⇒ 現在的第一順位是**決定要不要為 Final 把 M74 出貨**（換件鏈 + 改 `_ANCHOR` 指向，見 M74_REPORT §7）。⚠️ M67-F 當年「mid band 放寬 RED」的結論**已被 M74 推翻**：那是用舊（錯的）常數量的，正解是把 tier-3 降級成 cores-gated。
-2. **M71 剩下四個 gated-off 旗標**（`CLUSTER_BND_CORNER` / `ANCHORED_BND_REPACK` / `CLUSTER_BND_PERMUTE` / `HPWL_SAFE_CLUSTER_SLIDE`）：⚠️ **不要照組員的做法包成 pool tier**（M72 已證 RED，見 ledger）。若要試，走 M71 的形式 = **全域 overlay**（加進 `_M71_ENV` 或作為 per-profile 變體），且**判準用 OOS 不用 local100**（M72 的教訓：in-sample 打平會藏住 1.4% OOS 差距）。
-3. **低優先**：M62 micro-cap skip gate（唯一還活著的 in-window LP 形態，前置 = pre-build 時間預測器 + 機速校準）。
-4. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它變便宜」的變體（組員 80cc719 已證死）。
+2. ~~**M71 剩下四個 gated-off 旗標**~~ ✅ **2026-07-31 量完 = M75（四個全 RED，`M75_REPORT.md`）**：全域 overlay 形式、OOS 240 判準。CORNER/REPACK **恰 0.0000%**（340 案全 pool 零 profile 輸出改變）、SLIDE 恰 0（候選有動但全輸 proxy argmin，且只在 n≤55）、PERMUTE **−0.0111% OOS**（in-set 卻是 +0.0104%，**符號翻了**）。四旗標全聯集逐位等於 PERMUTE。⇒ **M71 軸關閉**。
+3. **組員 M73 escape tier（正交，未量）**——commit `7403758`：append knob-off 的 profile 副本讓被 M71 弄壞的案子逃生，他們量到 local100 `1.301212`（11 好/0 壞）、OOS +0.288%。⚠️ **我們的 M74 `1.293461` 已優於它**，但機制與 M74 正交值得量；且他們**沒有 `audit_cache.pkl`**（48c wall 全靠推論），這題只有我們能結。`_M73_SRC=(2,22,23,25)` 是對 M71 的 17 個退步案配的，換 M74 底下要重推。
+4. **低優先**：M62 micro-cap skip gate（唯一還活著的 in-window LP 形態，前置 = pre-build 時間預測器 + 機速校準）。
+5. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它變便宜」的變體（組員 80cc719 已證死）。
+
+> 🗓️ **Final deadline = 2026-08-21**（組員 `HANDOFF_2026-07-30.md`，我方原本只記了 Beta）。
+> 📋 **每個 session 開始前**：`cd C:\Users\Nordra\Downloads\teammate_iccad_study\Iccadcontest2026 && git fetch origin`，再讀 `git show origin/main:ATTEMPTED_ROUTES_AND_DEAD_ENDS.md`（本地 clone 常落後數個 commit；該檔本身也可能停在舊日期，要另看新 commit 的 README）。
 
 ## 死路 ledger（勿重試）
 
@@ -107,6 +111,8 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 - **組員 `80cc719` Route 1 / Route 3 ❌ 皆 RED**（2026-07-29 我方重算；`[[teammate-80cc719-route1-route3]]`）：Route 1（M71 winner + 全域 LP）1.2914 但 runtime ×2.22 ⇒ RF **+14.7~31%**；Route 3（只放開 top-12 HPWL 貢獻 block）**−0.0158%**（82% 來自 case 99 單案）+0.20s/案 ⇒ **+0.82~5.77%**。**🔑 Route 3 反向複驗 M62 的 α/β 分解**：LP 的 pairwise 建構是 **O(n²)、與幾個 unit 真的自由無關** ⇒ 縮小自由集只讓 solve 免費、build 照付，品質剩 1/50 ⇒「縮小 LP 省時」正式死。**🚨 他們的 LP run-to-run 非確定**（HiGHS `time_limit`=5.5s 在重案觸發，case 91 兩次 cost 不同）⇒ 我方未來任何 in-window LP **必須關掉 time_limit 或證明它不觸發**。唯一資產 = 離線錨 **1.2914**（不可送件）。
 
 ### quality 軸 RED（結構性）
+
+- **M75 M71 剩下四個旗標（2026-07-31 全 RED；`M75_REPORT.md`、`[[m75-m71-residual-knobs-red]]`）**——全域 overlay 形式（**不是** M72 的 pool tier），OOS 240 判準、bar +0.3%。錨 OOS `1.576749` / in-set `1.293461035`。**CORNER 與 REPACK = 恰 0.0000%**（in-set 100 + OOS 240 共 340 案 × 全 pool，**零**個 profile 的 binary 輸出改變）；**SLIDE = 恰 0**（52 個 (case,profile) 有動，但**全部在 n≤55 的小案且全輸 proxy argmin** ⇒ portfolio movers 0/240）；**PERMUTE = −0.0111% OOS**（4 movers：n=73 **−15.65%**、n=76 −1.40%、n=60 −0.86%，但 n=104 **+4.58%** 在 `exp(n/12)` 下全吃掉）。**四旗標全聯集逐位等於 PERMUTE**——已實測：以 M71+PERMUTE+SLIDE 為底再加 CORNER/REPACK/兩者，**7900 個 pair 改變數 0** ⇒ 15 個 arm 的矩陣合法塌縮。⚠️ **前件全部非空**（REPACK 216/240 案、SLIDE 198、PERMUTE 182、CORNER 67）⇒ 這**不是** M60 那種前件空集，而是「前件活、效果被吸收」：REPACK 的 ±9000 偏置對既有 `BP_W*bp`=30000 幾乎恆保序；CORNER 的候選從未嚴格勝出；SLIDE 的三重 guard 在 compaction 後緊密版圖上幾乎必失敗。**🔑 教訓：in-sample 不只會藏住 OOS 差距，還會給相反符號**——PERMUTE 的 in-set 是 **+0.0104%（正）**、OOS **−0.0111%（負）**，只看 local100 會判成弱 GREEN。**🔑 方法論：liveness 不可用 portfolio 輸出判**（旗標能改候選卻改不動 proxy argmin ⇒ 四個都報「零差異」的假 RED），要用 **per-profile binary 輸出**；而且一旦證明某案全 pool profile 逐位相同，該案 portfolio 就可證明不變 ⇒ 只解活案即得**精確**加權 delta，比抽樣 arm 又快又嚴格（本輪 ~71000 runs / 0 失敗，取代 4×15 分鐘 arm）。**組員的 +1.287%~+1.531% 是整包 profile 配方的增益，不是這些旗標的**。
 - **M27 global packer / M40 reconstruction slicing builder**：見戰略結論 2/3（`[[m40_reconstruction_red]]`、`[[recon_index_leak_probe]]`）。
 - **M57 frozen violator 重錨 LP**：41/41 infeasible。61% 是 frozen-vs-frozen 幾何**絕對死**、39% 固定拓撲 separation 鏈死。
 - **M58 `compute_nsoft` 官方分母**：spec 落差真實且 live（29 案觸及、case 6 −3.31%）但 weighted **−0.0001%**（觸及全在低權重小案、n>100 恰 0）。
@@ -177,7 +183,7 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - 關後處理：`NO_COMPACT`/`NO_REFINE`/`NO_PUSH`/`NO_BND_PUSH`/`NO_SWAP`/`NO_JUMP`；`PUSH_PASSES=N`、`COMPACT_ITERS=N`、`REFINE_ITERS=N`
 - pack-order：`WIRE_TIEBREAK`、`WIRE_BFS`、`BFS_PIN`、`ORDER_SWAP=K`、`ORDER_MOVE=K`、`GUIDE_MED`
 - **free-aspect 六子軸**（全 gated、off=bit-identical）：`FREE_ASPECT`（single interior，`FREE_RATIOS`）／`LR_ASPECT`+`TB_ASPECT`（decoupled **uniform** boundary）／`CLUSTER_ASPECT=r`（uniform reshape 純 movable interior 成員）／`FREE_CLUSTER`+`FREE_CLUSTER_RATIOS`（per-member，layout-key 仲裁、build-time 免抬牆）／`FREE_ANCHORED`+`FREE_ANCHORED_RATIOS`+`FREE_ANCHORED_BND`（mixed cluster 成員在 wall-attach 搜 aspect）／`MIB_ASPECT=r`
-- **🏆 M71 六旗標**（全部預設 0 = binary 單獨逐位不變）：`ICCAD_CLUSTER_BND_EXPOSE`、`ICCAD_CLUSTER_BND_EDGE_PACK`（wrapper `_m71_env()` 只開這兩個）；**未量過的四個** = `CLUSTER_BND_CORNER`、`ANCHORED_BND_REPACK`、`CLUSTER_BND_PERMUTE`、`HPWL_SAFE_CLUSTER_SLIDE`（見「下一步」3）。`ICCAD_M71=0` 逐位還原 pre-M71
+- **🏆 M71 六旗標**（全部預設 0 = binary 單獨逐位不變）：`ICCAD_CLUSTER_BND_EXPOSE`、`ICCAD_CLUSTER_BND_EDGE_PACK`（wrapper `_m71_env()` 只開這兩個）；**另外四個 = M75 已量、全 RED，勿再試** = `CLUSTER_BND_CORNER`／`ANCHORED_BND_REPACK`（恰 0.0000%，340 案零 profile 輸出改變）、`HPWL_SAFE_CLUSTER_SLIDE`（恰 0，只在 n≤55 動且全輸 argmin）、`CLUSTER_BND_PERMUTE`（**−0.0111% OOS**）。`ICCAD_M71=0` 逐位還原 pre-M71
 - 死路（code 保留 gated off）：`BFS_NORM`、`CLUSTER_ORD=1/2`、`REFRAME`、`FREE_CLUSTER_BND`
 - 離線探測（永不 ship）：`ORDER_FILE`+`ORDER_GLOBAL`（oracle-perm）、`ML_ANCHOR`（M68，在 `constructive_m68.cpp`）
 - `ICCAD_CONSTRUCTIVE_SINGLE=1` 退單 base profile
@@ -206,7 +212,7 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - **`m48_coldstart_dryrun.py`** — 冷啟動四 phase（含 `opwrapper` variant）
 - **`rf_score_model.py`** — RF 投影 + M42/M45 drop 常數 regen + drift asserts（讀 **`audit_cache_ship.pkl`**；`ICCAD_REGEN=1` 把四個 drift assert 降級成 warning，讓一次跑就印出全部三組建議常數）；**`m67e_rf48.py`** — 48c 投影（`gate0/calib/fit/project/report`，投影看 `restoreIdx`）
 - **`m49_refine_probe.py`** `trace|variant K [big|mid]` — REFINE band gate；**`m67g_tier5_gate.py`** — tier-5 池身分閘（V1 基準用 kill switch，不可比 HEAD）
-- **`m67_oos_probe.py`** — OOS 泛化（`gate0/run/report/ref/pool0/restore`，`--pool0-lo/-hi` 選帶）；`m67_oos_cache.pkl`。**arms = `pool`（M42+tier-3 還原）/`refine`/`m55`（M72 tier + M71 全域 off = 組員原形）/`m55x`（tier 疊在 M71 上）**；無 `full` 端點時自動退成 A/B 報告並 dump `results_M72_ab_<arm>_<lo>_<hi>.json`。⚠️ cache sig 含 `repr(_PROFILES)` ⇒ **加/減 profile 會清空整個 cases 桶**；若已證 knob-off 池逐位不變，可改寫 sig 保留（2026-07-30 M72 移植即如此，備份 `m67_oos_cache.pkl.preM72`）
+- **`m67_oos_probe.py`** — OOS 泛化（`gate0/run/report/ref/pool0/restore`，`--pool0-lo/-hi` 選帶）；`m67_oos_cache.pkl`。⚠️ **錨已於 M75 更新為 `results_M74_default.json` / `IN_SET_TOTAL=1.293461035226291`**（原本指著檔名誤導的 `results_shipped_m51.json`＝M71 內容，且 `IN_SET_TOTAL` 還是 pre-M71，不修會把 M74 自己的 14 個 movers 報成 arm 的）。🚨 **跑完變體 sweep 要把 live cache 還原成預設組態**——M75 開場就撞到 tree 上的 `m67_oos_cache.pkl` 是某個 M74 變體殘留、sig 對不上，`gate0` 一載入就清空 240 案（從 `m67_oos_cache.pkl.M74k6` 還原）。**arms = `pool`（M42+tier-3 還原）/`refine`/`m55`（M72 tier + M71 全域 off = 組員原形）/`m55x`（tier 疊在 M71 上）/ M75 的 15 個 `m71*` 純 C++ 旗標 arm（4 單 + 6 pair + 4 triple + 1 union，全 RED）**。arm 名不進 `_sig()` ⇒ 加 arm 不會作廢 cache；無 `full` 端點時自動退成 A/B 報告並 dump `results_M72_ab_<arm>_<lo>_<hi>.json`。⚠️ cache sig 含 `repr(_PROFILES)` ⇒ **加/減 profile 會清空整個 cases 桶**；若已證 knob-off 池逐位不變，可改寫 sig 保留（2026-07-30 M72 移植即如此，備份 `m67_oos_cache.pkl.preM72`）
 - **`profile_audit.py [base|ship]`** — **M74 起有兩個模式**：`base`→`audit_cache.pkl`（M71 env + REFINE=12，給 m49 的 K=12 control）、`ship`→`audit_cache_ship.pkl`（再疊 `_band_env(n)`，給 pool drop 推導）。約 8-11 分／顆，**必須序列跑**（dt 是量測值）、**`profile_vs_portfolio.py KEY=VAL`**（新 profile 增益，bar 0.05%）、`analyze_constructive.py`、`portfolio_ceiling.py`、`rh_sweep.py`、`proxy_analysis.py`（27 個工具依賴，勿刪）
 - **`m53_diff_results.py`** — 兩份官方 results json 的總分/加權 delta/逐案 movers。錨：`results_L1_final.json`、`results_L3_port_top32_area.json`、**`results_shipped_m71.json`（= 出貨錨 1.305389893450635，`make_submission.verify` / `m67c` T3 都比這顆）**、`results_M73_cores48.json`（48c/tier-5 錨 1.295547821428148）、**`results_M74_default.json`（1.293461 = 現在 tree 的分數）**、`results_M74_cores48.json`（48c 同值）、`results_M74_pool0.json`（1.2929 天花板）、`results_shipped_preM71.json`（1.3265）、`results_shipped_m51.json`（**檔名誤導**：內容已是 M71，留著相容舊 probe）。⚠️ 這些錨檔**未進 git**（沿用舊慣例），但 gate 依賴它們——換機器要一起帶。
 - **RED 存檔 probe（勿重跑求更好的數字）**：`m52_phase0_probe.py`、`m53_l2_probe.py`、`m53_l3_probe.py`、`m54_lp_rf_model.py`、`m55_dropset_cv.py`、`m56_percase_oracle.py`、`m57`~`m61`（各配 `constructive_mXX.cpp`）、`m62_break_even.py`、`m63_vio_bound.py`、`m64_flip_probe.py`、`m65_l1_cell.py`、`m66_equiv_cv.py`、`m67f_contention_probe.py`、`m68_ml_seed_probe.py`、`oracle_perm_probe.py`、`dbg_seqpair.py`、`recon_slice_probe.py`、`tree_decode_probe.py`

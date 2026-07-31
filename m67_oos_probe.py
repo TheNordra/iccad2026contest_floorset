@@ -26,7 +26,7 @@ Design (measured facts, see M67_PLAN.md / M67D_REPORT.md):
 
 Modes:
   gate0   env/pool hygiene + 3 in-set cases reproduced BIT-EXACTLY vs
-          results_shipped_m51.json + training-side baseline sanity
+          results_M74_default.json + training-side baseline sanity
   run     the OOS sweep (resumable; cache m67_oos_cache.pkl)
   report  tables + results_M67D_oos.json
   ref     single-profile (ICCAD_CONSTRUCTIVE_SINGLE=1) reference on both sets,
@@ -41,6 +41,7 @@ import contextlib
 import glob
 import hashlib
 import io
+import itertools
 import json
 import math
 import os
@@ -72,10 +73,19 @@ import optimizer_constructive as oc                                 # noqa: E402
 SEED = 67
 VERSION = 1
 CACHE_PATH = _DIR / "m67_oos_cache.pkl"
-ANCHOR_JSON = _DIR / "results_shipped_m51.json"
+# M75: the in-set anchor was two generations stale. It pointed at
+# results_shipped_m51.json (a misleading filename: its CONTENT is M71,
+# 1.305389893450635) while IN_SET_TOTAL still held the pre-M71 1.326473...,
+# and the tree has been M74 since 2026-07-30. The OOS baseline in
+# m67_oos_cache.pkl IS already M74 (its _sig() pins exe md5 a576feb61079 plus
+# the regenerated drop constants), so leaving the anchor behind would have made
+# Gate B report M74's own 14 movers -- 47/49/51/55/62/67/68/77/79/85/87/89/91/96,
+# i.e. exactly the cluster-heavy cases an M71-knob arm is supposed to move -- as
+# if the arm had caused them. Cache-neutral: _sig() does not read either name.
+ANCHOR_JSON = _DIR / "results_M74_default.json"
 DUMP_JSON = _DIR / "results_M67D_oos.json"
 
-IN_SET_TOTAL = 1.326473104916827        # results_shipped_m51.json total_score
+IN_SET_TOTAL = 1.293461035226291        # results_M74_default.json total_score
 BANDS = (("S", 20, 60), ("M", 60, 100), ("B", 100, 130))
 HEAVY_LO = 100                          # n > HEAVY_LO gets --heavy-per-n draws
 GATE_INSET_IDS = (0, 50, 99)
@@ -429,7 +439,7 @@ def mode_gate0(args):
 
     print()
     print("=" * 78)
-    print("GATE 0-b  in-set bit-exact reproduction vs results_shipped_m51.json")
+    print(f"GATE 0-b  in-set bit-exact reproduction vs {ANCHOR_JSON.name}")
     print("=" * 78)
     ev = _inset_dataset()
     _j, arec = _anchor()
@@ -591,7 +601,7 @@ def mode_report(args):
     print()
     print(f"  OOS raw total (per-n mean, official weighting) : {oos_total:.4f}")
     print(f"  OOS raw total (naive over all cases)           : {naive:.4f}")
-    print(f"  in-set (results_shipped_m51.json)              : {IN_SET_TOTAL:.4f}")
+    print(f"  in-set ({ANCHOR_JSON.name})              : {IN_SET_TOTAL:.4f}")
     print(f"  delta raw                                      : "
           f"{oos_total - IN_SET_TOTAL:+.4f} "
           f"({(oos_total / IN_SET_TOTAL - 1) * 100:+.2f}%)")
@@ -910,10 +920,85 @@ def mode_pool0(args):
 #                                     base, so it answers "does their number hold")
 #   m55x = tier ON, M71 global ON   -> the union; the only form that is a candidate
 #                                     for OUR tar, since M71 is already shipped
+#
+# M75 arms (2026-07-31). The four cluster-boundary knobs M71 ported but never
+# measured, each as a GLOBAL OVERLAY on top of shipped M71 -- deliberately NOT
+# the pool-tier form, which M72 already measured at -1.418% OOS for us. These
+# are pure C++ env vars, so they reach the binary a different way than the other
+# arms: _run_profile does `env = dict(os.environ); env.update(env_over)`, and no
+# shipped profile (_PROFILES[:_M55_BASE_LEN]) sets any of these four keys, so
+# putting them in os.environ IS a global overlay. Gate A asserts exactly that.
+_M75_KNOBS = {"m71corner": "ICCAD_CLUSTER_BND_CORNER",
+              "m71permute": "ICCAD_CLUSTER_BND_PERMUTE",
+              "m71repack": "ICCAD_ANCHORED_BND_REPACK",
+              "m71slide": "ICCAD_HPWL_SAFE_CLUSTER_SLIDE"}
+
 _ARMS = {"pool": {"ICCAD_M67F_RESTORE": "1"},
          "refine": {"ICCAD_ADAPTIVE_REFINE": "0"},
          "m55": {"ICCAD_M55_POOL": "1", "ICCAD_M71": "0"},
          "m55x": {"ICCAD_M55_POOL": "1"}}
+_ARMS.update({a: {k: "1"} for a, k in _M75_KNOBS.items()})
+# Combination arms for the M75 phase-2 pairwise matrix + full union. Named by
+# joining the single-arm names with "_" so the knob set is readable from the
+# filename of results_M72_ab_<arm>_<lo>_<hi>.json.
+for _n in range(2, len(_M75_KNOBS) + 1):
+    for _combo in itertools.combinations(sorted(_M75_KNOBS), _n):
+        _ARMS["_".join(_combo)] = {_M75_KNOBS[a]: "1" for a in _combo}
+_M75_ARMS = frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"}
+
+# Liveness screen cases: a spread over the three weight bands, biased to cases
+# that carry the cluster structures these knobs act on. The screen is PER
+# PROFILE, not per portfolio -- see _m75_liveness.
+_M75_LIVE_IDS = (3, 26, 54, 76, 89, 99)
+
+
+def _m75_liveness(env_over):
+    """Does the knob change what the BINARY emits, for any profile in the pool?
+
+    Deliberately not a portfolio-level comparison. A knob can change several
+    candidates and still lose the proxy argmin, so comparing final positions
+    reports 'no difference' for a knob that is demonstrably doing something
+    (measured 2026-07-31: CLUSTER_BND_PERMUTE changes profile #26 on in-set
+    case 89 and 5 profiles on case 76, yet the portfolio winner is unchanged on
+    both). Per-profile difference is the NECESSARY condition: if no profile's
+    output moves, the portfolio result is bit-identical and an OOS arm on that
+    knob is guaranteed to measure exactly 0.000%.
+
+    Passing the knob through env_over (not os.environ) keeps this independent
+    of the propagation path, so a FAIL here means the mechanism is inert, not
+    that the plumbing is broken.
+    """
+    from optimizer_claude import _serialize_input
+    ev = _inset_dataset()
+    # _theta_gate_a has already pushed the arm into os.environ, and _run_profile
+    # starts from `dict(os.environ)` -- so without this the knob would be ON for
+    # BOTH sides of the comparison and every arm would report a flat zero.
+    saved = {k: os.environ.pop(k, None) for k in env_over}
+    detail, nlive, npair = {}, 0, 0
+    try:
+        for cid in _M75_LIVE_IDS:
+            lay = _inset_lay(ev, cid)
+            n = lay["n"]
+            inp = _serialize_input(n, lay["at"], lay["b2b"], lay["p2b"],
+                                   lay["pins"], lay["cons"], None,
+                                   gnn_hint=None)
+            band = dict(oc._band_env(n))
+            moved = 0
+            idxs = oc._pool_indices(n)
+            for i in idxs:
+                base = dict(oc._PROFILES[i], **band)
+                base.update(oc._m71_env())
+                a = oc._run_profile(base, inp, n)
+                b = oc._run_profile(dict(base, **env_over), inp, n)
+                moved += (a is not None and b is not None and a != b)
+            detail[cid] = f"{moved}/{len(idxs)}p"
+            npair += len(idxs)
+            nlive += moved
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+    return {"nlive": nlive, "npair": npair, "detail": detail}
 
 
 def _theta_gate_a(arm):
@@ -1000,6 +1085,35 @@ def _theta_gate_a(arm):
         os.environ["ICCAD_M55_POOL"] = "1"
         chk("RUNTIME flip works (gate resolves per call)",
             flipped_off == off[120] and len(oc._pool_indices(120)) == on[120])
+    elif arm in _M75_ARMS:
+        # A pure C++ knob must move the BINARY and nothing on the Python side.
+        chk("knob leaves every pool untouched (C++-only arm)", on == off,
+            f"{off} -> {on}")
+        chk("knob leaves the REFINE band untouched", on_be == off_be, str(on_be))
+        # We are measuring ON TOP OF shipped M71, not instead of it.
+        chk("_m71_env() still exports the shipped M71 knobs",
+            oc._m71_env() == dict(oc._M71_ENV), str(oc._m71_env()))
+        # _run_profile does `env = dict(os.environ); env.update(env_over)`, so a
+        # profile that sets the same key would WIN over os.environ and the
+        # overlay would silently not be global. The four _M55_EXTRA profiles do
+        # carry these keys, which is exactly why this checks the shipped prefix.
+        clash = sorted({k for k in _ARMS[arm]
+                        for p in oc._PROFILES[:oc._M55_BASE_LEN] if k in p})
+        chk("no shipped profile overrides the knob (overlay really is global)",
+            not clash, str(clash))
+        # LIVENESS. Without this a knob that never fires on this corpus reports
+        # "0.000%, 0 movers" -- indistinguishable from a clean RED. Cached per
+        # (arm, exe md5) so re-reporting a narrower band costs nothing.
+        lk = f"{arm}@{_exe_md5()}"
+        live = _C.setdefault("m75_live", {}).get(lk)
+        if live is None:
+            live = _m75_liveness(_ARMS[arm])
+            _C["m75_live"][lk] = live
+            _csave()
+        chk("knob is LIVE (some profile's binary output changes)",
+            live["nlive"] > 0,
+            f"{live['nlive']}/{live['npair']} (case,profile) pairs move; "
+            f"per-case {live['detail']}")
     else:
         chk("norefine keeps the shipped pool", on == off, str(on))
         chk("norefine clears the REFINE band",
@@ -1079,6 +1193,12 @@ def mode_restore(args):
         # NOT a superset: this arm also turns the M71 global overlay OFF, so it is
         # the teammate's knob-free base + their tier. Movers both ways are expected.
         expect = "M71 global OFF + M72 tier => movers both ways expected"
+    elif arm in _M75_ARMS:
+        # NOT a pool superset: a global C++ knob changes what EVERY profile in
+        # the pool emits, so the proxy's oracle-min argument does not apply and
+        # an in-set regression is a legitimate result, not a knob bug. This arm
+        # must therefore never reach the strict "never WORSE" branch above.
+        expect = "M71 residual knob (global overlay) => movers both ways expected"
     else:
         expect = "M49/M50 trade => movers expected"
     print(f"GATE B  in-set {sel}: {arm} vs shipped ({expect})")
