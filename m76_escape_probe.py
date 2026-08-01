@@ -300,10 +300,14 @@ def mode_oracle(args):
     print("=" * 78)
     print("M76 mode=oracle — is there anything left for an escape tier under M74?")
     print("=" * 78)
-    ship = portfolio(lambda n: _pool_at(n, CORES_LOCAL))
+    cores = args.cores
+    print(f"  pool shape @{cores}c "
+          f"(tier-5 {'ON' if cores >= 40 else 'off'}, "
+          f"tier-3 {'off' if cores > 16 else 'ON'})")
+    ship = portfolio(lambda n: _pool_at(n, cores))
     # The knob-off endpoint uses the SAME pool cuts, only the overlay differs:
     # that isolates the knobs, which is what the tier arbitrates over.
-    off = portfolio(lambda n: [ESC0 + i for i in _pool_at(n, CORES_LOCAL)])
+    off = portfolio(lambda n: [ESC0 + i for i in _pool_at(n, cores)])
     _csave()
 
     # The REALIZABLE ceiling of the mechanism: escape tier with all N_LIVE hosts,
@@ -311,7 +315,7 @@ def mode_oracle(args):
     # is a deployable configuration, and it can beat both endpoints because the
     # proxy chooses over the union (a knob-off host that loses inside the knob-off
     # portfolio can still win inside the mixed pool).
-    uni = portfolio(lambda n: pool_esc(n, CORES_LOCAL, range(N_LIVE)))
+    uni = portfolio(lambda n: pool_esc(n, cores, range(N_LIVE)))
     _csave()
 
     t_ship, t_off, t_uni = weighted(ship), weighted(off), weighted(uni)
