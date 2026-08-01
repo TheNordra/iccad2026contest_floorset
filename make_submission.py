@@ -37,7 +37,7 @@ Modes:
                                        OFFICIAL command (cwd=verify/cadc1075):
                                            python iccad2026_evaluate.py --evaluate op_wrapper.py
                                        and bit-compare all 100 cases against
-                                       results_shipped_m71.json (1.305389893450635)
+                                       results_M74_default.json (1.293461035226291)
     python make_submission.py all      both (default)
 
 Importable without side effects; m48_coldstart_dryrun.py's `opwrapper` variant
@@ -61,7 +61,10 @@ _BUILD = _REPO / "build_submission"
 _STAGE = _BUILD / _TEAM
 _TAR = _BUILD / f"{_TEAM}.tar.gz"
 _VERIFY = _BUILD / "verify"
-_ANCHOR = _REPO / "results_shipped_m71.json"
+# M76 ship chain: the anchor follows what the tree actually produces. It was
+# results_shipped_m71.json (1.305389893450635 = the uploaded Beta package); the
+# tree has been M74 since 2026-07-30 and M74 is what this package now carries.
+_ANCHOR = _REPO / "results_M74_default.json"        # 1.293461035226291
 _RESULTS_NAME = "results_m67b_opwrapper.json"
 
 _CONDA_PY = Path(r"C:\Users\Nordra\.conda\envs\iccadv\python.exe")

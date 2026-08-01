@@ -10,7 +10,7 @@ docker-linux-coldstart-verify) that:
       fallback, 4 phases)
   T3  extracts the staged cadc1075.tar.gz, injects the T1 binaries, runs the
       OFFICIAL command `python iccad2026_evaluate.py --evaluate op_wrapper.py`
-      and bit-compares all 100 cases vs results_shipped_m71.json with a
+      and bit-compares all 100 cases vs results_M74_default.json with a
       <2e-9 ULP warn band (expected: case 84 only) -- plus the hard
       bundled-binary-first proof: no constructive.exe compile artifact
   T4  corrupts bin/constructive_linux and re-runs ONE case: the M67-A
@@ -39,7 +39,9 @@ _SOURCES = (
     "constructive.cpp", "optimizer_claude.cpp",
     "optimizer_constructive.py", "optimizer_claude.py",
     "make_submission.py", "m48_coldstart_dryrun.py",
-    "results_shipped_m71.json", "results_M73_cores48.json",
+    # M76 ship chain: the bundle must carry the anchors ANCHOR/ANCHOR48 now point
+    # at, or T3/final48 inside WSL would compare against a file that is not there.
+    "results_M74_default.json", "results_M74_cores48.json",
 )
 
 # ── embedded WSL2 scripts (written with LF endings) ──────────────────────────
@@ -187,7 +189,7 @@ t3           extract cadc1075.tar.gz, overlay evaluator + loader closure +
              dataset symlink (mirrors make_submission.verify mechanics),
              inject the T1 binaries, run the OFFICIAL command, assert
              bundled-binary-first engaged (no on-site compile artifact),
-             ULP-tolerant bit-compare vs results_shipped_m71.json
+             ULP-tolerant bit-compare vs results_M74_default.json
 t4           fresh extract, corrupt bin/constructive_linux, run ONE case via
              ContestEvaluator: the M67-A fallthrough must on-site-compile
              (constructive.exe appears) and stay digit-equal
@@ -196,8 +198,9 @@ final <tar>  t3 flow on a given FINAL tar (binaries already inside; nothing
 final48 <tar>
              same, but with ICCAD_ADAPTIVE_CORES=48 so the M67-F tier-5 branch
              actually fires on Linux (WSL nproc is 16 -> tier-5 would stay off).
-             Compares against results_M73_cores48.json (1.295547821428148); the
-             5 heavy-band movers (85/87/89/91/96) are EXPECTED, not a regression.
+             Compares against results_M74_cores48.json (1.293461035226291 —
+             under M74 the 48c total equals the default one; the heavy-band
+             movers tier-5 produces are already inside that anchor).
 """
 import json
 import os
@@ -209,8 +212,11 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-ANCHOR = ROOT / "results_shipped_m71.json"
-ANCHOR48 = ROOT / "results_M73_cores48.json"   # tier-5 fired (ADAPTIVE_CORES=48)
+# M76 ship chain: both anchors follow the tree, which has been M74 since
+# 2026-07-30. Previously results_shipped_m71.json (1.305389893450635) and
+# results_M73_cores48.json (1.295547821428148) = the uploaded Beta package.
+ANCHOR = ROOT / "results_M74_default.json"     # 1.293461035226291
+ANCHOR48 = ROOT / "results_M74_cores48.json"   # tier-5 fired (ADAPTIVE_CORES=48)
 LOADERS = ("litetestLoader.py", "lite_dataset_test.py", "liteLoader.py",
            "lite_dataset.py", "prime_dataset.py", "cost.py", "utils.py",
            "visualize.py")
