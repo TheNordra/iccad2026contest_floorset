@@ -11,9 +11,11 @@
 - 真天花板 **1.1079**（`fp_sol` verbatim），headroom 100% 在 quality（violation 已贏）。組員 1.0322 是 **label oracle**（hidden test 不適用）；legit 上限 ~1.62。
 - 但 **reconstruction 本身 RED**（M40）：X 結構無法從 connectivity 還原、Y 序需 label。⇒ 走「更好的 placer / 更聰明的 portfolio」而非「還原」。
 
-### 現況一句話（2026-07-31）
-- **已上傳的 Beta tar = 1.3054（M71/M73，md5 `ba694bc6…`）⇒ Beta 主線結案**。
-- **tree 上的 local 最佳 = 1.293461（M74 常數 regen，2026-07-30）**，比已上傳的包好 **−0.769%**（48c 形狀 −0.158%），**尚未出貨**（Final 議題，deadline 2026-08-21，換件鏈見 `M74_REPORT.md` §7）。M74 的 **OOS 240 = 1.576749**，對 M71 的 1.586461 是 **−0.616%**（同號、幅度相當 ⇒ 非樣本內過擬合）。
+### 現況一句話（2026-08-01）
+- **Beta 已結案**：上傳的是 1.3054（M71/M73，md5 `ba694bc6…`）。**使用者 2026-08-01 裁示不換件** ⇒ 那顆就是 Beta 的最終答案，不要再動它。
+- **tree 上的 local 最佳 = 1.293461（M74 常數 regen）**，比已上傳的包好 **−0.769%**（OOS 240 −0.616%，同號 ⇒ 非樣本內過擬合）。**換件包已備妥並在 Windows 端驗過，等 Final（8/21）出貨**，只差 GPU 機那關。
+- **古典線收斂**：M74（常數）/ M75（M71 殘餘旗標）/ M76（escape tier）三個 milestone 把最後三個候選全關了。剩下的 M62 只值 +0.06%，而 M76 的 +0.087% 已判 RED。
+- **新局面 = 組員全力轉 ML-as-placer**（學長 `cadc1106` 截圖 1.1747，比我方好 −9.2%）。**我方角色 = 判定不是訓練**（本環境禁訓），工具 `m77_ml_candidate_probe.py` 已建好驗過。見「ML 現況」。
 - 四大軸狀態：**quality 軸**——M26/M27/M40 三面天花板仍成立；M71 曾證明 cluster 複合 item 的「候選集合／排序 key」是漏掉的軸（−1.589% in-set / −4.04% OOS），但 **M75 已把該軸的殘量掃完＝四個旗標全 RED ⇒ M71 軸關閉**，**M76 又把「讓被 M71 弄壞的案子逃生」這條補丁軸也關掉（48 核形狀只剩 +0.10%，被 tier-5 吃掉）**；**RF 軸**——M41-M50 七槍 + tier-5 已 ship；**LP 軸**——offline GREEN（錨 1.2914）、in-window RED（M54/M62/組員 80cc719）；**ML 軸**——四種插入點全 RED（M52 生成、M56 selector、M68 seed、LP refinement）。
 - 送件 hardening（M43/M48/M67-A~G）全部完成，Linux binary 雙邊逐位驗過。
 
@@ -83,15 +85,36 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 5. **🚨 但 quality 軸沒有 converged**（M40 的「converged」已被 M71 推翻）：M33-M39 掃的全是**成員 aspect**，沒人動過複合 item 的**候選集合與排序 key**。M71 −1.589% 就在那個洞裡。⇒ 找洞要找「從沒被參數化的結構決策」，不是再掃已知旋鈕的值。
 6. **ML 四種插入點全 RED**：生成（M52 imitation 零容錯×零訊號）、selector（M56 winner case-idiosyncratic + proxy 已 oracle）、seed（M68 完美種子 vs portfolio 僅 +0.001%）、refinement（LP 系列 + M64）。重開唯一條件 = 取得 rival 1.29 的 legit 方法細節。
 
-## 下一步（依 ROI）
+## 下一步（依 ROI）— 更新於 2026-08-01
 
-> **換件（M73）已於 2026-07-30 完成並上傳**，見「📦 送件狀態」。以下全是 Final 議題。
+> **只列還沒做的事。** 已收斂的軸（M74 / M75 / M76）在死路 ledger，不在這裡。
+> **本節在每個 milestone 收尾時必須改寫**，見 `[[keep-next-steps-current]]`。
 
-1. ~~**adaptive stack 常數 regen**~~ ✅ **2026-07-30 做完 = M74（GREEN，1.293461，未出貨）**，見 `M74_REPORT.md`。⇒ 現在的第一順位是**決定要不要為 Final 把 M74 出貨**（換件鏈 + 改 `_ANCHOR` 指向，見 M74_REPORT §7）。⚠️ M67-F 當年「mid band 放寬 RED」的結論**已被 M74 推翻**：那是用舊（錯的）常數量的，正解是把 tier-3 降級成 cores-gated。
-2. ~~**M71 剩下四個 gated-off 旗標**~~ ✅ **2026-07-31 量完 = M75（四個全 RED，`M75_REPORT.md`）**：全域 overlay 形式、OOS 240 判準。CORNER/REPACK **恰 0.0000%**（340 案全 pool 零 profile 輸出改變）、SLIDE 恰 0（候選有動但全輸 proxy argmin，且只在 n≤55）、PERMUTE **−0.0111% OOS**（in-set 卻是 +0.0104%，**符號翻了**）。四旗標全聯集逐位等於 PERMUTE。⇒ **M71 軸關閉**。
-3. ~~**組員 M73 escape tier（正交，未量）**~~ ✅ **2026-08-01 量完 = M76（RED，`M76_REPORT.md`）**：評分機的 48 核池形狀下三個變體全部只剩 **≈+0.10% OOS**（bar 0.30%）。**escape tier 與 tier-5 是替代品**——tier-5 放回的 22 隻已經救掉大半。程式碼留 tree 內預設 off。
-4. **低優先**：M62 micro-cap skip gate（唯一還活著的 in-window LP 形態，前置 = pre-build 時間預測器 + 機速校準）。
-5. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它變便宜」的變體（組員 80cc719 已證死）。
+1. **Final 保底包收尾（唯一純執行、零不確定性的項目）**
+   M74 換件包已備妥並在 Windows 端驗過（見「📦 送件狀態」）。**只差 GPU 機 WSL 的
+   `verify_final_tar.sh`**（bundle 已建好在 `C:\Users\Nordra\Downloads\m67c-linux-verify.tar.gz`、
+   md5 `b3989af0a0958488a77df6629cef6d04`，內嵌 tar 與磁碟上那顆同 md5）。
+   ⚠️ **Beta 已過、使用者裁示不換件** ⇒ 這包是給 **Final（8/21）** 的，不要去覆蓋 Beta。
+   做完就免除 deadline 風險，無論 ML 成不成都有東西可送。
+
+2. **ML 候選判定（等組員交件才動得了）**
+   `m77_ml_candidate_probe.py` 的 **in-set 100 已可用且驗過**；**OOS 240 介面未接**。
+   前置 = 組員的 results json（他們的 ladder rung 產出）。
+   ⚠️ **沒有輸入之前先接 OOS 是空轉**——真要先接就要接受可能白做。
+   回報 `M77_ML_GATE_NOTE.md` 已寫好可直接轉給組員（gate 度量錯配 + fallback 錨過期 2.5%）。
+
+3. **Beta 成績出來後：用真實 RF 重新校準**
+   `m67e_rf48.py` 的 alpha 模型現在錨的是 **M10 廉價池那版**的逐案 runtime（p50 0.673s），
+   不是現行 shipped。Beta 官方分一到手就能反推真實 median 與 RF，
+   校準後才知道 tier-5 的賭注（有效並行度 ≥22.5）到底成不成立。**這是唯一還會帶來
+   新資訊的外部事件。**
+
+4. **低優先**：M62 micro-cap skip gate（唯一還活著的 in-window LP 形態，前置 =
+   pre-build 時間預測器 + 機速校準）。⚠️ 離線增益只有 **+0.06%**，而 M76 的 **+0.087%**
+   已被判 RED ⇒ **要做就得先說明為什麼標準不同**，否則就是雙標。
+
+5. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它
+   變便宜」的變體（組員 80cc719 已證死）；**在這台機器上跑訓練**（環境禁訓，見 ML 現況）。
 
 > 🗓️ **Final deadline = 2026-08-21**（組員 `HANDOFF_2026-07-30.md`，我方原本只記了 Beta）。
 > 📋 **每個 session 開始前**：`cd C:\Users\Nordra\Downloads\teammate_iccad_study\Iccadcontest2026 && git fetch origin`，再讀 `git show origin/main:ATTEMPTED_ROUTES_AND_DEAD_ENDS.md`（本地 clone 常落後數個 commit；該檔本身也可能停在舊日期，要另看新 commit 的 README）。
