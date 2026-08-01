@@ -42,7 +42,15 @@
 - OOS 240 案：**48c 評分機形狀 ALL −2.068%（71 好 / 5 壞）**、mid −0.583%。⚠️ 其中 n>100 的 −2.238% 是對「舊常數 @16 核」比的；真 48 核上舊常數也會由 tier-5 還原同一組 35 隻 pool ⇒ **重帶在評分機上新舊相同**，48c 的真增益 = mid 的 −0.583%。
 - 副產物（長期價值）：cache 簽章現在釘 **exe md5 + overlay 常數**。舊簽章只有 `repr(_PROFILES)`，所以 07-10 的 cache 對上 07-29 的 M71 exe 完全偵測不到，**所有離線 gate 一直在量 pre-M71 的 placer**（`profile_audit` / `m49_refine_probe` 都漏了 `_m71_env()`）。
 
-### 📦 送件狀態（Beta deadline **2026-07-31 17:00 GMT+8**）
+### 📦 送件狀態（Beta 已上傳；**Final deadline 2026-08-21**）
+
+> **🚧 2026-08-01 進行中：M74 換件包已在本機備妥並驗過，尚未上傳。**
+> 交付物 `build_submission/cadc1075.tar.gz`（305709 B、6 檔），**`op_wrapper.py` md5 `ce4f34716ea14863e62f68d6970e983d`**（tar md5 `d529c7828e2e8a36a7165e70d9a22ee0`，不可重現、僅供本輪比對）。
+> 已過：`regression_suite.py` **7/7**、`make_submission.py all` + 再一次 `verify`（官方指令逐位 `1.293461035226291`、100/100 feasible）、`m67c_make_linux_bundle.py`（bundle `C:\Users\Nordra\Downloads\m67c-linux-verify.tar.gz`，md5 `b3989af0a0958488a77df6629cef6d04`，**內嵌 tar 與磁碟上那顆同一個 md5**）。
+> **還沒做**：GPU 機 WSL 的 `verify_final_tar.sh`（含 `final48`）、Drive 覆蓋。
+> 所有錨已改指 M74：`make_submission._ANCHOR`、`m67c` 的 `ANCHOR`/`ANCHOR48`/`_SOURCES`。
+
+### 📦 已上傳的舊包（Beta，2026-07-30）
 - **✅ 已上傳 = M73 包（M71 + tier-5），2026-07-30 覆蓋成功**：6 檔、tar md5 `ba694bc6c4c40485b12146d6696dbf7b`（299257 B）、**`op_wrapper.py` md5 `c2e27c9993afd20b5c14934f6ceea8c3`**。⚠️ **tar md5 不可重現**（gzip 內嵌 mtime，每次 stage 都變）⇒ **身分一律看 op_wrapper md5**。
 - 驗證矩陣（Windows / GPU 機 WSL2 **雙邊逐位相同**）：預設 `1.305389893450635`（\|d\|=0、0 ULP warn）、`ICCAD_ADAPTIVE_CORES=48`（tier-5 觸發）`1.295547821428148`；兩輪皆 feasible 100/100、bundled-first OK（無 `constructive.exe` 產物）。48c 的 movers 恰 5 案 85/87/89/91/96、n≤100 逐位不變。
 - 換件鏈（已跑完一輪，Final 照走）= `regression_suite.py`（7 項）→ `make_submission.py all` → `m67c_make_linux_bundle.py` + GPU 機 WSL `verify_final_tar.sh`（現含 round 2b = `final48`）→ Drive 覆蓋。
