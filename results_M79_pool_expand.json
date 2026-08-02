@@ -1,0 +1,82 @@
+{
+ "basis_total": 1.3248458901001505,
+ "rows": {
+  "41": {
+   "family": "M55-dormant-knobs",
+   "oracle_pct": 0.95961579186114,
+   "real_pct": 0.9594492074790697,
+   "wins": 22,
+   "top1_share": 0.4168177290903879,
+   "dt_free_cases": 97,
+   "worst_dt_ratio": 1.1239269551658266
+  },
+  "42": {
+   "family": "M55-dormant-knobs",
+   "oracle_pct": 1.1333427288467193,
+   "real_pct": 1.1333427288467193,
+   "wins": 27,
+   "top1_share": 0.21973810990679332,
+   "dt_free_cases": 96,
+   "worst_dt_ratio": 1.1794228987862883
+  },
+  "43": {
+   "family": "M55-dormant-knobs",
+   "oracle_pct": 1.1441387262969085,
+   "real_pct": 1.143972141914838,
+   "wins": 20,
+   "top1_share": 0.34959473529701773,
+   "dt_free_cases": 95,
+   "worst_dt_ratio": 1.1377169487900867
+  },
+  "44": {
+   "family": "M55-dormant-knobs",
+   "oracle_pct": 1.117971383341325,
+   "real_pct": 1.1178047989592546,
+   "wins": 23,
+   "top1_share": 0.35777738242940016,
+   "dt_free_cases": 95,
+   "worst_dt_ratio": 1.1280403451544436
+  },
+  "45": {
+   "family": "M73-escape-copy",
+   "oracle_pct": 0.0,
+   "real_pct": 0.0,
+   "wins": 0,
+   "top1_share": 0.0,
+   "dt_free_cases": 93,
+   "worst_dt_ratio": 1.0663071387639729
+  },
+  "46": {
+   "family": "M73-escape-copy",
+   "oracle_pct": 0.0,
+   "real_pct": 0.0,
+   "wins": 0,
+   "top1_share": 0.0,
+   "dt_free_cases": 98,
+   "worst_dt_ratio": 1.03055797858536
+  },
+  "47": {
+   "family": "M73-escape-copy",
+   "oracle_pct": 0.0,
+   "real_pct": 0.0,
+   "wins": 0,
+   "top1_share": 0.0,
+   "dt_free_cases": 92,
+   "worst_dt_ratio": 1.0322854965053683
+  },
+  "48": {
+   "family": "M73-escape-copy",
+   "oracle_pct": 0.0,
+   "real_pct": 0.0,
+   "wins": 0,
+   "top1_share": 0.0,
+   "dt_free_cases": 98,
+   "worst_dt_ratio": 1.0252770093626393
+  },
+  "all8": {
+   "oracle_pct": 1.487981483839832,
+   "real_pct": 1.4865498881034351,
+   "total": 1.3051513950033238
+  }
+ }
+}
