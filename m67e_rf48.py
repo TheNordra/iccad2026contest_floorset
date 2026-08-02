@@ -79,8 +79,20 @@ import optimizer_constructive as oc                                  # noqa: E40
 # ── constants ────────────────────────────────────────────────────────────────
 RH, GAMMA, FLOOR = 1.4, 0.3, 0.7
 CORES_BETA = 48                       # Beta: dedicated 48-core ICELAKE
-AUDIT = _DIR / "audit_cache.pkl"
-CACHE = _DIR / "m67e_cache.pkl"
+# M80 (2026-08-02): overlay modes, mirroring profile_audit.py / rf_score_model.py
+# EXACTLY (same flags, same cache-name scheme, same key construction).  Default
+# (no flag) is bit-identical to before -- same AUDIT, same CACHE, same SIG -- so
+# regression_suite.py and every historical number are untouched.
+#
+# WHY this was needed: the ACTUALLY UPLOADED cadc1075 is the M71 submission
+# (_M71_ENV on every profile, default ON) and measures 1.305390 locally, but this
+# file hardcoded the M71-OFF audit cache -> every 48c projection to date sits on
+# pre-M71 positions.  --m71 --kband is the true shipped configuration.
+M71_MODE = "--m71" in sys.argv
+KBAND = "--kband" in sys.argv
+_SFX = ("_m71" if M71_MODE else "") + ("_kband" if KBAND else "")
+AUDIT = _DIR / f"audit_cache{_SFX}.pkl"
+CACHE = _DIR / f"m67e_cache{_SFX}.pkl"      # separate file: never clobbers the default
 ANCHOR = _DIR / "results_shipped_m51.json"
 OOS_CACHE = _DIR / "m67_oos_cache.pkl"
 RFMODEL_OUT = _DIR / "m67e_rfmodel_stdout.txt"
@@ -111,9 +123,25 @@ M10_COMMIT = "8565e38"                # alpha submission (M10, 14 cheap profiles
 # audit_cache.pkl key signature: profile_audit.py's PROFILES = live + OM16
 OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
         "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"}
-PROFILES = list(oc._PROFILES) + [OM16]
-N_LIVE = len(oc._PROFILES)
+PROFILES = list(oc._PROFILES) + [OM16]   # cache key: must stay exactly this
+# M72/M73 (2026-07-30): oc._PROFILES now carries two default-OFF tiers after index 40
+# (M72 41-44, M73 escape 45-48), gated at call time in _pool_indices(), so its length
+# is 49 and is NOT the shipped pool. GATE 2 below already asserts N_LIVE == 41, which
+# is the correct expectation; only this line was stale. Same fix in rf_score_model.py
+# and profile_audit.py. PROFILES stays at the full 50 so the audit_cache key matches.
+N_LIVE = getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))   # shipped pool = 41
+# key construction must reproduce profile_audit.py's EXACTLY, in the same order
 FPR = repr(PROFILES)
+if M71_MODE:
+    FPR = repr((PROFILES,
+                sorted(dict(getattr(oc, "_M71_ENV", {})).items()),
+                sorted(frozenset(getattr(oc, "_M73_IDX", ())))))
+if KBAND:
+    FPR = repr(("kband", FPR))
+if M71_MODE or KBAND:
+    print(f"[mode] {'m71-overlay ' if M71_MODE else ''}"
+          f"{'kband (shipped K overlay) ' if KBAND else ''}-> {AUDIT.name} "
+          f"/ {CACHE.name}", flush=True)
 LIVE = list(range(N_LIVE))
 SWAPSET = {k for k in LIVE if "ICCAD_ORDER_SWAP" in PROFILES[k]
            or "ICCAD_ORDER_MOVE" in PROFILES[k]}
@@ -173,7 +201,8 @@ TOTW = sum(c["w"] for c in CASES)
 NOF = {c["idx"]: c["n"] for c in CASES}
 
 if not AUDIT.exists():
-    sys.exit("audit_cache.pkl missing -> run profile_audit.py first")
+    sys.exit(f"{AUDIT.name} missing -> run profile_audit.py"
+             f"{' --m71' if M71_MODE else ''}{' --kband' if KBAND else ''} first")
 _ac = pickle.load(open(AUDIT, "rb"))
 if _ac.get("profiles") != FPR:
     sys.exit("audit cache signature != current pool -> re-run profile_audit.py")
@@ -265,7 +294,15 @@ def pool_shipped(ci, cores=CORES_BETA):
     """The ACTUAL shipped pool at a given cores count (mirrors rf_score_model's
     m46_pool; tier-4 / M50 low-core only fire at cores <= _M45_CORES_MAX)."""
     n = NOF[ci]
-    pool = [k for k in LIVE if k not in SWAPSET and not (n > 100 and k in BIGSET)]
+    # M67-F tier-5 (SHIPPED, cores-gated at _M67F_CORES_MIN=40): on a >=40-core box
+    # the M42 big-redundant cut is NOT applied. The Beta grader is 48 cores, so at
+    # the default CORES_BETA the shipped heavy pool is 35, not 13. Modelling it as
+    # 13 understates the baseline pool and makes anything added to it look more
+    # expensive than it is (that error invalidated the first M73 projection).
+    tier5 = (cores >= getattr(oc, "_M67F_CORES_MIN", 10 ** 9)
+             and os.environ.get("ICCAD_M67F_TIER5", "1") != "0")
+    pool = [k for k in LIVE
+            if k not in SWAPSET and not (n > 100 and not tier5 and k in BIGSET)]
     for lo, hi, d in oc._M45_BAND_DROP:
         if lo < n <= hi:
             pool = [k for k in pool if k not in d]
@@ -832,17 +869,37 @@ def variant_quality(theta=0.0, tax_all=False, cores=CORES_BETA, slack=1.0,
         th = theta
         if 60 < c["n"] <= 100 and tax_mid != 1.0:
             t, th = tax_mid, th_mid
-        qs = cost(ci, select(ci, pool_shipped(ci, cores)))
+        ps = set(pool_shipped(ci, cores))
+        pr = pool_restore(ci, cores, slack)
+        pi = pool_restore_idx(ci, cores, IDX_BANDS)
+        qs = cost(ci, select(ci, ps))
         qf = cost(ci, select(ci, pool_full(ci)))
-        qr = cost(ci, select(ci, pool_restore(ci, cores, slack)))
-        qi = cost(ci, select(ci, pool_restore_idx(ci, cores, IDX_BANDS)))
-        touched = (("big" in IDX_BANDS and c["n"] > 100)
-                   or ("mid" in IDX_BANDS and 60 < c["n"] <= 100))
+        qr = cost(ci, select(ci, pr))
+        qi = cost(ci, select(ci, pi))
+        # 🚨 A restore earns the theta credit only where it ACTUALLY RESTORES
+        # something. Band membership is NOT enough (2026-07-31):
+        #
+        #   theta = 0.7636 was measured at 12 cores with tier-5 OFF, i.e. against
+        #   a shipped pool that still had M42's 22 profiles cut. This projection
+        #   runs at cores >= _M67F_CORES_MIN, where tier-5 keeps them -- so on
+        #   n>100 the index restore adds NOTHING (measured: 20/20 big cases,
+        #   pool_restore_idx == pool_shipped, 0 profiles added). Crediting it
+        #   there banks tier-5's gain a second time; before this guard the model
+        #   reported a phantom -1.65% for a change that touched zero cases.
+        #
+        # Same class of error as the two baseline traps this session: the
+        # configuration theta was MEASURED under must match the configuration it
+        # is APPLIED to. When the pools match there is no restore, so the
+        # variant is the shipped one and the delta is exactly zero.
+        r_touched = set(pr) != ps
+        i_touched = ((("big" in IDX_BANDS and c["n"] > 100)
+                      or ("mid" in IDX_BANDS and 60 < c["n"] <= 100))
+                     and set(pi) != ps)
         out[ci] = {"shipped": qs * t,
                    "full": qf,
-                   "restore": qr * (t ** (1.0 - th)),
+                   "restore": qr * (t ** (1.0 - th)) if r_touched else qs * t,
                    # the SHIPPABLE form: index-based pool, measured theta
-                   "restoreIdx": qi * (t ** (1.0 - th)) if touched else qs * t,
+                   "restoreIdx": qi * (t ** (1.0 - th)) if i_touched else qs * t,
                    # K=12 restores the audit's own REFINE -> the pool cut is the
                    # only difference left vs full, so no OOS tax is carried
                    "restoreK12": qr}

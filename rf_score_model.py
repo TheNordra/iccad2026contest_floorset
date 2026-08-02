@@ -34,14 +34,75 @@ RH = 1.4
 CORES = 12                       # physical cores -> wrapper wall = max(max_i, sum_i/CORES)
 GAMMA = 0.3                      # official runtime damping
 FLOOR = 0.7                      # official RF floor
-CACHE = _DIR / "audit_cache.pkl"
+
+# --kband (2026-07-31) reads profile_audit.py's --kband cache, i.e. positions
+# collected under the SHIPPED _band_env() overlay (mid K=8, n>100 K=4) instead of
+# the K=12 counterfactual. This is what M67-F correction B requires for any
+# regeneration of the M42/M45 drop constants: those constants are derived from
+# positions, but the strict selection-preserving gate behind them was only ever
+# verified at K=12, and in-set case 64 shows the tier-3 cut actually costs +0.41%
+# once the shipped K=8 is applied.
+#
+# In this mode the shipped-constant drift checks below become REPORTS rather than
+# assertions -- a difference is the finding, not a failure. The default mode keeps
+# them hard, so regression_suite.py (which invokes this file with no arguments) is
+# unaffected and still gates on zero drift.
+KBAND = "--kband" in sys.argv
+M71_MODE = "--m71" in sys.argv
+CACHE = _DIR / ("audit_cache%s%s.pkl" % ("_m71" if M71_MODE else "",
+                                         "_kband" if KBAND else ""))
 
 # Must match profile_audit.py's cache key exactly (its PROFILES = live + OM16).
 OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
         "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"}
-PROFILES = list(oc._PROFILES) + [OM16]
-N_LIVE = len(oc._PROFILES)       # OM16 (index N_LIVE) is a stand-by, NOT in the live pool
+PROFILES = list(oc._PROFILES) + [OM16]   # cache key: must stay exactly this
+# M72/M73 (2026-07-30): oc._PROFILES is no longer the shipped pool -- it carries two
+# default-OFF tiers appended after index 40 (M72 41-44, M73 escape 45-48), gated at
+# call time in _pool_indices(). Using len(oc._PROFILES) here put both tiers into the
+# LIVE pool, which corrupts every constant this file generates: the tiers win no
+# n>100 case, so they get recommended into _BIG_REDUNDANT_IDX, and their presence in
+# the pool can also flip which real profile wins a band. The live pool is the shipped
+# 41; the tiers stay out of it (profile_audit.py carries the matching fix). PROFILES
+# above is deliberately left at the full 50 so the audit_cache key still matches.
+N_LIVE = getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))   # shipped pool = 41
+assert N_LIVE == 41, f"shipped live pool should be 41, got {N_LIVE}"
+# Must reproduce profile_audit.py's key construction EXACTLY, in the same order.
 FPR = repr(PROFILES)
+if M71_MODE:
+    FPR = repr((PROFILES,
+                sorted(dict(getattr(oc, "_M71_ENV", {})).items()),
+                sorted(frozenset(getattr(oc, "_M73_IDX", ())))))
+if KBAND:
+    FPR = repr(("kband", FPR))
+if KBAND or M71_MODE:
+    print(f"[mode] {'kband (shipped K overlay) ' if KBAND else ''}"
+          f"{'m71-overlay ' if M71_MODE else ''}-> {CACHE.name}; "
+          f"shipped-constant drift checks are REPORT-ONLY in this mode")
+
+
+def _drift_check(name, model, shipped):
+    """Hard gate in the default mode; report-only under an overlay mode.
+
+    Default mode is what regression_suite.py runs, and there the model MUST
+    reproduce the shipped constants exactly -- any difference means the pool, the
+    exe or a proxy tie moved underneath us, which is a hard failure.
+
+    Under --kband/--m71 a difference is the expected FINDING, not a failure:
+    M67-F correction B is precisely the claim that these constants change once
+    the shipped K overlay is applied. Aborting there would make the mode useless.
+    The distinction is pre-declared here rather than decided after seeing a diff.
+    """
+    model, shipped = set(model), set(shipped)
+    if model == shipped:
+        print(f"shipped-chain check: {name} matches model ({len(shipped)} idx) OK")
+        return
+    msg = (f"{name}: model {sorted(model)} vs shipped {sorted(shipped)} "
+           f"[only-in-model {sorted(model - shipped)} / "
+           f"only-in-shipped {sorted(shipped - model)}]")
+    if KBAND or M71_MODE:
+        print(f"DRIFT (expected in this mode) {msg}")
+    else:
+        raise AssertionError(f"shipped constant drift -- {msg}")
 
 
 def pname(prof):
@@ -364,9 +425,7 @@ print("=" * 64)
 
 BIGSET = set(oc._BIG_REDUNDANT_IDX)
 R100r, _ = refine(100)
-assert set(R100r) == BIGSET, (
-    f"shipped _BIG_REDUNDANT_IDX drift: model {sorted(R100r)} vs {sorted(BIGSET)}")
-print(f"shipped-chain check: refine(100) == _BIG_REDUNDANT_IDX ({len(BIGSET)} idx) OK")
+_drift_check("refine(100) == _BIG_REDUNDANT_IDX", R100r, BIGSET)
 
 
 def shipped_pool(ci):
@@ -549,11 +608,10 @@ print("\n" + "=" * 64)
 print("M46: max-setter speedup sensitivity (uniform / FREE-stack alpha)")
 print("=" * 64)
 
-# shipped-constant drift checks (mirrors the M42 assert)
-assert coarse_mid == set(oc._M45_BAND_DROP[0][2]), "tier-3 drift vs shipped"
+# shipped-constant drift checks (mirrors the M42 check; two-tier, see _drift_check)
+_drift_check("tier-3 _M45_BAND_DROP", coarse_mid, oc._M45_BAND_DROP[0][2])
 for lo, hi, d in oc._M45_LOWCORE_DROP:
-    assert set(d) == set(BAND_R.get((lo, hi), [])), f"tier-4 drift ({lo},{hi}]"
-print("shipped-chain check: M45 tier-3/tier-4 constants match model OK")
+    _drift_check(f"tier-4 _M45_LOWCORE_DROP ({lo},{hi}]", BAND_R.get((lo, hi), []), d)
 
 
 def m46_pool(ci, cores):
