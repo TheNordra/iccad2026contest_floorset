@@ -983,6 +983,27 @@ _ARMS.update({a: {k: "1"} for a, k in _M75_KNOBS.items()})
 for _n in range(2, len(_M75_KNOBS) + 1):
     for _combo in itertools.combinations(sorted(_M75_KNOBS), _n):
         _ARMS["_".join(_combo)] = {_M75_KNOBS[a]: "1" for a in _combo}
+# M78 arms (2026-08-03). The candidate-set second path: M71 enriched the
+# candidate set + ordering of the PURE-MOVABLE cluster path (make_group_item);
+# these knobs do the same species of thing to the two paths it never touched --
+# the MIXED (preplaced+movable) anchored first-pass and the generic
+# item_candidates.  They live in constructive_m78.cpp only, so these arms are
+# usable ONLY with --arm-bin constructive_m78.exe; without it the shipped binary
+# ignores the env var and the arm silently reports a flat zero (gate A's liveness
+# check catches that).  Same C++-only global-overlay shape as the M75 arms.
+_M78_KNOBS = {"m78anchord1":   "ICCAD_M78_ANCH_ORD",
+              "m78anchcenter": "ICCAD_M78_ANCH_CENTER",
+              "m78anchcross":  "ICCAD_M78_ANCH_CROSS",
+              "m78itemcenter": "ICCAD_M78_ITEM_CENTER",
+              "m78itemcross":  "ICCAD_M78_ITEM_CROSS",
+              "m78tb1":        "ICCAD_M78_TIEBREAK"}
+_ARMS.update({a: {k: "1"} for a, k in _M78_KNOBS.items()})
+_ARMS["m78anchord2"] = {"ICCAD_M78_ANCH_ORD": "2"}
+_ARMS["m78anchord3"] = {"ICCAD_M78_ANCH_ORD": "3"}
+_ARMS["m78anchord4"] = {"ICCAD_M78_ANCH_ORD": "4"}
+_ARMS["m78tb2"] = {"ICCAD_M78_TIEBREAK": "2"}
+_ARMS["m78tb3"] = {"ICCAD_M78_TIEBREAK": "3"}
+
 _M75_ARMS = frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"} - _M76_ARMS
 
 # Liveness screen cases: a spread over the three weight bands, biased to cases
@@ -1018,8 +1039,18 @@ def _m75_liveness(env_over):
         for cid in _M75_LIVE_IDS:
             lay = _inset_lay(ev, cid)
             n = lay["n"]
+            # M78 FIX (2026-08-03): this used to pass target_positions=None, which
+            # strips EVERY preplaced (x,y,w,h) and fixed (w,h) from the binary's
+            # input. With no preplaced blocks there are no MIXED clusters at all,
+            # so any knob acting on the anchored first-pass has an EMPTY antecedent
+            # here BY CONSTRUCTION and reports a false 0/210 -- exactly the "gate
+            # measured a different configuration than the one deployed" family.
+            # The M75 knobs were cluster-internal so it never showed. Use the same
+            # masked otp _solve_one() feeds the real harness (preplaced/fixed are
+            # hard-constraint INPUTS, not labels).
+            otp = build_opt_target_pos(lay["tp"], lay["cons"], n)
             inp = _serialize_input(n, lay["at"], lay["b2b"], lay["p2b"],
-                                   lay["pins"], lay["cons"], None,
+                                   lay["pins"], lay["cons"], otp,
                                    gnn_hint=None)
             band = dict(oc._band_env(n))
             moved = 0
@@ -1029,7 +1060,14 @@ def _m75_liveness(env_over):
                 base.update(oc._m71_env())
                 a = oc._run_profile(base, inp, n)
                 b = oc._run_profile(dict(base, **env_over), inp, n)
-                moved += (a is not None and b is not None and a != b)
+                # A launch failure returns None on BOTH sides and would otherwise
+                # be indistinguishable from an inert knob (measured 2026-08-03: a
+                # relative --arm-bin produced a clean-looking 0/210).
+                assert a is not None and b is not None, (
+                    f"_run_profile returned None on case {cid} profile {i} "
+                    f"(binary {oc._BIN}) -- this is a plumbing failure, not a "
+                    f"dead knob")
+                moved += (a != b)
             detail[cid] = f"{moved}/{len(idxs)}p"
             npair += len(idxs)
             nlive += moved
@@ -1205,7 +1243,12 @@ def _theta_gate_a(arm):
         # LIVENESS. Without this a knob that never fires on this corpus reports
         # "0.000%, 0 movers" -- indistinguishable from a clean RED. Cached per
         # (arm, exe md5) so re-reporting a narrower band costs nothing.
-        lk = f"{arm}@{_exe_md5()}"
+        # v3: the M78 fixes changed BOTH what this screen feeds the binary
+        # (target_positions) and how --arm-bin is resolved, so any entry cached
+        # under an earlier revision is a measurement of a different thing.
+        # 2026-08-03: a v2 entry written by a still-broken run was silently reused
+        # by the next one -- bump this tag on EVERY change to the screen's inputs.
+        lk = f"{arm}@{_exe_md5()}@v3"
         live = _C.setdefault("m75_live", {}).get(lk)
         if live is None:
             live = _m75_liveness(_ARMS[arm])
@@ -1640,6 +1683,13 @@ def main():
                          "Uses a SEPARATE cache file: _sig() does not include the "
                          "core count, so sharing one would silently reuse solves "
                          "from the other pool shape.")
+    ap.add_argument("--arm-bin", default="", dest="arm_bin",
+                    help="M78: run the ARM SIDE ONLY against this binary (e.g. "
+                         "constructive_m78.exe). The shipped endpoint keeps "
+                         "coming from constructive.exe, which is sound because "
+                         "m78-flags-off is bit-identical (m78_probe.py gate0). "
+                         "The binary's md5 is appended to the arm name so a "
+                         "rebuilt probe binary cannot reuse stale arm solves.")
     args = ap.parse_args()
     if args.force_cores:
         global CACHE_PATH
@@ -1647,6 +1697,30 @@ def main():
         CACHE_PATH = _DIR / f"m67_oos_cache_c{args.force_cores}.pkl"
         print(f"[m76] forced cores={args.force_cores} -> cache {CACHE_PATH.name}")
     _cload(_sig(args))
+    if args.arm_bin:
+        # M78: the arm's knobs exist only in the probe binary. _sig() is computed
+        # ABOVE on the SHIPPED exe, so the cached shipped endpoint keeps its
+        # identity and stays reusable -- sound only because m78-flags-off is
+        # proven bit-identical to constructive.exe (m78_probe.py gate0). The arm
+        # name carries the probe binary's md5 so rebuilding it cannot silently
+        # reuse the old arm's solves.
+        # resolve(): subprocess on Windows hands a bare filename to CreateProcess,
+        # which searches python.exe's directory BEFORE the cwd -> a relative
+        # --arm-bin silently fails to launch, _run_profile swallows the exception
+        # and returns None for BOTH sides, and the liveness gate reports a
+        # perfectly plausible 0/210. Absolute path or nothing.
+        p = Path(args.arm_bin).resolve()
+        assert p.exists(), f"--arm-bin {p} not found"
+        h = hashlib.md5(p.read_bytes()).hexdigest()[:8]
+        base_arm, newarm = args.arm, f"{args.arm}@{h}"
+        _ARMS[newarm] = dict(_ARMS[base_arm])
+        # The derived name must inherit the base arm's gate-A branch, or a
+        # C++-only arm silently falls through to the "norefine" checks.
+        if base_arm in _M75_ARMS:
+            globals()["_M75_ARMS"] = _M75_ARMS | {newarm}
+        args.arm = newarm
+        oc._BIN = p
+        print(f"[m78] arm binary {p.name} md5 {h} -> arm '{newarm}'")
     return {"gate0": mode_gate0, "run": mode_run, "report": mode_report,
             "ref": mode_ref, "pool0": mode_pool0,
             "restore": mode_restore}[args.mode](args)

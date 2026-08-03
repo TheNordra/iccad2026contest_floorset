@@ -74,7 +74,7 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 - **proxy 自 M13 起 = per-case oracle ceiling**（selection 不是瓶頸；加 profile 全額 realize）
 - ⚠️ vrel **必須用 shapely**（wrapper `_proxy_metrics`），不可用 C++ union-find
 
-里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）→ M75 M71 殘餘四旗標全 RED（軸關閉，分數不動）→ M76 組員 escape tier RED（48 核形狀只剩 +0.10%，被 tier-5 吃掉）。
+里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）→ M75 M71 殘餘四旗標全 RED（軸關閉，分數不動）→ M76 組員 escape tier RED（48 核形狀只剩 +0.10%，被 tier-5 吃掉）→ M78 候選集合第二條路徑 RED（唯一贏的 `anch_cross` OOS 只有 −0.160%，且「加候選」預設有害）。
 
 ## 🔑 戰略結論（哪些軸封了、哪些沒）
 
@@ -90,33 +90,38 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 > **只列還沒做的事。** 已收斂的軸（M74 / M75 / M76）在死路 ledger，不在這裡。
 > **本節在每個 milestone 收尾時必須改寫**，見 `[[keep-next-steps-current]]`。
 
-1. **Final 保底包收尾（唯一純執行、零不確定性的項目）**
-   M74 換件包已備妥並在 Windows 端驗過（見「📦 送件狀態」）。**只差 GPU 機 WSL 的
-   `verify_final_tar.sh`**（bundle 已建好在 `C:\Users\Nordra\Downloads\m67c-linux-verify.tar.gz`、
-   md5 `b3989af0a0958488a77df6629cef6d04`，內嵌 tar 與磁碟上那顆同 md5）。
+1. **Final 保底包收尾（唯一純執行、零不確定性的項目，也是唯一還沒關掉的風險）**
+   M74 換件包已備妥、Windows 端驗過、身分 2026-08-03 重新雜湊確認未漂移。
+   **只差 GPU 機 WSL 的 `verify_final_tar.sh`** —— 這台**沒有 WSL / Docker / Linux bash**
+   （08-03 實測 `wsl -l -v` 無 distro），做不了。
+   👉 **可直接照抄的 runbook 已寫好：`FINAL_LINUX_VERIFY_RUNBOOK.md`**
+   （身分 md5 三件、setup_env、兩輪預期逐位 `1.293461035226291`、末行
+   `VERIFY_FINAL_TAR: ALL PASS`、四個常見坑）。
    ⚠️ **Beta 已過、使用者裁示不換件** ⇒ 這包是給 **Final（8/21）** 的，不要去覆蓋 Beta。
-   做完就免除 deadline 風險，無論 ML 成不成都有東西可送。
 
-2. **ML 候選判定 — 工具鏈已全部就緒，只等組員交件**
-   in-set 100 = `m77_ml_candidate_probe.py`；**OOS 240 = `m77_oos_probe.py`（2026-08-02 接好並驗過）**。
-   兩份樣本的 manifest（`m77_oos_manifest_s1/s2.json`）與逐 profile 快取
-   （`m77_oos_audit.pkl`，2×240×35）都在 tree 上。
-   **唯一前置 = 組員照 manifest 跑出 240 案的 positions json**（格式與跑法寫在
-   `M77_ML_GATE_NOTE.md` 第 4 節，可直接轉給他們）。拿到就是秒出判定。
-   ⚠️ 判定看 **s2**（worker_10..19，對他們的模型才是真 OOS）；s1 只是與我方古典數字對齊的尺。
+2. **M62 micro-cap skip gate（唯一還活著的技術項目，但先過雙標關）**
+   前置 = pre-build 時間預測器 + 機速校準。⚠️ 離線增益只有 **+0.06%**，而我們已經用
+   同一把尺殺掉 M76 的 **+0.087%** 與 M78 的 **+0.160%（OOS）**
+   ⇒ **要開工就得先寫清楚為什麼標準不同**（例如：M62 是 median-independent 的 RF 增益，
+   不是 OOS 品質增益，兩者的 bar 本來就不該相同——但這個論證必須先成立才動手）。
 
-3. **Beta 成績出來後：用真實 RF 重新校準**
-   `m67e_rf48.py` 的 alpha 模型現在錨的是 **M10 廉價池那版**的逐案 runtime（p50 0.673s），
-   不是現行 shipped。Beta 官方分一到手就能反推真實 median 與 RF，
-   校準後才知道 tier-5 的賭注（有效並行度 ≥22.5）到底成不成立。**這是唯一還會帶來
-   新資訊的外部事件。**
+3. **Beta 成績（外部，很可能等不到）**
+   使用者 08-03 回報：組員認為 Final 前可能拿不到。若真的拿到，就用官方分反推真實
+   median 與 RF，重新校準 `m67e_rf48.py`（現在錨的是 M10 廉價池那版的逐案 runtime，
+   p50 0.673s，不是現行 shipped），才知道 tier-5 的賭注（有效並行度 ≥22.5）成不成立。
 
-4. **低優先**：M62 micro-cap skip gate（唯一還活著的 in-window LP 形態，前置 =
-   pre-build 時間預測器 + 機速校準）。⚠️ 離線增益只有 **+0.06%**，而 M76 的 **+0.087%**
-   已被判 RED ⇒ **要做就得先說明為什麼標準不同**，否則就是雙標。
+4. **ML 候選判定 — 已停放，不是待辦**
+   組員 08-01（`b86a02c`）用 oracle 天花板自己判死 ML-as-placer，建議提前分叉回古典線。
+   `m77_ml_candidate_probe.py`（in-set）與 `m77_oos_probe.py`（OOS 240 兩份樣本）機制都
+   驗過、隨時可用，**但沒有候選會進來**。若日後拿到學長 `cadc1106` 的產物才重啟；
+   屆時判定看 **s2**（worker_10..19，對他們的模型才是真 OOS）。
 
 5. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它
-   變便宜」的變體（組員 80cc719 已證死）；**在這台機器上跑訓練**（環境禁訓，見 ML 現況）。
+   變便宜」的變體（組員 80cc719 已證死）；**在這台機器上跑訓練**（環境禁訓）。
+   **M78 新增三條**：(a) 再加候選位置（`item_candidates` 兩種加法都是 +0.36~0.40%，
+   出貨候選集合是調過的不是貧乏的）；(b) anchored 成員排序 key（整條封卷，
+   對照組拿掉 boundary 優先序是 +1.069%）；(c) 把 `anch_cross` 包成 pool tier
+   （oracle 上界 +0.384% 但要 41 隻 twin，max-setter 的 twin 一進池就 ΔRF +2.04%）。
 
 > 🗓️ **Final deadline = 2026-08-21**（組員 `HANDOFF_2026-07-30.md`，我方原本只記了 Beta）。
 > 📋 **每個 session 開始前**：`cd C:\Users\Nordra\Downloads\teammate_iccad_study\Iccadcontest2026 && git fetch origin`，再讀 `git show origin/main:ATTEMPTED_ROUTES_AND_DEAD_ENDS.md`（本地 clone 常落後數個 commit；該檔本身也可能停在舊日期，要另看新 commit 的 README）。
@@ -145,9 +150,11 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 
 ### quality 軸 RED（結構性）
 
+- **M78 候選集合的第二條路徑（2026-08-03 RED；`M78_REPORT.md`、`[[m78-candidate-set-second-path]]`）**——假說：M71 只補了兩條 cluster 路徑中的一條（純 movable 走 `make_group_item`），**mixed（preplaced+movable）走的 `adjacent_candidates_for_block` + `pack_in_frame` anchored first-pass 仍是 pre-M71 形狀**。前件普查（`m78_antecedent_census.py`，讀 dataset 不跑 placer）**PASS**：anchored movable 佔加權 blocks **6.26 / 5.66 / 5.86%**（in-set / s1 / s2），非空案佔 62-74% 的權重，重帶 n>100 有 14/20、56/80、50/80 案非空，A1/M71 前件比 **0.30-0.36×** 三語料一致。⚠️ 但「有 A1 前件而 M71 前件為空」只佔 **0.00/2.55/3.59%** ⇒ 兩者**案子層面高度重疊**。**六個旗標（全部只進 `constructive_m78.cpp/.exe`，出貨 exe md5 不動 ⇒ 三顆 cache 不失效）× 11 個 arm，10 個變差、1 個變好**：唯一贏的 `ICCAD_M78_ANCH_CROSS`（跨 rect 交叉候選：x 取自一個 rect 的面、y 取自另一個——出貨的候選集合 x/y 永遠取自同一個 rect）in-set **−0.183%**（16c）/ **−0.213%**（48c）、**OOS 240@48c −0.1604%**（33 好 40 壞）、wall ×1.07 ⇒ 品質只有 bar（0.30%）的 **54%** 且 wall 是扣分 ⇒ **RED**。tier 形式也否決：2-way per-case oracle 上界 **+0.3841%**（overlay 只 realize 41.8%），但要 41 隻 twin 才拿得到，而 48c wall = max-setter、twin 慢 7% ⇒ max-setter 的 twin 一進池就是 `1.07^0.3` = **ΔRF +2.04%**；避開就得 in-sample 挑 source set（M76 已量轉移率 ≈5%），對照 M76 escape tier 4 隻 source 只 realize +0.101~0.107%。**🔑 教訓 A：「加候選」預設是有害的**——完全相同的交叉機制在 anchored 是 −0.18%、在泛用 `item_candidates` 是 **+0.36%**，中心對齊槽兩邊都是正的（+0.29 / +0.40%）⇒ **出貨的候選集合不是貧乏而是調過的**，greedy 的 `bbox_area_with` 短視，多給局部更好的位置反而做出全域更差的選擇。**🔑 教訓 B：M71 的排序增益搬不過來**——`ord1`（corner-first）**恰 0**、`ord2/ord3` 只動 3 案（0.92% 權重）、`ord4`（拿掉 boundary 優先序的對照組）**+1.069%** ⇒ anchored 排序軸整條封卷。M71 之所以能從 7 種成員順序拿分，是因為每種順序餵出 5 種**內部版型**再用 layout key 挑；anchored 成員逐一直接放進 frame，**沒有內部版型可排列**。**🔑 教訓 C：這是「機制真但太小」的 RED，不是「前件空」或「效果被吸收」**——in-set→OOS **轉移率 76%**（機制的轉移率，遠高於 M76 那個 source-set 的 5%），movers 精確落在普查預測的案子上（90/86/88/93/95）。
+
 - **M76 組員 M73 knob-OFF escape tier（2026-08-01 RED；`M76_REPORT.md`、`[[m76-escape-tier-red]]`）**——組員 `7403758` 的機制：append knob-off 的 host 副本、`_solve_impl` 對那些 index 故意不套 `_m71_env()`，讓被 M71 弄壞的案子逃生。已完整移植（預設 off、gate-off 逐位 `1.293461035226291` 0 movers）。**判定 RED**：三個變體（組員集全帶 / 組員集 n>100 / 我方 M74 下重推的 `(21,23,2,22)` n>100）在**評分機的 48 核池形狀**下 OOS 240 全部只有 **+0.101~0.107%**，bar 是 0.30%；48c ΔRF 代價 +0.020~0.088% ⇒ NET 只剩 +0.02~0.09%。**🔑 主因：escape tier 與 tier-5 是替代品**——OOS shipped 基準本身從 16 核形狀的 1.576749 掉到 48 核形狀的 **1.555855**（−1.325% = tier-5 的 OOS 價值），tier-5 放回 n>100 的那 22 隻 knob-ON profile 已經救掉 escape 原本要救的案子，同一批分數不能算兩次。**組員的 +0.288% 是低核數字**（12 核 + 他們沒有 tier-5，看不到抵銷）。**🔑 教訓 A：in-sample 優勢轉移率 ≈5%**——`m73x` vs `m73big` 是同機制同 gate 只換來源集的乾淨對照，in-set 差 +0.127pp、OOS 只差 **+0.006pp** ⇒ 來源集不值得用 in-sample 貪婪挑。**🔑 教訓 B：OOS 也要挑對池形狀**——in-set 100 在 16/48 兩種形狀下**逐位相同**（1.289345、5 movers），OOS 卻差 **2.7 倍**（+0.294%→+0.107%）⇒ 任何與 adaptive tier 有交互作用的機制，OOS 必須用 `m67_oos_probe.py --force-cores 48`。副產物：組員未解的「knob-off 逃生口會不會在 48 核變成 max-setter」＝**否定**（重帶 `dt_esc/dt_on` p50 **0.906~0.934**，knob-off 比 knob-on 更快 ⇒ (110,inf] ΔRF 恰 **+0.000%**）；他們的 12 核 mid wall +3.8~9% 在 48 核只有 **+0.064%**（又一個 tier-3 形狀的誤判），但「mid 不要開」的結論仍成立，理由是 mid 只多 +0.014pp 品質卻多 +0.068pp wall。⚠️ 條件依賴：若評分機有效並行度 <40，tier-5 不觸發、抵銷消失、escape 回到 +0.29% ⇒ 這條 RED 與 tier-5 共用同一個賭注。
 
-- **M75 M71 剩下四個旗標（2026-07-31 全 RED；`M75_REPORT.md`、`[[m75-m71-residual-knobs-red]]`）**——全域 overlay 形式（**不是** M72 的 pool tier），OOS 240 判準、bar +0.3%。錨 OOS `1.576749` / in-set `1.293461035`。**CORNER 與 REPACK = 恰 0.0000%**（in-set 100 + OOS 240 共 340 案 × 全 pool，**零**個 profile 的 binary 輸出改變）；**SLIDE = 恰 0**（52 個 (case,profile) 有動，但**全部在 n≤55 的小案且全輸 proxy argmin** ⇒ portfolio movers 0/240）；**PERMUTE = −0.0111% OOS**（4 movers：n=73 **−15.65%**、n=76 −1.40%、n=60 −0.86%，但 n=104 **+4.58%** 在 `exp(n/12)` 下全吃掉）。**四旗標全聯集逐位等於 PERMUTE**——已實測：以 M71+PERMUTE+SLIDE 為底再加 CORNER/REPACK/兩者，**7900 個 pair 改變數 0** ⇒ 15 個 arm 的矩陣合法塌縮。⚠️ **前件全部非空**（REPACK 216/240 案、SLIDE 198、PERMUTE 182、CORNER 67）⇒ 這**不是** M60 那種前件空集，而是「前件活、效果被吸收」：REPACK 的 ±9000 偏置對既有 `BP_W*bp`=30000 幾乎恆保序；CORNER 的候選從未嚴格勝出；SLIDE 的三重 guard 在 compaction 後緊密版圖上幾乎必失敗。**🔑 教訓：in-sample 不只會藏住 OOS 差距，還會給相反符號**——PERMUTE 的 in-set 是 **+0.0104%（正）**、OOS **−0.0111%（負）**，只看 local100 會判成弱 GREEN。**🔑 方法論：liveness 不可用 portfolio 輸出判**（旗標能改候選卻改不動 proxy argmin ⇒ 四個都報「零差異」的假 RED），要用 **per-profile binary 輸出**；而且一旦證明某案全 pool profile 逐位相同，該案 portfolio 就可證明不變 ⇒ 只解活案即得**精確**加權 delta，比抽樣 arm 又快又嚴格（本輪 ~71000 runs / 0 失敗，取代 4×15 分鐘 arm）。**組員的 +1.287%~+1.531% 是整包 profile 配方的增益，不是這些旗標的**。
+- **M75 M71 剩下四個旗標（2026-07-31 全 RED；`M75_REPORT.md`、`[[m75-m71-residual-knobs-red]]`）**——全域 overlay 形式（**不是** M72 的 pool tier），OOS 240 判準、bar +0.3%。錨 OOS `1.576749` / in-set `1.293461035`。**CORNER = 恰 0.0000%、REPACK ≈0**（in-set 100 + OOS 240 共 340 案 × 全 pool，幾乎零個 profile 的 binary 輸出改變。⚠️ **2026-08-03 M78 更正**：REPACK 原記「恰 0」是 `_m75_liveness()` 餵 `target_positions=None`、把 preplaced 全刪掉造成的——那讓 mixed cluster 一個都不存在、anchored 旗標前件恆空。**用正確輸入重測 = 1/3500（in-set 100×35，只有 case 75）**，判定不變、措辭要改；CORNER 重測仍是 **0/3500**，原判定原封不動。見 `[[gate-inputs-must-match-deployment]]`）；**SLIDE = 恰 0**（52 個 (case,profile) 有動，但**全部在 n≤55 的小案且全輸 proxy argmin** ⇒ portfolio movers 0/240）；**PERMUTE = −0.0111% OOS**（4 movers：n=73 **−15.65%**、n=76 −1.40%、n=60 −0.86%，但 n=104 **+4.58%** 在 `exp(n/12)` 下全吃掉）。**四旗標全聯集逐位等於 PERMUTE**——已實測：以 M71+PERMUTE+SLIDE 為底再加 CORNER/REPACK/兩者，**7900 個 pair 改變數 0** ⇒ 15 個 arm 的矩陣合法塌縮。⚠️ **前件全部非空**（REPACK 216/240 案、SLIDE 198、PERMUTE 182、CORNER 67）⇒ 這**不是** M60 那種前件空集，而是「前件活、效果被吸收」：REPACK 的 ±9000 偏置對既有 `BP_W*bp`=30000 幾乎恆保序；CORNER 的候選從未嚴格勝出；SLIDE 的三重 guard 在 compaction 後緊密版圖上幾乎必失敗。**🔑 教訓：in-sample 不只會藏住 OOS 差距，還會給相反符號**——PERMUTE 的 in-set 是 **+0.0104%（正）**、OOS **−0.0111%（負）**，只看 local100 會判成弱 GREEN。**🔑 方法論：liveness 不可用 portfolio 輸出判**（旗標能改候選卻改不動 proxy argmin ⇒ 四個都報「零差異」的假 RED），要用 **per-profile binary 輸出**；而且一旦證明某案全 pool profile 逐位相同，該案 portfolio 就可證明不變 ⇒ 只解活案即得**精確**加權 delta，比抽樣 arm 又快又嚴格（本輪 ~71000 runs / 0 失敗，取代 4×15 分鐘 arm）。**組員的 +1.287%~+1.531% 是整包 profile 配方的增益，不是這些旗標的**。
 - **M27 global packer / M40 reconstruction slicing builder**：見戰略結論 2/3（`[[m40_reconstruction_red]]`、`[[recon_index_leak_probe]]`）。
 - **M57 frozen violator 重錨 LP**：41/41 infeasible。61% 是 frozen-vs-frozen 幾何**絕對死**、39% 固定拓撲 separation 鏈死。
 - **M58 `compute_nsoft` 官方分母**：spec 落差真實且 live（29 案觸及、case 6 −3.31%）但 weighted **−0.0001%**（觸及全在低權重小案、n>100 恰 0）。
@@ -269,6 +276,21 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 **我方四種插入點全 RED**（見戰略結論 6，全部是 **ML-as-advisor**）。⚠️ 本環境**禁止跑訓練、可推論**；需要訓練時停下告知使用者上 CUDA 機。
 
 **2026-08-01 新局面**：組員取得學長 `cadc1106` 的截圖——同一批 100 validation cases、**Total 1.1747 / Avg 1.2088 / 100 feasible / 0.81s**，比我方 M74 好 **−9.2%**，落在 `fp_sol` verbatim floor（1.1079）之上所以**不違反資訊理論下界**（無法從數字判定是否 label 洩漏；只有截圖，無程式碼、無結果檔）。組員據此裁示**全力轉 ML-as-placer**（`b7460d3`「目前計畫.md」，21 天、硬分叉日 8/8、GPU 獨占、RF 量測暫停）。他們的論點：我方 RED 全在 advisor 軸（完美輸入也只值 0.005~3%），而唯一量過的 as-placer（IL68）只訓練了 10 萬次樣本呈現 ≈ 學長的 1/4000，曲線還在降。
+
+**🚨 2026-08-03 更新：ML-as-placer 由組員自己判死，建議提前分叉回古典線。**
+組員 `b86a02c`（branch `il-route-update-2026-07-31`，08-01）跑了 **oracle 天花板測試**
+（`oracle_pack_ceiling.py`，讀 label 的離線量測、不可出貨）：**餵給他們的 packer 一份滿分
+答案，整條管線也只拿 3.7518**（99/100 feasible）；對照組 verbatim **1.1079 逐位相同** ⇒
+抽取正確。他們 07-31 預註冊的 gate 是 `rung 2 ≤ 1.585`，**天花板是門檻的 2.4 倍** ⇒
+**用證明而非實驗判 FAIL**，rung 1（18h）與 rung 2（3.8 天）不必跑。
+再拆一層排除實作缺口：把 frame 換成該案真實 bbox、其餘不動 ⇒ 零 slack 時成功的 42 案
+**每案 1.017（優於 fp_sol verbatim）但 58% 擺不完**；任何讓它擺得完的 slack 都毀掉品質
+（×1.15 擺成 98/100 但 hpwl 0.4511）⇒ **懸崖不是斜坡，正是 M52「零容錯帶」在擺放程序上的
+體現**。他們三處自我更正：「packer 結構性失真」錯（零 slack 下幾乎逐位重現）、「frame 是
+元凶」錯（只改 frame 最佳 3.7913）、「向量化 13×」錯（實測端到端只有 1.6×）。
+⇒ **待辦「ML 候選判定」沒有候選會進來**，`m77_*` 兩支工具轉為**待命**（機制仍正確，
+若日後拿到學長 `cadc1106` 的產物可直接用）。未解決：對手 1.1747 仍無解釋（已索取產物、
+未回覆）、訓練慢 17× 真因未定位、他們仍未本地複驗我方 M73/M74。
 
 **我方在此的角色 = 判定，不是訓練**（環境禁訓）。工具 = `m77_ml_candidate_probe.py`（in-set 100）+ **`m77_oos_probe.py`（OOS 240，2026-08-02 接好）**，回報 = `M77_ML_GATE_NOTE.md`：
 1. **他們的 kill gate 度量錯了**——用 ML-only solo total，但部署是 proxy 仲裁的 portfolio，兩者不單調相關（實測反例見工具區）。正確 gate = portfolio delta（in-set bar 0.05%、**OOS NET bar 0.30%**）。
