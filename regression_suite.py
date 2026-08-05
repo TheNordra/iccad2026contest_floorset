@@ -45,7 +45,8 @@ from pathlib import Path
 _DIR = Path(__file__).parent
 _CONDA_PY = Path(r"C:\Users\Nordra\.conda\envs\iccadv\python.exe")
 _PY_DEFAULT = str(_CONDA_PY if _CONDA_PY.exists() else Path(sys.executable))
-ALL_KEYS = ("m48", "rf", "m49big", "m49mid6", "m49mid4", "m47b", "tier5")
+ALL_KEYS = ("m48", "rf", "m49big", "m49mid6", "m49mid4", "m47b", "tier5",
+            "m80")
 TAIL = 15
 
 # Pinned mover expectations for the m49 gates (case ids whose Path-B cost moves
@@ -197,6 +198,21 @@ def check_tier5(rc, lines):
     return [("m67g tier-5 pool identity", ok, detail)]
 
 
+def check_m80(rc, lines):
+    """M80 knob-cloud tier identity gate (m80_tier_gate.py). The V3 prefix line
+    is echoed because it is the one that certifies the four offline caches are
+    still valid for this tree."""
+    ok = rc == 0 and any("M80-TIER GATE: ALL PASS" in l for l in lines)
+    nfail = sum(1 for l in lines if re.match(r"^V\d.*FAIL", l))
+    detail = "ALL PASS" if ok else f"exit={rc}"
+    if nfail:
+        detail += f"; {nfail} V-check FAIL line(s)"
+    pre = _grep(lines, "V3 shipped prefix == HEAD")
+    if pre:
+        detail += "; " + pre[-1].strip()
+    return [("m80 knob-cloud tier identity", ok, detail)]
+
+
 def build_runs(sel, separate_mid, py):
     """-> [(key, cmd, checker)]; the combined mid run yields two result rows."""
     runs = []
@@ -222,6 +238,8 @@ def build_runs(sel, separate_mid, py):
         runs.append(("m47b", [py, "-u", "m47b_proxy_equiv.py"], check_m47b))
     if "tier5" in sel:
         runs.append(("tier5", [py, "-u", "m67g_tier5_gate.py"], check_tier5))
+    if "m80" in sel:
+        runs.append(("m80", [py, "-u", "m80_tier_gate.py"], check_m80))
     return runs
 
 

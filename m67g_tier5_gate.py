@@ -51,17 +51,28 @@ def _load(path, name):
     return mod
 
 
+# M80 (2026-08-05) added a SECOND tier that fires on a high core count. Every
+# check below is about tier-5's blast radius, and all three of V1's kill-switch
+# comparisons and V3's difference set would break the moment another >=40-core
+# tier joins the pool — V1 would see 48c != 17c and V3 would find M80's indices
+# in `t5 - base`. So this gate isolates tier-5 by pinning M80 OFF in every sweep;
+# m80_tier_gate.py owns the symmetric checks for M80 itself.
+_ISOLATE = {"ICCAD_M80_TIER": "0"}
+
+
 def _sweep(mod, cores=None, extra=None):
     """(pool, refine-overlay) for every n under a forced core count."""
     if cores is None:
         os.environ.pop("ICCAD_ADAPTIVE_CORES", None)
     else:
         os.environ["ICCAD_ADAPTIVE_CORES"] = str(cores)
-    for k, v in (extra or {}).items():
+    env = dict(_ISOLATE)
+    env.update(extra or {})
+    for k, v in env.items():
         os.environ[k] = v
     out = {n: (tuple(mod._pool_indices(n)),
                tuple(sorted(mod._band_env(n).items()))) for n in NS}
-    for k in (extra or {}):
+    for k in env:
         os.environ.pop(k, None)
     os.environ.pop("ICCAD_ADAPTIVE_CORES", None)
     return out

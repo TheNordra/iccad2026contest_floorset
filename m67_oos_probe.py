@@ -1004,7 +1004,30 @@ _ARMS["m78anchord4"] = {"ICCAD_M78_ANCH_ORD": "4"}
 _ARMS["m78tb2"] = {"ICCAD_M78_TIEBREAK": "2"}
 _ARMS["m78tb3"] = {"ICCAD_M78_TIEBREAK": "3"}
 
-_M75_ARMS = frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"} - _M76_ARMS
+# M80 arms (2026-08-05). The M79 knob-cloud vectors as a cores-gated pool tier:
+# K fixed profiles drawn by RANDOM JOINT sampling of the env-knob space, appended
+# past the shipped prefix and switched on only at >= _M80_CORES_MIN detected
+# cores. Unlike the M76 escape tier these are NEW points in knob space, not
+# knob-off twins of hosts, and they DO receive the M71 overlay (the cloud was
+# measured under it). At 12 cores the tier is a large net loss (M79: dRF +10.614%
+# at K=8, 100/100 cases get a higher wall), so every arm here is only meaningful
+# with --force-cores 48.
+#
+# THE ARMS COME IN BOTH DIRECTIONS ON PURPOSE. `_shipped_pool()` resolves the
+# baseline by STRIPPING the gate keys, i.e. by asking for the DEFAULT. While the
+# tier ships OFF, `m80` (turn it on) is the informative arm; the moment the
+# default flips to on, that arm measures nothing and `m80off` (turn it off) is
+# the one that still says something. Same lesson m67g_tier5_gate.py records for
+# tier-5 ("once tier-5 is committed, comparing against HEAD is vacuous; the kill
+# switch is the invariant"). Gate A below reads the direction off the arm rather
+# than assuming it.
+_ARMS["m80"] = {"ICCAD_M80_TIER": "1"}
+_ARMS["m80big"] = {"ICCAD_M80_TIER": "1", "ICCAD_M80_MIN_N": "100"}
+_ARMS["m80off"] = {"ICCAD_M80_TIER": "0"}
+_M80_ARMS = frozenset({"m80", "m80big", "m80off"})
+
+_M75_ARMS = (frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"}
+             - _M76_ARMS - _M80_ARMS)
 
 # Liveness screen cases: a spread over the three weight bands, biased to cases
 # that carry the cluster structures these knobs act on. The screen is PER
@@ -1141,11 +1164,18 @@ def _theta_gate_a(arm):
     elif arm in ("m55", "m55x"):
         # The tier must add exactly its own 4 indices, on every band, and must not
         # disturb the M41/M42/M45 layers or the REFINE overlay.
-        chk("tier adds exactly 4 profiles on every band",
-            all(on[n] == off[n] + 4 for n in off), f"{off} -> {on}")
+        # M80 (2026-08-05): these two used to spell the tier as
+        # range(_M55_BASE_LEN, len(_PROFILES)) and a literal 4, which was only
+        # true while M72's four profiles were the LAST thing appended. M76 then
+        # appended 41 escape twins and M80 appends the knob-cloud tier, so both
+        # had silently become assertions about the whole tail. Anchor on the
+        # tier's own index set — correct for any number of later appends.
+        chk(f"tier adds exactly {len(oc._M55_IDX)} profiles on every band",
+            all(on[n] == off[n] + len(oc._M55_IDX) for n in off),
+            f"{off} -> {on}")
         chk("added indices are exactly the M55 tier",
             all(set(oc._pool_indices(n)) - set(_shipped_pool(n))
-                == set(range(oc._M55_BASE_LEN, len(oc._PROFILES)))
+                == set(oc._M55_IDX)
                 for n in (30, 80, 120)))
         chk("tier keeps the M49/M50 REFINE band", on_be == off_be, str(on_be))
         # ADAPTIVE_POOL=0 must NOT leak the tier (the teammate's port does; ours
@@ -1158,7 +1188,8 @@ def _theta_gate_a(arm):
         os.environ["ICCAD_M55_POOL"] = "1"
         os.environ.pop("ICCAD_ADAPTIVE_POOL", None)
         chk("ADAPTIVE_POOL=0 pool tracks the gate (no leak when off)",
-            f_off == oc._M55_BASE_LEN and f_on == len(oc._PROFILES),
+            f_off == oc._M55_BASE_LEN
+            and f_on == oc._M55_BASE_LEN + len(oc._M55_IDX),
             f"off {f_off} on {f_on}")
         # M71 global overlay: OFF for the m55 arm (their baseline), ON for m55x.
         want = {} if arm == "m55" else dict(oc._M71_ENV)
@@ -1224,6 +1255,86 @@ def _theta_gate_a(arm):
         os.environ["ICCAD_M73_ESCAPE"] = "1"
         chk("RUNTIME flip works (gate resolves per call)",
             flipped_off == off[120] and len(oc._pool_indices(120)) == on[120])
+    elif arm in _M80_ARMS:
+        min_n = int(_ARMS[arm].get("ICCAD_M80_MIN_N", "0"))
+        # +1 = the arm ADDS the tier to the default, -1 = it removes it.
+        sign = 1 if _ARMS[arm]["ICCAD_M80_TIER"] == "1" else -1
+
+        def _want80(n):
+            """Tier indices this band should gain. Spelled out rather than
+            assumed to be len(_M80_IDX): the M41 swap filter is CONTENT-based, so
+            a future vector carrying ORDER_SWAP/ORDER_MOVE would be dropped and
+            this gate has to notice instead of silently measuring a smaller tier.
+            (The M79 cloud excludes those two knobs by construction.)"""
+            if n <= min_n:
+                return set()
+            return {i for i in oc._M80_IDX
+                    if not ("ICCAD_ORDER_SWAP" in oc._PROFILES[i]
+                            or "ICCAD_ORDER_MOVE" in oc._PROFILES[i])}
+
+        def _delta80(n):
+            a, b = set(oc._pool_indices(n)), set(_shipped_pool(n))
+            return (a - b) if sign > 0 else (b - a)
+
+        chk(f"arm {'adds' if sign > 0 else 'removes'} exactly the "
+            f"{len(oc._M80_IDX)} tier indices (min_n={min_n})",
+            all(_delta80(n) == _want80(n) for n in off), f"{off} -> {on}")
+        chk("tier keeps the M49/M50 REFINE band", on_be == off_be, str(on_be))
+        # MECHANISM, and the one place M80 is the MIRROR of M76: the cloud was
+        # measured with _band_env + _m71_env applied, so a tier index that did
+        # NOT get the M71 knobs would be a different profile from the one every
+        # M79 number describes.
+        t_i = sorted(_want80(120))
+        knobs = set(oc._M71_ENV)
+        chk("tier indices DO get the M71 knobs (they were measured under them)",
+            bool(t_i) and all(knobs <= set(oc._profile_env(i, 120)) for i in t_i),
+            f"tier={t_i[:4]} env={oc._profile_env(t_i[0], 120) if t_i else {}}")
+        # The three checks below drive ICCAD_M80_TIER themselves rather than
+        # riding whatever the arm set, so they mean the same thing whichever
+        # direction the arm runs in. `_own` restores the arm's own value after.
+        _own = _ARMS[arm]["ICCAD_M80_TIER"]
+        # CORES GATE. The whole ship story is "only where the wall is max-setter
+        # bound"; at 39 detected cores the tier must be invisible, and unknown
+        # cores must fail CLOSED (_effective_cores_hi -> 0), never open.
+        # tier-5 MUST be pinned off across this comparison: it fires at the same
+        # threshold (_M67F_CORES_MIN == _M80_CORES_MIN == 40), so without the pin
+        # the 39c->40c delta is 22 restored M42 profiles PLUS the 8 tier indices
+        # and this check measures the two tiers at once. Same isolation
+        # m80_tier_gate.py applies, in the other direction.
+        _fc = os.environ.get("ICCAD_ADAPTIVE_CORES")
+        os.environ["ICCAD_M80_TIER"] = "1"
+        os.environ["ICCAD_M67F_TIER5"] = "0"
+        os.environ["ICCAD_ADAPTIVE_CORES"] = str(oc._M80_CORES_MIN - 1)
+        lo_pool = len(oc._pool_indices(120))
+        os.environ["ICCAD_ADAPTIVE_CORES"] = str(oc._M80_CORES_MIN)
+        hi_pool = len(oc._pool_indices(120))
+        os.environ.pop("ICCAD_ADAPTIVE_CORES", None)
+        os.environ.pop("ICCAD_M67F_TIER5", None)
+        if _fc is not None:
+            os.environ["ICCAD_ADAPTIVE_CORES"] = _fc
+        chk(f"cores gate fires at >= {oc._M80_CORES_MIN} only",
+            hi_pool - lo_pool == len(_want80(120)),
+            f"{oc._M80_CORES_MIN - 1}c -> {lo_pool}, {oc._M80_CORES_MIN}c -> {hi_pool}")
+        # ADAPTIVE_POOL=0 must NOT leak the tier (gate read before the early
+        # return, same discipline as M72/M76).
+        os.environ["ICCAD_ADAPTIVE_POOL"] = "0"
+        f_on = len(oc._pool_indices(120))
+        os.environ["ICCAD_M80_TIER"] = "0"
+        f_off = len(oc._pool_indices(120))
+        os.environ.pop("ICCAD_ADAPTIVE_POOL", None)
+        chk("ADAPTIVE_POOL=0 pool tracks the gate (no leak when off)",
+            f_off == oc._M55_BASE_LEN and f_on == oc._M55_BASE_LEN + len(_want80(120)),
+            f"off {f_off} on {f_on}")
+        # RUNTIME flip works (an import-time gate would make this arm a silent
+        # no-op and the run would report a fake 'zero difference').
+        flip = {}
+        for v in ("0", "1"):
+            os.environ["ICCAD_M80_TIER"] = v
+            flip[v] = len(oc._pool_indices(120))
+        os.environ["ICCAD_M80_TIER"] = _own
+        chk("RUNTIME flip works (gate resolves per call)",
+            flip[_own] == on[120] and flip["1"] - flip["0"] == len(_want80(120)),
+            f"off {flip['0']} on {flip['1']} arm({_own}) {on[120]}")
     elif arm in _M75_ARMS:
         # A pure C++ knob must move the BINARY and nothing on the Python side.
         chk("knob leaves every pool untouched (C++-only arm)", on == off,
@@ -1270,14 +1381,14 @@ def _theta_gate_a(arm):
 def _shipped_pool(n):
     for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
               "ICCAD_M55_POOL", "ICCAD_M73_ESCAPE", "ICCAD_M73_MIN_N",
-              "ICCAD_M73_SRC"):
+              "ICCAD_M73_SRC", "ICCAD_M80_TIER", "ICCAD_M80_MIN_N"):
         v = os.environ.pop(k, None)
         if v is not None:
             os.environ[f"_SAVE_{k}"] = v
     p = oc._pool_indices(n)
     for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
               "ICCAD_M55_POOL", "ICCAD_M73_ESCAPE", "ICCAD_M73_MIN_N",
-              "ICCAD_M73_SRC"):
+              "ICCAD_M73_SRC", "ICCAD_M80_TIER", "ICCAD_M80_MIN_N"):
         v = os.environ.pop(f"_SAVE_{k}", None)
         if v is not None:
             os.environ[k] = v
@@ -1342,6 +1453,17 @@ def mode_restore(args):
         # NOT a superset: this arm also turns the M71 global overlay OFF, so it is
         # the teammate's knob-free base + their tier. Movers both ways are expected.
         expect = "M71 global OFF + M72 tier => movers both ways expected"
+    elif arm in _M80_ARMS:
+        # A pool superset, but deliberately NOT in the strict branch above. That
+        # branch's argument is "the proxy is oracle-min in sample, so a superset
+        # can only weakly improve" -- which is false for ADDED candidates: the
+        # proxy's hmin is the min HPWL over the WHOLE pool, so a new low-HPWL
+        # candidate rescales the hpwl term for every incumbent while leaving
+        # area/A_hat alone, and the order among EXISTING candidates can flip.
+        # M78 measured the consequence directly (the same candidate mechanism was
+        # -0.18% in one code path and +0.36% in another), so an in-set regression
+        # here is a legitimate result, not a plumbing bug, and must not STOP.
+        expect = "M80 knob-cloud tier (added candidates shift hmin) => movers both ways expected"
     elif arm in _M75_ARMS:
         # NOT a pool superset: a global C++ knob changes what EVERY profile in
         # the pool emits, so the proxy's oracle-min argument does not apply and

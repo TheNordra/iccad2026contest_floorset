@@ -37,7 +37,10 @@ puts om16 at mean 9.71s / max 23.73s) so a candidate carrying them would set the
 would inflate a ceiling we could not spend.
 
 Run (PowerShell):
-  <python> -u m79_knob_cloud_probe.py run  [R]   > m79_knob_cloud.txt 2>&1
+  <python> -u m79_knob_cloud_probe.py run    [R]          > m79_knob_cloud.txt 2>&1
+  <python> -u m79_knob_cloud_probe.py greedy [R] [KMAX]   # writes m80_vectors.json
+  <python> -u m79_knob_cloud_probe.py loo    [R] [KMAX]
+  <python>    m79_knob_cloud_probe.py dump   [R] [i,j,k]  # explicit order
   <python>    m79_knob_cloud_probe.py report
 then
   <python> m77_ml_candidate_probe.py score m79_knob_cloud_oraclepick.json \
@@ -285,7 +288,42 @@ def _pool_at(n, cores=48):
             os.environ["ICCAD_ADAPTIVE_CORES"] = old
 
 
-def mode_greedy(data, KEY, R, sig):
+def _write_vectors(order, R, kind):
+    """Persist a greedy pick order as the ONE machine-readable source of truth.
+
+    M80 found this the hard way: after M79 the eight picked vectors existed only
+    in an untracked `m79_greedy.txt` and in a random seed. build_cloud() is
+    deterministic and prefix-stable in R, but its output depends on
+    _PROFILES[:_M55_BASE_LEN], so a future edit to the shipped prefix would
+    silently re-point every "#100" in the report at a different vector. The
+    wrapper's _M80_EXTRA is asserted against this file by m80_tier_gate.py."""
+    out = _DIR / "m80_vectors.json"
+    out.write_text(json.dumps({
+        "source": kind, "seed": SEED, "R": R, "K": len(order),
+        "order": list(order),
+        "vectors": [CLOUD[i] for i in order],
+    }, indent=1, sort_keys=True), encoding="utf-8")
+    print(f"\n  wrote {out.name}   R={R} K={len(order)} order={list(order)}")
+    return out
+
+
+def mode_dump(R, order):
+    """Regenerate a named pick order into m80_vectors.json without re-running the
+    greedy search (which needs the whole proxy/cost cache warm).
+
+    Doubles as the prefix-stability acceptance test: `dump 128` must reproduce
+    the eight vectors M79 printed, or build_cloud() has drifted and every M79
+    number is talking about different vectors."""
+    for i in order:
+        if not 0 <= i < R:
+            sys.exit(f"order index {i} outside cloud R={R}")
+    _write_vectors(order, R, "explicit")
+    for i in order:
+        print(f"    #{i:>3}  {json.dumps(CLOUD[i], sort_keys=True)}")
+    return 0
+
+
+def mode_greedy(data, KEY, R, sig, KMAX):
     """THE question G0-B's oracle cannot answer on its own: how much of the
     per-case gain survives if you are NOT allowed to choose per case?
 
@@ -348,7 +386,7 @@ def mode_greedy(data, KEY, R, sig):
 
     print("\n  greedy fixed-profile curve (no per-case choice allowed):")
     picked = []                                   # cloud indices, in greedy order
-    for step in range(8):
+    for step in range(KMAX):
         cur, ki = min(((total([KEY[j] for j in picked] + [KEY[i]]), i)
                        for i in range(R) if i not in picked),
                       key=lambda z: z[0])
@@ -358,10 +396,11 @@ def mode_greedy(data, KEY, R, sig):
     print("\n  picked vectors:")
     for i in picked:
         print(f"    #{i:>3}  {json.dumps(CLOUD[i], sort_keys=True)}")
+    _write_vectors(picked, R, "greedy")
     return 0
 
 
-def mode_loo(data, KEY, R, sig):
+def mode_loo(data, KEY, R, sig, KMAX):
     """Gate-1 PREVIEW, free once `greedy` has warmed the cache.
 
     G0-B's +2% is an ORACLE: the winning vector is chosen with the label. M56 is
@@ -467,7 +506,6 @@ def mode_loo(data, KEY, R, sig):
           "on 20)")
     print("=" * 78)
     folds = [[ci for ci in range(100) if ci % 5 == f] for f in range(5)]
-    KMAX = 8
     held = [0.0] * (KMAX + 1)
     denom = sum(CASES[ci]["w"] * base[ci] for ci in range(100))
     for f, te in enumerate(folds):
@@ -498,9 +536,20 @@ def mode_loo(data, KEY, R, sig):
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "run"
     R = int(sys.argv[2]) if len(sys.argv) > 2 else 128
+    arg3 = sys.argv[3] if len(sys.argv) > 3 else ""
     global CLOUD
     CLOUD = build_cloud(R)
     sig = _sig()
+    if mode == "dump":
+        # argv[3] is an explicit order here, not KMAX. Default = the eight M79
+        # published, so `dump 128` is the prefix-stability acceptance test
+        # against m79_greedy.txt.
+        raw = arg3 or "100,0,80,102,56,49,86,119"
+        return mode_dump(R, [int(x) for x in raw.split(",") if x.strip()])
+    # M80: KMAX was hard-coded at 8. The 5-fold held-out curve was still rising
+    # +0.198pp at the last step (0.593 -> 0.791%), i.e. it had not plateaued, so
+    # stopping at 8 could only understate the classical gain.
+    KMAX = int(arg3) if arg3 else 12
     data = {}
     if CACHE.exists():
         try:
@@ -550,9 +599,9 @@ def main():
         sys.exit(f"{len(missing)} runs missing -> re-run `run`")
 
     if mode == "greedy":
-        return mode_greedy(data, KEY, R, sig)
+        return mode_greedy(data, KEY, R, sig, KMAX)
     if mode == "loo":
-        return mode_loo(data, KEY, R, sig)
+        return mode_loo(data, KEY, R, sig, KMAX)
 
     o_rows, tot, feas, dts, hits = [], 0.0, 0, [], {}
     for c in CASES:
