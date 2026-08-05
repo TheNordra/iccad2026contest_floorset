@@ -169,7 +169,7 @@ M41 的 **content-based** swap 過濾，而 cloud 生成時就排除了 `ORDER_S
 | `m67_oos_probe restore --arm m80 --force-cores 48` Gate A | **ALL PASS**（含 cores gate 39c→13 / 40c→21，tier-5 已隔離） |
 | 同上 Gate B（in-set 100，真 wrapper） | shipped 1.293461 → **1.266623**，58/100 movers（與官方 eval 逐案一致） |
 | 同上 OOS 240 @48c（**真 wrapper**） | shipped `1.555855` → **`1.523604`**，131 好 / 3 壞、**0 infeasible** |
-| `regression_suite.py`（八項） | *(見下)* |
+| `regression_suite.py`（八項） | **OVERALL: ALL PASS**（856s）—— m48 / rf / m49×3 / m47b / m67g tier-5 / **m80 tier** |
 
 **同一個數字 `1.266623425` 由四條互相獨立的路徑得到**：離線 greedy（`m79_knob_cloud_probe`）、
 離線重算（`m80_tier_probe inset`）、官方 evaluator、`m67_oos_probe` 的真 wrapper Gate B。
@@ -197,4 +197,14 @@ K=8 值 **`1.523603590`** 相同 ⇒ 離線模擬器在 K>0 也是忠實的，�
 - `regression_suite.py` — 第八項 gate
 - 日誌：`m80_cloud256_run.txt`、`m80_greedy256.txt`、`m80_loo256.txt`、
   `m80_build_s{1,2}.txt`、`m80_score_s{1,2}.txt`、`m80_inset.txt`
-- 結果：`results_M80_oos_s{1,2}_c48.json`、`results_M80_{default,c48_off,c48_on}.json`
+- 結果：`results_M80_oos_s{1,2}_c48.json`、`results_M80_{default,c48_off,c48_on}.json`、
+  `results_M72_ab_m80_0_inf.json`（m67 arm 的真 wrapper OOS）
+- commit `0f40fda`（10 檔、+1530 行）
+
+## 送件影響（**必讀**）
+
+`build_submission/` 那顆是 **M74**，**不含 M80**。評分機是 48 核 ⇒ 送舊包等於白丟 **−2.075%**。
+Final（8/21）要送就必須重打包，而且**所有錨要一起換**：`make_submission._ANCHOR`、
+`m67c` 的 `ANCHOR`/`ANCHOR48`/`_SOURCES`、`FINAL_LINUX_VERIFY_RUNBOOK.md` 內的預期逐位值
+（`final48` 那輪會從 M73 的 `1.295547821428148` 變成 M80 的 48 核值，因為 tier 開著）。
+⚠️ GPU 機 WSL 的 `verify_final_tar.sh` 仍然是唯一卡住的一關，這台沒有 WSL/Docker。
