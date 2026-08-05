@@ -11,12 +11,19 @@
 - 真天花板 **1.1079**（`fp_sol` verbatim），headroom 100% 在 quality（violation 已贏）。組員 1.0322 是 **label oracle**（hidden test 不適用）；legit 上限 ~1.62。
 - 但 **reconstruction 本身 RED**（M40）：X 結構無法從 connectivity 還原、Y 序需 label。⇒ 走「更好的 placer / 更聰明的 portfolio」而非「還原」。
 
-### 現況一句話（2026-08-01）
+### 現況一句話（2026-08-05）
 - **Beta 已結案**：上傳的是 1.3054（M71/M73，md5 `ba694bc6…`）。**使用者 2026-08-01 裁示不換件** ⇒ 那顆就是 Beta 的最終答案，不要再動它。
 - **tree 上的 local 最佳 = 1.293461（M74 常數 regen）**，比已上傳的包好 **−0.769%**（OOS 240 −0.616%，同號 ⇒ 非樣本內過擬合）。**換件包已備妥並在 Windows 端驗過，等 Final（8/21）出貨**，只差 GPU 機那關。
-- **古典線收斂**：M74（常數）/ M75（M71 殘餘旗標）/ M76（escape tier）三個 milestone 把最後三個候選全關了。剩下的 M62 只值 +0.06%，而 M76 的 +0.087% 已判 RED。
-- **新局面 = 組員全力轉 ML-as-placer**（學長 `cadc1106` 截圖 1.1747，比我方好 −9.2%）。**我方角色 = 判定不是訓練**（本環境禁訓），工具 `m77_ml_candidate_probe.py`（in-set）+ `m77_oos_probe.py`（OOS 240 ×2 樣本）已建好驗過，只等組員交 positions json。見「ML 現況」。
-- 四大軸狀態：**quality 軸**——M26/M27/M40 三面天花板仍成立；M71 曾證明 cluster 複合 item 的「候選集合／排序 key」是漏掉的軸（−1.589% in-set / −4.04% OOS），但 **M75 已把該軸的殘量掃完＝四個旗標全 RED ⇒ M71 軸關閉**，**M76 又把「讓被 M71 弄壞的案子逃生」這條補丁軸也關掉（48 核形狀只剩 +0.10%，被 tier-5 吃掉）**；**RF 軸**——M41-M50 七槍 + tier-5 已 ship；**LP 軸**——offline GREEN（錨 1.2914）、in-window RED（M54/M62/組員 80cc719）；**ML 軸**——四種插入點全 RED（M52 生成、M56 selector、M68 seed、LP refinement）。
+- 🏆 **古典線「收斂」的結論已被 M79 推翻**：旋鈕空間**隨機聯合抽樣**+貪婪加固定 profile，
+  **5-fold held-out +0.791%（K=8）、dRF@48c +0.136% ⇒ NET +0.655%**，單一最佳新向量
+  in-sample +0.439%（M30/M31 掃到飽和是 ≤0.063%）。⇒ **第一順位改成 M80**（見「下一步 0」）。
+  M74/M75/M76 關掉的是**那些特定候選**，不是整個旋鈕空間。
+- **ML 全線 RED，包含「我方自己做一顆」**：M79 Gate 0 量到形狀上界 **+0.099%**、
+  逐案旋鈕 oracle +2.03% 但 **LOO 預測器只有 +0.09~0.17%（輸給不看案子的固定 profile）**。
+  組員也已用 oracle 天花板自判 ML-as-placer 死。`m77_*` 兩支判定工具維持待命。
+- 四大軸狀態：**quality 軸**——M26/M27/M40 三面天花板仍成立；M71 軸由 M75 關閉、
+  M76 關掉 escape tier、M78 關掉 anchored 候選集合；**但 M79 打開了「profile 聯合空間」這個新洞**；
+  **RF 軸**——M41-M50 七槍 + tier-5 已 ship；**LP 軸**——offline GREEN（錨 1.2914）、in-window RED（M54/M62/組員 80cc719）；**ML 軸**——**五種**插入點全 RED（M52 生成、M56 selector、M68 seed、LP refinement、**M79 hyper-heuristic**）。
 - 送件 hardening（M43/M48/M67-A~G）全部完成，Linux binary 雙邊逐位驗過。
 
 ## 評分公式（2026-05-23 確認）
@@ -74,7 +81,7 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 - **proxy 自 M13 起 = per-case oracle ceiling**（selection 不是瓶頸；加 profile 全額 realize）
 - ⚠️ vrel **必須用 shapely**（wrapper `_proxy_metrics`），不可用 C++ union-find
 
-里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）→ M75 M71 殘餘四旗標全 RED（軸關閉，分數不動）→ M76 組員 escape tier RED（48 核形狀只剩 +0.10%，被 tier-5 吃掉）→ M78 候選集合第二條路徑 RED（唯一贏的 `anch_cross` OOS 只有 −0.160%，且「加候選」預設有害）。
+里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）→ M75 M71 殘餘四旗標全 RED（軸關閉，分數不動）→ M76 組員 escape tier RED（48 核形狀只剩 +0.10%，被 tier-5 吃掉）→ M78 候選集合第二條路徑 RED（唯一贏的 `anch_cross` OOS 只有 −0.160%，且「加候選」預設有害）→ **M79 自建 ML Gate 0：形狀 oracle +0.099% RED、逐案旋鈕 oracle +2.03% 但不可預測 RED，副產物「隨機聯合抽樣的固定 profile」held-out NET +0.655% ⇒ 古典線重開**。
 
 ## 🔑 戰略結論（哪些軸封了、哪些沒）
 
@@ -83,12 +90,40 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 3. **reconstruction RED**（M40）：X 從 connectivity 不可還原（Spearman 0.009）+ Y 序需 label（+159%）。
 4. **RF 軸 = 已兌現的主力**（M41-M50 + M67-F tier-5）：alpha 實測 RF 0.7081≈floor 證明七槍全數兌現。
 5. **🚨 但 quality 軸沒有 converged**（M40 的「converged」已被 M71 推翻）：M33-M39 掃的全是**成員 aspect**，沒人動過複合 item 的**候選集合與排序 key**。M71 −1.589% 就在那個洞裡。⇒ 找洞要找「從沒被參數化的結構決策」，不是再掃已知旋鈕的值。
-6. **ML 四種插入點全 RED**：生成（M52 imitation 零容錯×零訊號）、selector（M56 winner case-idiosyncratic + proxy 已 oracle）、seed（M68 完美種子 vs portfolio 僅 +0.001%）、refinement（LP 系列 + M64）。重開唯一條件 = 取得 rival 1.29 的 legit 方法細節。
+6. **ML 五種插入點全 RED**：生成（M52 imitation 零容錯×零訊號）、selector（M56 winner case-idiosyncratic + proxy 已 oracle）、seed（M68 完美種子 vs portfolio 僅 +0.001%）、refinement（LP 系列 + M64）、**hyper-heuristic（M79：逐案預測 profile，oracle +2.03% 但 LOO 預測器 +0.09~0.17%，輸給不看案子的固定 profile ⇒ M56 的完整重演）**。重開唯一條件 = 取得 rival 1.29 的 legit 方法細節。
+7. **🚨 M79 新增：「餵給 packer 的決策」整層已經吃乾**——三個 perfect-information 上界
+   排在一起就是結論：完美排序 +0.005%（M26）／完美位置種子 +0.001%（M68）／
+   **完美形狀 +0.099%（M79）**，而到 label floor 的 headroom 是 **14.343%**。
+   ⇒ 缺的不是逐 block 的參數，是**版圖拓撲本身**（M27 的另一面）。任何「ML 預測某個
+   per-block 量再交給我們的 placer」的提案，天花板都在 0.1% 量級，**不必再量**。
 
-## 下一步（依 ROI）— 更新於 2026-08-01
+## 下一步（依 ROI）— 更新於 2026-08-05
 
-> **只列還沒做的事。** 已收斂的軸（M74 / M75 / M76）在死路 ledger，不在這裡。
+> **只列還沒做的事。** 已收斂的軸（M74 / M75 / M76 / M78 / M79 的兩個 ML 分支）
+> 在死路 ledger，不在這裡。
 > **本節在每個 milestone 收尾時必須改寫**，見 `[[keep-next-steps-current]]`。
+
+0. 🏆 **M80：把 M79 撞到的隨機聯合搜尋做完（新的第一順位，古典、與 ML 無關）**
+   M79 的 G0-B′ 量到：在 41 隻 profile 所在的旋鈕空間**隨機聯合抽樣** 128 個向量、
+   貪婪加成固定 profile，**5-fold held-out +0.791%（K=8）、dRF@48c +0.136%
+   ⇒ NET +0.655%**，過 OOS ship bar（0.30%）兩倍。單一最佳新向量 in-sample
+   **+0.439%**，是 M30/M31 掃到飽和時最好那隻（≤0.063%）的 **7×**。
+   **⇒ 「古典線沒有剩餘增益」這個結論（M77 §5 寫的）是錯的，要撤回。**
+   為什麼會漏：M30/M31 是**逐 knob 從人工 recipe 往外掃**，低於 0.05% 就停；
+   隨機**聯合**抽樣會走到座標式貪婪造訪不到的組合（挑中的 `#100` 同時把
+   `BP_WEIGHT` 拉高、`MIB_ASPECT` 往 tall、frame scale 放寬——**這三條各自都在
+   ledger 裡被判過死**）。
+   **要做的事**（依序）：
+   (a) 把 R 從 128 加大（`m79_knob_cloud_probe.py run <R>`，快取 key 是
+       `(case, profile-hash)`，加大只付新向量的錢）；
+   (b) **真 OOS 判定**：`m67_oos_probe.py` 加一個 arm 或用 `m77_oos_probe.py`，
+       **一定要 `--force-cores 48`**（M76：形狀差 2.7 倍）；
+   (c) **12 核是負的**（K=8 dRF **+10.614%**、100/100 抬 wall）⇒ ship 形態必須是
+       **cores-gated tier**，比照 tier-5；
+   (d) 進 `_PROFILES` 就會作廢三顆 audit cache ⇒ 走完整 regen 鏈
+       （`profile_audit base|ship|esc` → `ICCAD_REGEN=1 rf_score_model.py` →
+       `m49_refine_probe` → `m67g_tier5_gate` → `regression_suite`）。
+   ⚠️ 誠實範圍：+0.791% 是**同語料 5-fold**，不是 OOS 240；(b) 沒過就不算數。
 
 1. **Final 保底包收尾（唯一純執行、零不確定性的項目，也是唯一還沒關掉的風險）**
    M74 換件包已備妥、Windows 端驗過、身分 2026-08-03 重新雜湊確認未漂移。
@@ -110,18 +145,24 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
    median 與 RF，重新校準 `m67e_rf48.py`（現在錨的是 M10 廉價池那版的逐案 runtime，
    p50 0.673s，不是現行 shipped），才知道 tier-5 的賭注（有效並行度 ≥22.5）成不成立。
 
-4. **ML 候選判定 — 已停放，不是待辦**
-   組員 08-01（`b86a02c`）用 oracle 天花板自己判死 ML-as-placer，建議提前分叉回古典線。
+4. **ML 候選判定 — 已停放，不是待辦（M79 之後更沒有理由重啟）**
+   組員 08-01（`b86a02c`）用 oracle 天花板自己判死 ML-as-placer。M79 又把**我方自己
+   做一顆**的兩條路都關了（形狀上界 +0.099%、旋鈕 oracle 上界 +2.03% 但逐案不可預測）。
    `m77_ml_candidate_probe.py`（in-set）與 `m77_oos_probe.py`（OOS 240 兩份樣本）機制都
    驗過、隨時可用，**但沒有候選會進來**。若日後拿到學長 `cadc1106` 的產物才重啟；
    屆時判定看 **s2**（worker_10..19，對他們的模型才是真 OOS）。
 
-5. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML；任何「縮小 LP 讓它
-   變便宜」的變體（組員 80cc719 已證死）；**在這台機器上跑訓練**（環境禁訓）。
-   **M78 新增三條**：(a) 再加候選位置（`item_candidates` 兩種加法都是 +0.36~0.40%，
+5. **不要做**：任何 ledger 標 RED 的軸；任何以 fp_sol 為監督的 ML（**使用者 08-05 裁示：
+   完全禁止，訓練訊號只能 self-supervised**；離線 oracle 探測用 label 不受限）；
+   任何「縮小 LP 讓它變便宜」的變體（組員 80cc719 已證死）；
+   **在這台機器上跑大模型訓練**（小模型 CPU 訓可以，使用者 08-05 裁示）。
+   **M78 三條**：(a) 再加候選位置（`item_candidates` 兩種加法都是 +0.36~0.40%，
    出貨候選集合是調過的不是貧乏的）；(b) anchored 成員排序 key（整條封卷，
    對照組拿掉 boundary 優先序是 +1.069%）；(c) 把 `anch_cross` 包成 pool tier
    （oracle 上界 +0.384% 但要 41 隻 twin，max-setter 的 twin 一進池就 ΔRF +2.04%）。
+   **M79 兩條**：(d) ML 預測 per-block 形狀／排序／位置種子（三個 perfect-information
+   上界分別是 +0.099% / +0.005% / +0.001%）；(e) ML 逐案預測 profile
+   （oracle +2.03% 但 LOO 預測器只有 +0.09~0.17%，**輸給不看案子的固定 profile**）。
 
 > 🗓️ **Final deadline = 2026-08-21**（組員 `HANDOFF_2026-07-30.md`，我方原本只記了 Beta）。
 > 📋 **每個 session 開始前**：`cd C:\Users\Nordra\Downloads\teammate_iccad_study\Iccadcontest2026 && git fetch origin`，再讀 `git show origin/main:ATTEMPTED_ROUTES_AND_DEAD_ENDS.md`（本地 clone 常落後數個 commit；該檔本身也可能停在舊日期，要另看新 commit 的 README）。
@@ -132,6 +173,7 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 
 ### GREEN / 已 ship
 
+- **🏆 M79-B′ 旋鈕空間的隨機聯合抽樣（2026-08-05 GREEN，未實作、未出貨；`M79_REPORT.md`、`[[m79-shape-and-knob-ceilings]]`）**——M79 ML 探測的副產物，**是古典增益不是 ML**。把 R=128 個隨機聯合抽樣的旋鈕向量（一半是出貨 profile 的 1-3 knob 擾動、一半從 per-knob 先驗重抽；**排除 ORDER_SWAP/MOVE**，5-12s/案會自己當 48 核 max-setter）用**固定 profile** 的形式貪婪加進池：in-sample K=1/4/8 = **+0.439% / +1.106% / +1.576%**，**5-fold CV held-out = +0.234% / +0.459% / +0.791%**（轉移率 **50%**，5 個 fold 挑到的向量高度重疊 ⇒ 不是雜訊），dRF@48c = +0.039% / +0.050% / +0.136% ⇒ **held-out NET@48c = +0.195% / +0.409% / +0.655%**，K≥4 過 OOS ship bar。**單一最佳新向量 in-sample +0.439% = M30/M31 掃到飽和時最好那隻（≤0.063%）的 7×**。**🔑 為什麼會漏掉 30 個 milestone**：M30/M31 是**逐 knob 從人工堆疊的 recipe 往外掃、低於 0.05% 就停**，隨機**聯合**抽樣會走到座標式貪婪永遠不會造訪的組合——挑中的 `#100` 同時把 `BP_WEIGHT` 拉到 274048、`MIB_ASPECT` 往 tall 側 0.2338、frame scale 放寬到 1.45，**這三條各自都在 ledger 裡被判過死**。⇒ **「單獨死不代表聯合死」，凡是「某某旋鈕封卷」的結論都只對單軸掃描成立。** ⚠️ **12 核上這條是大負**（K=8 dRF **+10.614%**、100/100 案被抬 wall）⇒ ship 形態必須是 cores-gated tier，與 tier-5 共用同一個賭注。⚠️ +0.791% 是**同語料 5-fold**，真 OOS 240 還沒跑（`--force-cores 48` 必要）。下一步見「下一步 0（M80）」。
 - **🏆 M74 adaptive 常數 regen（2026-07-30 GREEN，未出貨；`M74_REPORT.md`、`[[m74-adaptive-regen]]`）**——全部 drop 常數在 **M71 + 出貨 REFINE overlay** 下重推（新增 `audit_cache_ship.pkl`；`profile_audit.py base|ship`）。local 1.305390 → **1.293461**（−0.769%，14 movers 全好 0 壞，avg 1.45s），品質稅 +0.967% → **+0.046%**，7/7 gate。改動：`_BIG_REDUNDANT_IDX` 成員大換、tier-4 三帶重推、tier-3 9→15 **且降級 cores-gated（`_M45_MID_CORES_MAX=16`）**、mid REFINE K=8→**6**（big K=4 在 M71 下變成**純贏** −0.056%，符號翻了）。**🔑 新 doctrine（M72 的加強版）：strict in-sample 等價 ≠ OOS 等價**——tier-3 新剪法 in-set 嚴格相等，OOS mid 帶卻輸給滿 pool **−0.702%（30 好 0 壞）**，而它在 48 核只買到 1.32→1.30s（c\* max 15.2，投影 +0.00%）⇒ 高核純付品質 ⇒ 降級（tier-5 邏輯的鏡像）。**🚨 附帶發現：在此之前所有離線 gate 都在量 pre-M71 的 placer**——`profile_audit.run_one()` / `m49_refine_probe.run_case()` 都漏了 `_m71_env()`，而 cache 簽章只有 `repr(_PROFILES)`（無 exe md5、無 overlay）所以偵測不到；簽章已修成釘 exe md5 + overlay 常數，`m67_oos_probe._sig()` 也補上全部 adaptive 常數。⚠️ **`regression_suite.py` 一定要用 PowerShell 跑**：Bash 工具的 sandbox 擋 `.exe` 寫入 ⇒ m48 必假 FAIL。
 - **🏆 M71 cluster composite-item EXPOSE+EDGE_PACK（2026-07-29 SHIPPED；`[[m71-cluster-item-expose-edgepack]]`）**——來源=組員 repo、我方獨立逐位複驗。兩個旗標（C++ 預設 OFF、binary 單獨逐位不變；wrapper `_m71_env()` 逐 profile 打開，`ICCAD_M71=0` 還原）：(a) `ICCAD_CLUSTER_BND_EXPOSE` = 排序 key 換成 `(boundary_bad, fragments, area, aspect)` + 每候選加「boundary 成員推到 item 自身對應邊」變體；(b) `ICCAD_CLUSTER_BND_EDGE_PACK` = 加「boundary 外圈／interior 中間」候選。movers 全是硬案（91/84/76/73/85/89/65），與 M63 早就定位的 case 89 純 movable cluster violator 完全吻合。in-set −1.589%、OOS −4.04%、runtime 反而更快。⚠️ 讀 OOS probe 輸出注意 `VERDICT RED` 是 M67-D 的**絕對** bar，不是 A/B 判準。
 - **組員 M72 boundary-aware cluster tier ❌ RED for us（2026-07-30 我方獨立 OOS 驗證；`[[m72-tier-vs-m71-global]]`）**——組員 `b716753`+`2a0ac94`：**同一批六個 knob**，但包成 **4 隻額外 profile**（`ICCAD_M55_POOL` gate）而非 M71 的全域 overlay，動機 = 讓被 M71 弄壞的 17 案「逃生」到無 knob 的 profile（他們的 2-way per-case oracle 1.299157）。其 constructive.cpp = 我們的 + 一個 BOM ⇒ 無需重編。已移植進 repo（預設 off、off-path 七 regime × n=1..130 逐一等於 HEAD）**並修掉他們一個漏洞**：他們的 gate 只在 loop 內檢查 ⇒ `ADAPTIVE_POOL=0` 路徑會漏進那 4 隻（污染離線錨／M53 L1-L3／probe 自己的 `full` 端點）；我們在 early-return 前就讀 gate。**M67-F 同一批 80 案 held-out n>100**：pre-M71 1.659884 → **M71 1.595348** → 他們的 M72 **1.618303**（逐位重現他們回報值 ⇒ 量測本身沒問題，但**錨的是 knob-free 的 M67-G，我們早就不是了**）⇒ **M72 比我們的 M71 差 1.418%**（17 好 / 40 壞）。**tier 疊在 M71 上（m55x）= in-set n>100 20/20 逐案相等、OOS 僅 +0.057%（2 movers）、12c wall ×1.42** ⇒ 不採用（tier 留在 tree 內預設 off 當量測旋鈕）。**🔑 教訓（新 doctrine）**：**in-sample 打平可以藏住 1.4% 的 OOS 差距**——heavy band in-set M71 1.296813 vs M72 1.296769（+0.003% = 平手），OOS 卻差 1.42%。機制：全域 overlay 讓 41 隻 profile **每一隻**都帶機制（aspect×frame×knob 的組合數最大化），4 隻固定 recipe 的 tier 只有在未見案剛好合其中一隻時才有用；他們的「0 regressions」是**樣本內、由 proxy 達成非 guard 保證**。⚠️ 組員所有 headline 一律當 in-sample 看，且**要看他們錨的是哪一版**。
@@ -150,6 +192,10 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 
 ### quality 軸 RED（結構性）
 
+- **M79 自建 ML 候選 Gate 0（2026-08-05；`M79_REPORT.md`、`[[m79-shape-and-knob-ceilings]]`）**——問「我方能不能自己做一顆過得了 M77 那把尺的 ML」。pre-registered bar = in-set portfolio delta ≥1.0%（OOS NET 0.30% 的 3× headroom）。**兩條路都 RED**：
+  **(a) 完美形狀 = +0.099%**（12 recipe 版 +0.112%）。機制 = `constructive_m79.cpp` 的 `ICCAD_DIMS_FILE`（讀 `id w h` 覆寫 `dims[]` 並鎖住該 block，讓 `apply_safe_mib_dims`/`FREE_ASPECT`/`FREE_CLUSTER`/`FREE_ANCHORED`/`CLUSTER_ASPECT`/`MIB_ASPECT` 全跳過；off-path 600/600 逐位）。覆蓋 6110/7050 = **86.7%** 的 block、位置/排序/frame/後處理全照我們自己的 placer。**對照組（同 6 隻 recipe、不指定形狀）恰好 +0.000%（0 wins / 0 switches）⇒ 增益 100% 歸因於形狀**，沒有「多幾隻 pool」的混淆。⚠️ 事前訊號其實很強（label aspect sd(log)=0.530、只有 34% 近正方，而我們預設 `SOFT_ASPECT=1.0`；boundary code 分層後 sd(log) 幾乎不降）**——訊號強不等於分數在**。
+  **(b) 逐案旋鈕 oracle = +2.025%（NET +2.023%），但不可預測**。R=128 隨機聯合抽樣、82/100 案贏、efficiency 99.7%、proxy 誤選 0。**Gate-1 預覽的 LOO 預測器（判準用 portfolio delta，不是 solo cost）只有 global +0.166% / band +0.155% / knn5 +0.091%，三個都輸給「不看案子、直接加一隻固定 profile」的 held-out +0.234%**，而且最「個人化」的 kNN 最差 ⇒ **M56 的完整重演**（winner case-idiosyncratic）。
+  **🔑 教訓 A：三個 perfect-information 上界排起來就是天花板的形狀**——完美排序 +0.005%（M26）／完美位置種子 +0.001%（M68）／完美形狀 +0.099%（M79），而到 label floor 有 14.343% ⇒ **瓶頸不在餵給 packer 的決策，在 packer 的可達集合**（M27 的另一面）。**🔑 教訓 B：判準錯會給假 RED**——本探測第一版的 LOO 預測器用「訓練集平均 solo cost 最低」挑向量，報 **+0.000%**；換成 portfolio delta 就變 +0.166%。M77 的頭條（solo 與 portfolio 價值不單調相關）在**自己的工具內部**又踩了一次。**🔑 副產物見下面 GREEN 區的 M79-B′**。
 - **M78 候選集合的第二條路徑（2026-08-03 RED；`M78_REPORT.md`、`[[m78-candidate-set-second-path]]`）**——假說：M71 只補了兩條 cluster 路徑中的一條（純 movable 走 `make_group_item`），**mixed（preplaced+movable）走的 `adjacent_candidates_for_block` + `pack_in_frame` anchored first-pass 仍是 pre-M71 形狀**。前件普查（`m78_antecedent_census.py`，讀 dataset 不跑 placer）**PASS**：anchored movable 佔加權 blocks **6.26 / 5.66 / 5.86%**（in-set / s1 / s2），非空案佔 62-74% 的權重，重帶 n>100 有 14/20、56/80、50/80 案非空，A1/M71 前件比 **0.30-0.36×** 三語料一致。⚠️ 但「有 A1 前件而 M71 前件為空」只佔 **0.00/2.55/3.59%** ⇒ 兩者**案子層面高度重疊**。**六個旗標（全部只進 `constructive_m78.cpp/.exe`，出貨 exe md5 不動 ⇒ 三顆 cache 不失效）× 11 個 arm，10 個變差、1 個變好**：唯一贏的 `ICCAD_M78_ANCH_CROSS`（跨 rect 交叉候選：x 取自一個 rect 的面、y 取自另一個——出貨的候選集合 x/y 永遠取自同一個 rect）in-set **−0.183%**（16c）/ **−0.213%**（48c）、**OOS 240@48c −0.1604%**（33 好 40 壞）、wall ×1.07 ⇒ 品質只有 bar（0.30%）的 **54%** 且 wall 是扣分 ⇒ **RED**。tier 形式也否決：2-way per-case oracle 上界 **+0.3841%**（overlay 只 realize 41.8%），但要 41 隻 twin 才拿得到，而 48c wall = max-setter、twin 慢 7% ⇒ max-setter 的 twin 一進池就是 `1.07^0.3` = **ΔRF +2.04%**；避開就得 in-sample 挑 source set（M76 已量轉移率 ≈5%），對照 M76 escape tier 4 隻 source 只 realize +0.101~0.107%。**🔑 教訓 A：「加候選」預設是有害的**——完全相同的交叉機制在 anchored 是 −0.18%、在泛用 `item_candidates` 是 **+0.36%**，中心對齊槽兩邊都是正的（+0.29 / +0.40%）⇒ **出貨的候選集合不是貧乏而是調過的**，greedy 的 `bbox_area_with` 短視，多給局部更好的位置反而做出全域更差的選擇。**🔑 教訓 B：M71 的排序增益搬不過來**——`ord1`（corner-first）**恰 0**、`ord2/ord3` 只動 3 案（0.92% 權重）、`ord4`（拿掉 boundary 優先序的對照組）**+1.069%** ⇒ anchored 排序軸整條封卷。M71 之所以能從 7 種成員順序拿分，是因為每種順序餵出 5 種**內部版型**再用 layout key 挑；anchored 成員逐一直接放進 frame，**沒有內部版型可排列**。**🔑 教訓 C：這是「機制真但太小」的 RED，不是「前件空」或「效果被吸收」**——in-set→OOS **轉移率 76%**（機制的轉移率，遠高於 M76 那個 source-set 的 5%），movers 精確落在普查預測的案子上（90/86/88/93/95）。
 
 - **M76 組員 M73 knob-OFF escape tier（2026-08-01 RED；`M76_REPORT.md`、`[[m76-escape-tier-red]]`）**——組員 `7403758` 的機制：append knob-off 的 host 副本、`_solve_impl` 對那些 index 故意不套 `_m71_env()`，讓被 M71 弄壞的案子逃生。已完整移植（預設 off、gate-off 逐位 `1.293461035226291` 0 movers）。**判定 RED**：三個變體（組員集全帶 / 組員集 n>100 / 我方 M74 下重推的 `(21,23,2,22)` n>100）在**評分機的 48 核池形狀**下 OOS 240 全部只有 **+0.101~0.107%**，bar 是 0.30%；48c ΔRF 代價 +0.020~0.088% ⇒ NET 只剩 +0.02~0.09%。**🔑 主因：escape tier 與 tier-5 是替代品**——OOS shipped 基準本身從 16 核形狀的 1.576749 掉到 48 核形狀的 **1.555855**（−1.325% = tier-5 的 OOS 價值），tier-5 放回 n>100 的那 22 隻 knob-ON profile 已經救掉 escape 原本要救的案子，同一批分數不能算兩次。**組員的 +0.288% 是低核數字**（12 核 + 他們沒有 tier-5，看不到抵銷）。**🔑 教訓 A：in-sample 優勢轉移率 ≈5%**——`m73x` vs `m73big` 是同機制同 gate 只換來源集的乾淨對照，in-set 差 +0.127pp、OOS 只差 **+0.006pp** ⇒ 來源集不值得用 in-sample 貪婪挑。**🔑 教訓 B：OOS 也要挑對池形狀**——in-set 100 在 16/48 兩種形狀下**逐位相同**（1.289345、5 movers），OOS 卻差 **2.7 倍**（+0.294%→+0.107%）⇒ 任何與 adaptive tier 有交互作用的機制，OOS 必須用 `m67_oos_probe.py --force-cores 48`。副產物：組員未解的「knob-off 逃生口會不會在 48 核變成 max-setter」＝**否定**（重帶 `dt_esc/dt_on` p50 **0.906~0.934**，knob-off 比 knob-on 更快 ⇒ (110,inf] ΔRF 恰 **+0.000%**）；他們的 12 核 mid wall +3.8~9% 在 48 核只有 **+0.064%**（又一個 tier-3 形狀的誤判），但「mid 不要開」的結論仍成立，理由是 mid 只多 +0.014pp 品質卻多 +0.068pp wall。⚠️ 條件依賴：若評分機有效並行度 <40，tier-5 不觸發、抵銷消失、escape 回到 +0.29% ⇒ 這條 RED 與 tier-5 共用同一個賭注。
@@ -227,7 +273,7 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - **free-aspect 六子軸**（全 gated、off=bit-identical）：`FREE_ASPECT`（single interior，`FREE_RATIOS`）／`LR_ASPECT`+`TB_ASPECT`（decoupled **uniform** boundary）／`CLUSTER_ASPECT=r`（uniform reshape 純 movable interior 成員）／`FREE_CLUSTER`+`FREE_CLUSTER_RATIOS`（per-member，layout-key 仲裁、build-time 免抬牆）／`FREE_ANCHORED`+`FREE_ANCHORED_RATIOS`+`FREE_ANCHORED_BND`（mixed cluster 成員在 wall-attach 搜 aspect）／`MIB_ASPECT=r`
 - **🏆 M71 六旗標**（全部預設 0 = binary 單獨逐位不變）：`ICCAD_CLUSTER_BND_EXPOSE`、`ICCAD_CLUSTER_BND_EDGE_PACK`（wrapper `_m71_env()` 只開這兩個）；**另外四個 = M75 已量、全 RED，勿再試** = `CLUSTER_BND_CORNER`／`ANCHORED_BND_REPACK`（恰 0.0000%，340 案零 profile 輸出改變）、`HPWL_SAFE_CLUSTER_SLIDE`（恰 0，只在 n≤55 動且全輸 argmin）、`CLUSTER_BND_PERMUTE`（**−0.0111% OOS**）。`ICCAD_M71=0` 逐位還原 pre-M71
 - 死路（code 保留 gated off）：`BFS_NORM`、`CLUSTER_ORD=1/2`、`REFRAME`、`FREE_CLUSTER_BND`
-- 離線探測（永不 ship）：`ORDER_FILE`+`ORDER_GLOBAL`（oracle-perm）、`ML_ANCHOR`（M68，在 `constructive_m68.cpp`）
+- 離線探測（永不 ship）：`ORDER_FILE`+`ORDER_GLOBAL`（oracle-perm）、`ML_ANCHOR`（M68，在 `constructive_m68.cpp`）、**`DIMS_FILE`（M79，在 `constructive_m79.cpp`：讀 `id w h` 覆寫 `dims[]` 並鎖住該 block，所有 reshape 路徑跳過它；off-path 600/600 逐位）**
 - `ICCAD_CONSTRUCTIVE_SINGLE=1` 退單 base profile
 
 ### `optimizer_constructive.py`（wrapper）
@@ -258,6 +304,9 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - **`m67_oos_probe.py`** — OOS 泛化（`gate0/run/report/ref/pool0/restore`，`--pool0-lo/-hi` 選帶）；`m67_oos_cache.pkl`。⚠️ **錨已於 M75 更新為 `results_M74_default.json` / `IN_SET_TOTAL=1.293461035226291`**（原本指著檔名誤導的 `results_shipped_m51.json`＝M71 內容，且 `IN_SET_TOTAL` 還是 pre-M71，不修會把 M74 自己的 14 個 movers 報成 arm 的）。🚨 **跑完變體 sweep 要把 live cache 還原成預設組態**——M75 開場就撞到 tree 上的 `m67_oos_cache.pkl` 是某個 M74 變體殘留、sig 對不上，`gate0` 一載入就清空 240 案（從 `m67_oos_cache.pkl.M74k6` 還原）。**arms = `pool`（M42+tier-3 還原）/`refine`/`m55`（M72 tier + M71 全域 off = 組員原形）/`m55x`（tier 疊在 M71 上）/ M75 的 15 個 `m71*` 純 C++ 旗標 arm（4 單 + 6 pair + 4 triple + 1 union，全 RED）/ **M76 的 `m73`（組員集全帶）`m73big`（組員集 n>100）`m73x`（我方集 n>100）**（全 RED）**。arm 名不進 `_sig()` ⇒ 加 arm 不會作廢 cache；無 `full` 端點時自動退成 A/B 報告並 dump `results_M72_ab_<arm>_<lo>_<hi>.json`。⚠️ **M76 起 `_sig()` 改錨出貨前綴 `_PROFILES[:_M55_BASE_LEN]`**（先前含整個 `_PROFILES`，所以每次移植 gated-off tier 都會白白清空 240 案；備份 `m67_oos_cache.pkl.preM76`）。🚨 **`--force-cores N`（M76 新增）：把 `ICCAD_ADAPTIVE_CORES` 在 ICCAD_* 剝除之後重新塞回去，用評分機的池形狀跑 OOS，並自動改用 `m67_oos_cache_c48.pkl`**——`_sig()` 不含核數，共用同一顆 cache 會靜默重用錯形狀的解。**M76 證明形狀差 2.7 倍，所以任何與 adaptive tier 交互的機制都必須跑這個**；48 形狀要先 `run --force-cores 48` 建 shipped 端點（`restore` 只解 arm 側）
 - **`m77_ml_candidate_probe.py`** `score <results.json> | selftest` — **外部候選（ML placer）值多少**。輸入 = 官方 results json（任何 optimizer 跑一次就有），把它的逐案 positions 當成第 42 隻候選接進 41 隻池、proxy 仲裁，輸出 **portfolio delta（= gate，bar 0.05%）／oracle delta／selection efficiency／dRF@48c**。`selftest` 把 portfolio 自己的輸出餵回去必須恰好值 0（已 PASS）。🔑 **建這支的理由**：組員的 ML kill gate 用 **ML-only solo total**（rung 2 < 1.6），但部署形態是 proxy 仲裁的 portfolio，兩者**不單調相關**——實測反例：M74 自己的輸出 solo **1.2935**（最好）portfolio 價值 **恰 0**，knob-off portfolio solo **1.3378**（差 3.4%）portfolio 價值 **+0.340%**。⚠️ `--dt` 要給模型自己的推論時間，json 的 `runtime_seconds` 是整個 solve 的 wall（工具會警告）。**這支只管 in-set 100；OOS 240 走 `m77_oos_probe.py`**。回報全文 `M77_ML_GATE_NOTE.md`
 - **`m77_oos_probe.py`** `manifest|build|selftest|selfdump|score` — **M77 的 OOS 半邊**（2026-08-02）。為什麼要它：M76 量到 **in-sample 優勢轉移率 ≈5%**，且 OOS 數字**依池形狀而變 2.7 倍** ⇒ ML 的 ship 判定必須在 OOS ×`--cores 48` 上做。**兩份樣本**：`s1`=M67-D 那批（worker_0..9、seed 67、per_n 2 / heavy 4），manifest 會**斷言 240 key 與 `m67_oos_cache.pkl` symdiff=0** ⇒ 與所有歷史 OOS 數字同尺；`s2`=**worker_10..19 的 disjoint 240**，因為 s1 抽自 `floorset_lite`＝組員的訓練語料，**對 ML 候選只有 s2 是真 OOS**（報告會印警告橫幅）。快取 `m77_oos_audit.pkl`（2×240×**35** 隻 = 12/48 核池的聯集；swap profile 被 M41 永久濾掉所以不跑）存 positions+dt+proxy，**以 `(case_key, profile)` 為 key ⇒ 加第三份樣本只付新案的錢**；簽章釘 exe md5 + 出貨前綴 + REFINE band（不含 drop 常數，那些只影響 score 時選池）。🔑 **一顆快取服務兩種核數**——實測 `_band_env(n)` 在 12/16/48 核完全相同，只有 `_pool_indices()` 不同。**判準 NET = portfolio delta − dRF@48c ≥ 0.30%**（M75/M76 的 OOS bar），聚合用 `m67_oos_probe._per_n_total`。✅ **驗過**：s1 240/240 案的 winner positions 與真 wrapper **逐位相同**（12 核形狀 `1.576748536`、48 核形狀 `1.555854672`，與 M76 的錨一致）、s1/s2 零值自檢皆 +0.000%、錯位 key 直接退出。⚠️ 為什麼不能用 2-way 近似：selector 的 `hmin` 是**整池**的 min HPWL，ML 候選壓低 hmin 會重排整池。**📊 副產物**：M74 在 s2 的分數 = 12 核形狀 `1.586912` / 48 核形狀 `1.557814` ⇒ (a) **s2 只比 s1 難 +0.126%**（48 形狀）⇒ 兩語料難度相當，s1↔s2 的落差可直接當記憶效應的量測；(b) **tier-5 在全新語料上獨立複現且更值錢**（s2 −1.833% vs s1 −1.325%）——M67-F 的賭注第一次在 s1 以外被驗證
+- **`m79_shape_oracle_probe.py`** `coverage|calib|scout|oracle|control|offpath` — M79 G0-A/G0-D。`calib` 把 fp_sol verbatim 寫成 results json（校準列，+14.410%）；`oracle` 用 `constructive_m79.exe` 的 `ICCAD_DIMS_FILE` 指定 label 形狀（86.7% 覆蓋）；**`control` 是同 recipe 不指定形狀的對照組，必須恰好 +0.000%**（若不是就代表 recipe 子集本身在貢獻，歸因就壞了）；`offpath` 是 probe binary 的逐位閘。recipe 集用 `M79_RECIPES=0,2,6,...` 覆寫，快取按 `mode+sig[:8]` 分槽，換 recipe 不會蓋掉舊量測
+- **`m79_knob_cloud_probe.py`** `run [R] | greedy [R] | loo [R]` — M79 G0-B。`run` 抽 R 個旋鈕向量 × 100 案；**`greedy` 是真正有價值的那個**（單一最佳新向量 + 貪婪固定 profile 曲線）；`loo` 是 LOO 逐案預測器 + **greedy 集的 5-fold CV**。快取 `m79_knob_cloud.pkl` 的 key = **`(case, profile-hash)`** ⇒ 加大 R 只付新向量的錢；簽章釘 exe md5 + overlay 常數（不含 cloud）。⚠️ **任何預測器的判準都要用 portfolio delta，不可用 mean solo cost**（第一版就是這樣報出假的 +0.000%）
+- **`m79_bar_spec.py`** — 把 ship bar 反解成逐案規格：配額表（只贏 top-20 要每案 0.37% 才湊到 0.30%）、headroom 表（到 label floor 共 14.343%，top-20 佔 11.723%）、**dt 預算表**（各帶 min tmax 0.16/0.79/1.37s；均勻 dt=1.0s 只要 +0.119%，dt=2.0s 就 +3.253%）
 - **`m76_escape_probe.py`** `oracle|wall|derive|score|report` — M76 離線工具，把 `audit_cache_ship.pkl`（knob-ON）× `audit_cache_esc.pkl`（knob-OFF）合併成單一 index 空間（`ESC0+k` = host k 的 knob-off 雙胞胎），可**精確**模擬任何 escape 來源集的 portfolio（三個端點對真 eval 逐位驗過）。`wall` 給 48c/12c 的逐案 `ΔRF=(t_new/t_old)^0.3`。⚠️ 池一律走 `oc._pool_indices()`，**不可自己拼** —— M41 的 swap 過濾是**依內容**的，也會濾掉 swap profile 的 escape 副本，手拼會選出 wrapper 根本不會跑的來源集
 - **`profile_audit.py [base|ship|esc]`** — **M74 起兩個模式、M76 起三個**：`base`→`audit_cache.pkl`（M71 env + REFINE=12，給 m49 的 K=12 control）、`ship`→`audit_cache_ship.pkl`（再疊 `_band_env(n)`，給 pool drop 推導）、**`esc`→`audit_cache_esc.pkl`（`_band_env(n)` 但 M71 旗標關 = escape 索引實際跑的組態）**；`esc` 跑完會對 ship cache 做交叉檢查，兩者若完全相同就 abort（代表 overlay 沒進 binary）。約 8-11 分／顆，**必須序列跑**（dt 是量測值）、**`profile_vs_portfolio.py KEY=VAL`**（新 profile 增益，bar 0.05%）、`analyze_constructive.py`、`portfolio_ceiling.py`、`rh_sweep.py`、`proxy_analysis.py`（27 個工具依賴，勿刪）
 - **`m53_diff_results.py`** — 兩份官方 results json 的總分/加權 delta/逐案 movers。錨：`results_L1_final.json`、`results_L3_port_top32_area.json`、**`results_shipped_m71.json`（= 出貨錨 1.305389893450635，`make_submission.verify` / `m67c` T3 都比這顆）**、`results_M73_cores48.json`（48c/tier-5 錨 1.295547821428148）、**`results_M74_default.json`（1.293461 = 現在 tree 的分數）**、`results_M74_cores48.json`（48c 同值）、`results_M74_pool0.json`（1.2929 天花板）、`results_shipped_preM71.json`（1.3265）、`results_shipped_m51.json`（**檔名誤導**：內容已是 M71，留著相容舊 probe）。⚠️ 這些錨檔**未進 git**（沿用舊慣例），但 gate 依賴它們——換機器要一起帶。
@@ -267,13 +316,20 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - `constructive.cpp` 🏆 — placer，含 M9-M37 + M46 hot-path exact + **M71 六旗標**
 - `optimizer_constructive.py` 🏆 — 41-prof portfolio + shapely proxy(_RH=1.4) + `_pool_indices()` 五階 tier + `_band_env()` + `_m71_env()` + M48 三層安全網
 - `constructive_m71.cpp` — 組員合併前的參照本（其餘 `constructive_mXX.cpp` 為各 probe 儀裝副本）
+- `constructive_m79.cpp` — M79 probe：`ICCAD_DIMS_FILE` 形狀指定（gated，off = 逐位相同）
 - `bin/constructive_linux` — Beta 包 bundled binary（`-O3 -static-libstdc++ -static-libgcc`、無 `-march`）
 - `iccad2026contest/iccad2026_evaluate.py` — 官方評估腳本
 - `AGENTS.md` — 給 codex 的 CLAUDE.md 副本（2026-07-22 快照，已過時、未追蹤）
 
 ## ML 現況
 
-**我方四種插入點全 RED**（見戰略結論 6，全部是 **ML-as-advisor**）。⚠️ 本環境**禁止跑訓練、可推論**；需要訓練時停下告知使用者上 CUDA 機。
+**我方五種插入點全 RED**（見戰略結論 6-7）。⚠️ 本環境 torch 是 **2.11.0+cpu、無 CUDA、16 核**；**使用者 2026-08-05 裁示：小模型可在本機 CPU 訓，大模型仍要上 GPU 機；訓練訊號一律 self-supervised，完全禁止用 fp_sol 當監督**（離線 oracle 探測用 label 不受限，那和 M26/M68/M79 同類）。
+
+**🚨 2026-08-05：「我方自己做一顆」也判死了（M79 Gate 0）。** 兩條路都量過：
+per-block 形狀的 perfect-information 上界只有 **+0.099%**；逐案預測 profile 的 oracle
+有 **+2.03%**，但 LOO 預測器只拿到 **+0.09~0.17%**，**輸給不看案子的固定 profile**
+（held-out +0.234%）⇒ 這是 M56 的完整重演。⚠️ **但同一批探測撞到一條古典增益**
+（隨機聯合抽樣的固定 profile，held-out NET +0.655%）⇒ 見「下一步 0（M80）」。
 
 **2026-08-01 新局面**：組員取得學長 `cadc1106` 的截圖——同一批 100 validation cases、**Total 1.1747 / Avg 1.2088 / 100 feasible / 0.81s**，比我方 M74 好 **−9.2%**，落在 `fp_sol` verbatim floor（1.1079）之上所以**不違反資訊理論下界**（無法從數字判定是否 label 洩漏；只有截圖，無程式碼、無結果檔）。組員據此裁示**全力轉 ML-as-placer**（`b7460d3`「目前計畫.md」，21 天、硬分叉日 8/8、GPU 獨占、RF 量測暫停）。他們的論點：我方 RED 全在 advisor 軸（完美輸入也只值 0.005~3%），而唯一量過的 as-placer（IL68）只訓練了 10 萬次樣本呈現 ≈ 學長的 1/4000，曲線還在降。
 
