@@ -1,0 +1,9 @@
+﻿=== cases where oracle-ANCHOR beats the 41-profile portfolio ===
+  case   9 n= 30 port=1.5159 anchor=1.3743 base=1.9941 gain=+0.1416 wContr=0.001%
+  case  27 n= 48 port=1.3345 anchor=1.3250 base=1.3673 gain=+0.0096 wContr=0.000%
+  case   3 n= 24 port=1.2878 anchor=1.2522 base=1.3561 gain=+0.0356 wContr=0.000%
+
+cases=100  port-movers=3  anchor-beats-base=61  infeasible=0
+[isolate anchor] weighted gain vs SAME-profile-no-seed = 2.180%
+[real bar]       weighted gain vs PORTFOLIO            = 0.001%  -> ~1.3265
+VERDICT: <0.2% -> ML-seed RED, do NOT train

@@ -151,6 +151,16 @@ static vector<pair<double,double>> dims;   // (w,h) per block
 static vector<XYWH> pos;                    // working positions
 static vector<char> placed;
 
+// M79 (OFFLINE probe, never shipped — mirrors ICCAD_ML_ANCHOR in constructive_m68.cpp
+// and ICCAD_ORDER_FILE): ICCAD_DIMS_FILE prescribes per-block (w,h) from an external
+// source (an oracle, or later a model) and LOCKS those blocks against every reshape
+// path, so what is measured is a shape decision and nothing else. Unset -> the vector
+// stays empty -> dims_locked() is always false -> bit-identical to constructive.exe.
+static vector<char> DIMS_LOCK;
+static inline bool dims_locked(int i) {
+    return !DIMS_LOCK.empty() && DIMS_LOCK[i];
+}
+
 // Two-pass refinement: the greedy wire term only sees already-placed neighbors,
 // so the first-placed blocks are positioned nearly blind to HPWL (the dominant
 // cost gap). After a full pass we re-pack the same frame with the wire term also
@@ -230,6 +240,11 @@ static void apply_safe_mib_dims() {
     for (int i=0;i<N;i++){ int g=blocks[i].mib; if (g>0) groups[g].push_back(i); }
     for (auto& kv:groups){
         auto& mem=kv.second; if (mem.size()<=1) continue;
+        // M79 probe: a prescribed shape already satisfies the MIB shared-shape rule
+        // (fp_sol has V_mib=0), and unifying a subset would break it -> leave the
+        // whole group alone as soon as any member is locked.
+        { bool lk=false; for (int i:mem) if (dims_locked(i)) { lk=true; break; }
+          if (lk) continue; }
         // prefer a fixed/preplaced master when its shape fits every movable area
         int master=-1;
         for (int i:mem) if (blocks[i].is_fixed||blocks[i].is_preplaced){ master=i; break; }
@@ -540,7 +555,8 @@ static Item make_group_item(const vector<int>& members) {
     if (FREE_CLUSTER>0){
         for (int m:members){
             if (!(blocks[m].cluster>0 && blocks[m].mib==0 && blocks[m].boundary==0
-                  && !blocks[m].is_preplaced && !blocks[m].is_fixed && blocks[m].area>0)) continue;
+                  && !blocks[m].is_preplaced && !blocks[m].is_fixed && blocks[m].area>0
+                  && !dims_locked(m))) continue;
             double A=blocks[m].area;
             pair<double,double> best_dim=dims[m];
             Item c0=build_best();                          // baseline under current dims[m]
@@ -809,7 +825,8 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
             // -> original dims[b] -> single pass -> bit-identical.
             bool elig = FREE_ANCHORED>0 && blocks[b].mib==0
                       && (blocks[b].boundary==0 || FREE_ANCHORED_BND>0)
-                      && !blocks[b].is_fixed && !blocks[b].is_preplaced && blocks[b].area>0;
+                      && !blocks[b].is_fixed && !blocks[b].is_preplaced && blocks[b].area>0
+                      && !dims_locked(b);
             double A=blocks[b].area;
             vector<double> ratios = elig ? FREE_ANCHORED_RATIOS : vector<double>{-1.0};
             double best=1e300, bx=0, by=0, bw=0, bh=0; bool found=false;
@@ -865,7 +882,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         if (FREE_ASPECT>0 && it.blocks.size()==1){
             int sb=it.blocks[0];
             if (!blocks[sb].is_fixed && !blocks[sb].is_preplaced && blocks[sb].mib==0
-                && blocks[sb].boundary==0 && blocks[sb].area>0){
+                && blocks[sb].boundary==0 && blocks[sb].area>0 && !dims_locked(sb)){
                 double A=blocks[sb].area;
                 double best=1e300, bx=0, by=0, bw=0, bh=0; bool found=false;
                 for (double r:FREE_RATIOS){
@@ -1585,6 +1602,22 @@ static void solve() {
         else if (blocks[i].is_fixed){ double w=blocks[i].tw,h=blocks[i].th; if(w<=0||h<=0){double s=sqrt(blocks[i].area);w=h=s;} dims[i]={w,h}; }
         else dims[i]=default_soft_dim(blocks[i].area, blocks[i].boundary);
     }
+    // M79 probe: externally prescribed shapes. Read AFTER the defaults (so an
+    // unlisted block keeps its shipped shape) and BEFORE apply_safe_mib_dims and
+    // every aspect search, all of which skip a locked block below.
+    DIMS_LOCK.clear();
+    if (const char* df=getenv("ICCAD_DIMS_FILE")){
+        if (FILE* fp=fopen(df,"r")){
+            DIMS_LOCK.assign(N,0);
+            int id; double w,h;
+            while (fscanf(fp,"%d %lf %lf",&id,&w,&h)==3)
+                if (id>=0 && id<N && w>0 && h>0
+                    && !blocks[id].is_preplaced && !blocks[id].is_fixed){
+                    dims[id]={w,h}; DIMS_LOCK[id]=1;
+                }
+            fclose(fp);
+        }
+    }
     apply_safe_mib_dims();
     // M33 cluster-member uniform aspect: reshape pure-movable INTERIOR cluster members
     // before make_group_item reads dims. boundary!=0 keep their LR/TB aspect; mib!=0 keep
@@ -1592,7 +1625,8 @@ static void solve() {
     if (CLUSTER_ASPECT != 1.0)
         for (int i=0;i<N;i++)
             if (blocks[i].cluster>0 && blocks[i].mib==0 && blocks[i].boundary==0
-                && !blocks[i].is_preplaced && !blocks[i].is_fixed && blocks[i].area>0){
+                && !blocks[i].is_preplaced && !blocks[i].is_fixed && blocks[i].area>0
+                && !dims_locked(i)){
                 double A=blocks[i].area, w=sqrt(A*CLUSTER_ASPECT); dims[i]={w, A/w};
             }
     estimate_anchors();

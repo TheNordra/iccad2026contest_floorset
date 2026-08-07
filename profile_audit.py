@@ -17,31 +17,104 @@ Two phases, resumable (incremental pickle cache audit_cache.pkl):
   om16_bfs_wt_wire stand-by (M23, +0.148% verified): totals and wall for
   full / pruned / pruned+om16 / full+om16 pools.
 
+M74 (2026-07-30) MODE argument — which env overlay the cached positions carry:
+  base  (default) -> audit_cache.pkl       profile + _m71_env(), REFINE=12
+  ship             -> audit_cache_ship.pkl  profile + _band_env(n) + _m71_env()
+  esc  (M76)       -> audit_cache_esc.pkl   profile + _band_env(n), M71 knobs OFF
+Both are needed and they are NOT interchangeable:
+  - m49_refine_probe.py's determinism gate requires a REFINE=12 control that
+    matches the cache bit-for-bit, so the K=12 reference (base) must survive;
+  - M67-F correction B (M67F_REPORT.md:249-258): the M42/M45 strict
+    selection-preserving gate must be re-derived under the SHIPPING K=4/K=8
+    REFINE overlay, not under the K=12 counterfactual -> ship.
+Cases with n<=60 carry an empty _band_env() so both caches must agree there
+bit-for-bit; the ship run prints that cross-check.
+
+`esc` is the M76 escape-tier measurement: an escape index is the ONE thing in the
+pool that _solve_impl deliberately does not apply _m71_env() to, so its positions
+and its dt need their own cache. Paired with audit_cache_ship.pkl it gives the
+knob-ON/knob-OFF pair for every (case, profile) — which is what decides whether a
+knob-off duplicate becomes the 48-core max-setter.
+
 Run detached with the machine otherwise idle (timings feed the om16 decision):
-  python -u profile_audit.py > audit_log.txt
+  python -u profile_audit.py base > m74_audit_base.txt
+  python -u profile_audit.py ship > m74_audit_ship.txt
+  python -u profile_audit.py esc  > m76_audit_esc.txt
 """
-import os, sys, math, time, pickle, subprocess, concurrent.futures
+import os, sys, math, time, pickle, hashlib, subprocess, concurrent.futures
 from pathlib import Path
 _DIR = Path(__file__).parent
 sys.path.insert(0, str(_DIR / "iccad2026contest")); sys.path.insert(0, str(_DIR))
 from iccad2026_evaluate import ContestEvaluator, evaluate_solution
 from optimizer_claude import _serialize_input, _parse_output
 from proxy_analysis import build_opt_target_pos
+
+# M74: pin the wrapper's cores view BEFORE importing the wrapper's helpers are
+# used, so _band_env()/_effective_cores() report the 12-core regime regardless of
+# the measuring box (mirrors m49_refine_probe.py:57). tier-4 / M50 low-core stay
+# off, which is what every downstream drop-set model assumes.
+os.environ["ICCAD_ADAPTIVE_CORES"] = "12"
 import optimizer_constructive as oc
+
+MODE = (sys.argv[1] if len(sys.argv) > 1 else "base").lower()
+if MODE not in ("base", "ship", "esc"):
+    sys.exit(f"unknown mode {MODE!r} (expected 'base', 'ship' or 'esc')")
 
 ev = ContestEvaluator(data_path=str(_DIR), verbose=False); ev._load_dataset()
 EXE = str(_DIR / "constructive.exe")
 RH = 1.4
 CORES = 12          # physical cores (wrapper wall model)
 WORKERS = 11        # leave one core for this process -> clean dt measurements
-CACHE = _DIR / "audit_cache.pkl"
+CACHE = _DIR / {"base": "audit_cache.pkl", "ship": "audit_cache_ship.pkl",
+                "esc": "audit_cache_esc.pkl"}[MODE]
+BASE_CACHE = _DIR / "audit_cache.pkl"
 
-PROFILES = list(oc._PROFILES)
+# M72 (2026-07-30): _PROFILES carries the appended _M55_EXTRA tier (ICCAD_M55_POOL,
+# ship-RED, default OFF). It is NOT part of the shipped pool -- _pool_indices() never
+# emits those indices unless the env gate is set -- and every drop-set constant is an
+# index frozenset over 0.._M55_BASE_LEN-1. Key the cache on the SHIPPED pool so the
+# gated-off tier cannot invalidate audit_cache.pkl, while any change to the 41 live
+# profiles still does.
+PROFILES = list(oc._PROFILES[:getattr(oc, "_M55_BASE_LEN", len(oc._PROFILES))])
 N_LIVE = len(PROFILES)                       # live pool (selection baseline)
 OM16 = {"ICCAD_ORDER_MOVE": "16", "ICCAD_WIRE_BFS": "1",
         "ICCAD_WIRE_TIEBREAK": "1", "ICCAD_WIRE_MULT": "2.0"}
 PROFILES.append(OM16)                        # stand-by: cached but NOT in baseline
-FPR = repr(PROFILES)
+
+
+def _exe_md5(p):
+    h = hashlib.md5()
+    with open(p, "rb") as f:
+        for blk in iter(lambda: f.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+# M74: the signature MUST pin the binary and the overlay, not just the profile
+# list. The old key was repr(PROFILES) alone, so the 2026-07-10 cache stayed
+# "valid" against the 2026-07-29 M71 constructive.exe and every offline gate
+# silently kept measuring the pre-M71 placer. Stored under the same "profiles"
+# key so every consumer's existing mismatch check and message still fire.
+#
+# The overlay CONSTANTS are part of the key too, and mode-dependently so: the
+# ship cache's positions depend on _M49_REFINE_BAND / _M50_REFINE_LOWCORE, so
+# retuning K (e.g. mid 8 -> 6) must invalidate it, while the base cache is always
+# REFINE=12 and must NOT be invalidated by a K change it does not depend on.
+#
+# M76 (2026-08-01) adds a third mode, `esc`: the SHIP overlay with the M71 knobs
+# deliberately OFF, i.e. exactly what an escape-tier profile runs. Its _M71_SIG is
+# therefore the EMPTY overlay -- pinning the live _m71_env() instead would make the
+# cache look stale the moment someone exports ICCAD_M71=0 in their shell, and would
+# not distinguish it from the ship cache at all.
+_M71_SIG = repr(sorted(({} if MODE == "esc" else oc._m71_env()).items()))
+if MODE in ("ship", "esc"):
+    _MODE_KEY = repr((MODE, _M71_SIG,
+                      repr(sorted(oc._M49_REFINE_BAND)),
+                      repr(sorted(oc._M50_REFINE_LOWCORE)),
+                      oc._M45_CORES_MAX))
+else:
+    _MODE_KEY = repr(("base", _M71_SIG))
+FPR = repr((repr(PROFILES), _MODE_KEY, _exe_md5(EXE)))
 
 
 def pname(prof):
@@ -50,13 +123,14 @@ def pname(prof):
     short = {"ICCAD_WIRE_MULT": "W", "ICCAD_ANCHOR_W": "anc", "ICCAD_LR_ASPECT": "LR",
              "ICCAD_TB_ASPECT": "", "ICCAD_FRAME_ASPECTS": "fa", "ICCAD_FRAME_SCALES": "fs",
              "ICCAD_WIRE_TIEBREAK": "WT", "ICCAD_WIRE_BFS": "BFS", "ICCAD_BFS_PIN": "PIN",
-             "ICCAD_ORDER_SWAP": "OS", "ICCAD_ORDER_MOVE": "OM"}
+             "ICCAD_ORDER_SWAP": "OS", "ICCAD_ORDER_MOVE": "OM",
+             "ICCAD_FREE_ASPECT": "FREE", "ICCAD_GUIDE_MED": "GM"}
     parts = []
     for k, v in prof.items():
         s = short.get(k, k)
         if s == "":
             continue
-        if s in ("WT", "BFS", "PIN"):
+        if s in ("WT", "BFS", "PIN", "FREE", "GM"):
             parts.append(s)
         elif s in ("fa", "fs"):
             parts.append(f"{s}{v.split(',')[0]}-{v.split(',')[-1]}")
@@ -100,15 +174,41 @@ def save_cache():
     os.replace(tmp, CACHE)
 
 
+# M74: strip ambient ICCAD_* from the child base (mirrors regression_suite.py's
+# child_env) so a stray knob in this shell cannot contaminate 4200 cached runs.
+# The overlays below are then the ONLY ICCAD_* the binary sees.
+_CHILD_BASE = {k: v for k, v in os.environ.items() if not k.startswith("ICCAD_")}
+
+
+def _overlay(n):
+    """The wrapper's per-case env overlay, in its exact precedence order
+    (optimizer_constructive.py:1058-1062: profile dict, then band, then M71).
+    MODE=esc stops before the M71 step on purpose: an escape-tier index is the
+    one thing in the pool that _solve_impl does NOT apply _m71_env() to."""
+    ov = dict(oc._band_env(n)) if MODE in ("ship", "esc") else {}
+    if MODE != "esc":
+        ov.update(oc._m71_env())
+    return ov
+
+
 def run_one(job):
     ci, k = job
     c = CASES[ci]
-    env = dict(os.environ); env.update(PROFILES[k])
+    env = dict(_CHILD_BASE); env.update(PROFILES[k]); env.update(_overlay(c["n"]))
     t0 = time.perf_counter()
     out = subprocess.run([EXE], input=c["txt"], capture_output=True, text=True, env=env).stdout
     dt = time.perf_counter() - t0
     return ci, k, _parse_output(out, c["n"]), dt
 
+
+print(f"MODE={MODE}  cache={CACHE.name}  exe md5={_exe_md5(EXE)[:12]}", flush=True)
+print(f"  m71 overlay: {{}} (esc: knobs deliberately OFF)" if MODE == "esc"
+      else f"  m71 overlay: {oc._m71_env()}")
+for _lo, _hi in ((0, 60), (60, 100), (100, 10**9)):
+    _n = next((c["n"] for c in CASES if _lo < c["n"] <= _hi), None)
+    if _n is not None:
+        print(f"  band ({_lo},{'inf' if _hi >= 10**9 else _hi}] (n={_n}): "
+              f"overlay {_overlay(_n)}")
 
 todo = [(c["idx"], k) for c in CASES for k in range(len(PROFILES))
         if (c["idx"], k) not in data]
@@ -128,6 +228,53 @@ if todo:
     print(f"PHASE1 done in {time.perf_counter()-t0:.0f}s", flush=True)
 else:
     print("PHASE1 done (all cached)", flush=True)
+
+# M74 cross-check: where _band_env() is empty the ship overlay collapses to the
+# base overlay, so those combos MUST be bit-identical across the two caches.
+# Anything else means the overlay plumbing (or the exe) drifted between runs.
+if MODE == "ship" and BASE_CACHE.exists():
+    try:
+        _b = pickle.load(open(BASE_CACHE, "rb"))["data"]
+    except Exception as e:
+        _b = None
+        print(f"cross-check skipped (base cache unreadable: {e})", flush=True)
+    if _b:
+        same_n = [c["idx"] for c in CASES if not oc._band_env(c["n"])]
+        diff_n = [c["idx"] for c in CASES if oc._band_env(c["n"])]
+        bad = [(ci, k) for ci in same_n for k in range(len(PROFILES))
+               if (ci, k) in _b and data[(ci, k)][0] != _b[(ci, k)][0]]
+        moved = sum(1 for ci in diff_n for k in range(len(PROFILES))
+                    if (ci, k) in _b and data[(ci, k)][0] != _b[(ci, k)][0])
+        print(f"cross-check vs base cache: no-overlay cases {len(same_n)} -> "
+              f"{'EXACT' if not bad else f'{len(bad)} MISMATCH {bad[:6]}'}; "
+              f"overlay cases {len(diff_n)} -> {moved} combos differ", flush=True)
+        if bad:
+            sys.exit("ship/base disagree where the band overlay is empty")
+
+# M76 cross-check: esc differs from ship by exactly the two M71 knobs, so the
+# combos that differ ARE M71's per-profile liveness on this corpus. Informational
+# (no invariant to assert) but it catches the failure that would otherwise be
+# invisible: if the overlay plumbing dropped the knobs, esc == ship everywhere and
+# every escape-tier number in M76 would silently be a measurement of nothing.
+if MODE == "esc":
+    SHIP_CACHE = _DIR / "audit_cache_ship.pkl"
+    if SHIP_CACHE.exists():
+        try:
+            _s = pickle.load(open(SHIP_CACHE, "rb"))["data"]
+        except Exception as e:
+            _s = None
+            print(f"cross-check skipped (ship cache unreadable: {e})", flush=True)
+        if _s:
+            pairs = [(ci, k) for ci in range(len(CASES))
+                     for k in range(len(PROFILES)) if (ci, k) in _s]
+            moved = [p for p in pairs if data[p][0] != _s[p][0]]
+            mcase = len({ci for ci, _ in moved})
+            print(f"cross-check vs ship cache (= M71 liveness): "
+                  f"{len(moved)}/{len(pairs)} (case,profile) pairs differ, "
+                  f"{mcase}/{len(CASES)} cases touched", flush=True)
+            if not moved:
+                sys.exit("esc == ship on every combo -> the M71 overlay never "
+                         "reached the binary; refusing to publish a null cache")
 
 # ── PHASE2: analysis ────────────────────────────────────────────────────────
 print("PHASE2 proxy metrics...", flush=True)
