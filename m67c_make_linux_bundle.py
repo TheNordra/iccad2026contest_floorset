@@ -10,7 +10,7 @@ docker-linux-coldstart-verify) that:
       fallback, 4 phases)
   T3  extracts the staged cadc1075.tar.gz, injects the T1 binaries, runs the
       OFFICIAL command `python iccad2026_evaluate.py --evaluate op_wrapper.py`
-      and bit-compares all 100 cases vs results_M74_default.json with a
+      and bit-compares all 100 cases vs results_M80_default.json with a
       <2e-9 ULP warn band (expected: case 84 only) -- plus the hard
       bundled-binary-first proof: no constructive.exe compile artifact
   T4  corrupts bin/constructive_linux and re-runs ONE case: the M67-A
@@ -41,7 +41,10 @@ _SOURCES = (
     "make_submission.py", "m48_coldstart_dryrun.py",
     # M76 ship chain: the bundle must carry the anchors ANCHOR/ANCHOR48 now point
     # at, or T3/final48 inside WSL would compare against a file that is not there.
-    "results_M74_default.json", "results_M74_cores48.json",
+    # M80 (2026-08-07): both moved off the M74 pair. The default anchor is a pure
+    # rename (M80's default run is 0-mover identical to M74's), but the 48c one is
+    # a real value change -- see the ANCHOR48 comment below.
+    "results_M80_default.json", "results_M80_c48_on.json",
 )
 
 # ── embedded WSL2 scripts (written with LF endings) ──────────────────────────
@@ -189,18 +192,22 @@ t3           extract cadc1075.tar.gz, overlay evaluator + loader closure +
              dataset symlink (mirrors make_submission.verify mechanics),
              inject the T1 binaries, run the OFFICIAL command, assert
              bundled-binary-first engaged (no on-site compile artifact),
-             ULP-tolerant bit-compare vs results_M74_default.json
+             ULP-tolerant bit-compare vs results_M80_default.json
 t4           fresh extract, corrupt bin/constructive_linux, run ONE case via
              ContestEvaluator: the M67-A fallthrough must on-site-compile
              (constructive.exe appears) and stay digit-equal
 final <tar>  t3 flow on a given FINAL tar (binaries already inside; nothing
              injected)
 final48 <tar>
-             same, but with ICCAD_ADAPTIVE_CORES=48 so the M67-F tier-5 branch
-             actually fires on Linux (WSL nproc is 16 -> tier-5 would stay off).
-             Compares against results_M74_cores48.json (1.293461035226291 —
-             under M74 the 48c total equals the default one; the heavy-band
-             movers tier-5 produces are already inside that anchor).
+             same, but with ICCAD_ADAPTIVE_CORES=48 so the high-core branches
+             actually fire on Linux (WSL nproc is 16 -> they stay off). BOTH
+             gates sit at 40 cores, so this pass turns on the M67-F tier-5 pool
+             restore AND the M80 knob-cloud tier at once.
+             Compares against results_M80_c48_on.json (1.2666234250706565).
+             NOTE: under M74 the 48c total equalled the default one, so this
+             round used to be a second copy of round 2. Since M80 it is not --
+             the 48c run differs from the default in 58 of the 100 cases, and
+             it is the only place where M80's 8 extra profiles ever execute.
 """
 import json
 import os
@@ -212,11 +219,17 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-# M76 ship chain: both anchors follow the tree, which has been M74 since
-# 2026-07-30. Previously results_shipped_m71.json (1.305389893450635) and
-# results_M73_cores48.json (1.295547821428148) = the uploaded Beta package.
-ANCHOR = ROOT / "results_M74_default.json"     # 1.293461035226291
-ANCHOR48 = ROOT / "results_M74_cores48.json"   # tier-5 fired (ADAPTIVE_CORES=48)
+# M80 ship chain (2026-08-07): both anchors follow the tree. History:
+# results_shipped_m71.json (1.305389893450635) + results_M73_cores48.json
+# (1.295547821428148) = the uploaded Beta package; then the M74 pair, both
+# 1.293461035226291.
+ANCHOR = ROOT / "results_M80_default.json"     # 1.293461035226291 (tiers inert
+                                               # at low core counts -> 0 movers
+                                               # vs the M74 default anchor)
+ANCHOR48 = ROOT / "results_M80_c48_on.json"    # 1.2666234250706565 -- tier-5 AND
+                                               # the M80 knob-cloud tier both fire
+                                               # (ADAPTIVE_CORES=48); 58 of 100
+                                               # cases differ from the default run
 LOADERS = ("litetestLoader.py", "lite_dataset_test.py", "liteLoader.py",
            "lite_dataset.py", "prime_dataset.py", "cost.py", "utils.py",
            "visualize.py")

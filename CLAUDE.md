@@ -19,8 +19,9 @@
   **這是自 M71 以來最大的單一 lever。**
 - **local 分數要分兩個數字講**：低核（本機 16、WSL）**逐位不變 1.293461035226291**（tier 惰性）；
   **48 核形狀 = 1.266623425**（−2.075%）。評分機是 48 核 ⇒ 真正出貨的是後者。
-- **換件包尚未包含 M80**：`build_submission/` 那顆還是 M74（`op_wrapper.py` md5 `ce4f3471…`）。
-  Final（8/21）要送的話**必須重打包**，見「下一步 1」。
+- ✅ **Final 包已重打包含 M80**（2026-08-07）：`op_wrapper.py` md5 `445118482de5f128a23ffc48583691a4`，
+  本機四關全綠（八項 gate / 官方 verify / **套件 @48c 逐位 1.2666234250706565** / bundle）。
+  只剩 **GPU 機 WSL 那輪 + Drive 覆蓋**，見「下一步 1」。
 - **ML 全線 RED，M80 把它釘得更死**：cloud 從 R=128 → 256 → **512**，per-case oracle 一路
   +2.03% → +2.649% → **+3.081%**，但 LOO 預測器三次都文風不動（global 恆 +0.166%／
   band 0.051→0.044%／knn5 0.127→0.128%）⇒ **oracle 與可預測值的差距三次都是變寬**。組員也已用 oracle 天花板自判 ML-as-placer 死。
@@ -69,11 +70,18 @@
 
 ### 📦 送件狀態（Beta 已上傳；**Final deadline 2026-08-21**）
 
-> **🚧 2026-08-01 進行中：M74 換件包已在本機備妥並驗過，尚未上傳。**
-> 交付物 `build_submission/cadc1075.tar.gz`（305709 B、6 檔），**`op_wrapper.py` md5 `ce4f34716ea14863e62f68d6970e983d`**（tar md5 `d529c7828e2e8a36a7165e70d9a22ee0`，不可重現、僅供本輪比對）。
-> 已過：`regression_suite.py` **7/7**、`make_submission.py all` + 再一次 `verify`（官方指令逐位 `1.293461035226291`、100/100 feasible）、`m67c_make_linux_bundle.py`（bundle `C:\Users\Nordra\Downloads\m67c-linux-verify.tar.gz`，md5 `b3989af0a0958488a77df6629cef6d04`，**內嵌 tar 與磁碟上那顆同一個 md5**）。
-> **還沒做**：GPU 機 WSL 的 `verify_final_tar.sh`（含 `final48`）、Drive 覆蓋。
-> 所有錨已改指 M74：`make_submission._ANCHOR`、`m67c` 的 `ANCHOR`/`ANCHOR48`/`_SOURCES`。
+> **🚧 2026-08-07 重打包完成：Final 包已含 M80，本機全綠，尚未上傳。**（取代 08-01 那顆 M74 包）
+> 交付物 `build_submission/cadc1075.tar.gz`（309696 B、6 檔），**`op_wrapper.py` md5 `445118482de5f128a23ffc48583691a4`**（110089 B；tar md5 `1ffd503d4ae18933733cd342362ec5ab`，不可重現、僅供本輪比對）。
+> 已過（本機四關）：
+> 1. `regression_suite.py` **八項 OVERALL ALL PASS**（731s；m80 那列帶 `V3 shipped prefix == HEAD`）；
+> 2. `make_submission.py all` —— 官方指令逐位 `1.293461035226291`、100/100 feasible、`bit-exact: OK`；
+> 3. 🆕 **解開後的套件 + `ICCAD_ADAPTIVE_CORES=48`** —— 逐位 `1.2666234250706565`、**0 ULP warn**、100/100 feasible ⇒ **打包軸已排除**，GPU 機 round 2b 若失敗只可能是平台差異；
+> 4. `m67c_make_linux_bundle.py`（bundle `C:\Users\Nordra\Downloads\m67c-linux-verify.tar.gz`，md5 `06c8a4710496968fb5c2f823dff1a4de`、161613096 B，**內嵌 tar 與磁碟上那顆同一個 md5**；建 bundle 會重 stage ⇒ tar md5 是事後重量的，並逐檔確認 6 個 member 與通過 verify 的 stage 目錄相同）。
+> **還沒做**：GPU 機 WSL 的 `verify_final_tar.sh`（含 `final48`）、Drive 覆蓋 Final 位置。
+> 錨已改指 M80：`make_submission._ANCHOR` = `results_M80_default.json`（值不變，純命名；與 M74 那顆 0 movers）、
+> `m67c` 的 `ANCHOR` 同上、**`ANCHOR48` = `results_M80_c48_on.json`（`1.2666234250706565`）**、`_SOURCES` 跟著換。
+> ⚠️ 舊的 `ANCHOR48` 指著 M74 的 1.293461 ⇒ **不改的話 `final48` 必 FAIL，而且會長得像「Linux 不可重現」**。
+> ⚠️ 兩顆 M80 錨檔**已進 git**（歷史慣例是不進，但它們現在是送件鏈的一部分，換機器不能掉）。
 
 ### 📦 已上傳的舊包（Beta，2026-07-30）
 - **✅ 已上傳 = M73 包（M71 + tier-5），2026-07-30 覆蓋成功**：6 檔、tar md5 `ba694bc6c4c40485b12146d6696dbf7b`（299257 B）、**`op_wrapper.py` md5 `c2e27c9993afd20b5c14934f6ceea8c3`**。⚠️ **tar md5 不可重現**（gzip 內嵌 mtime，每次 stage 都變）⇒ **身分一律看 op_wrapper md5**。
@@ -119,17 +127,18 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 > **M80 的「加大 R」續挖（R=512 RED，2026-08-06）**）在死路 ledger，不在這裡。
 > **本節在每個 milestone 收尾時必須改寫**，見 `[[keep-next-steps-current]]`。
 
-1. **Final 送件包：現在必須重打包（M80 進來之前的包已經過期）**
-   `build_submission/` 那顆是 **M74**（`op_wrapper.py` md5 `ce4f3471…`），**不含 M80**。
-   評分機是 48 核 ⇒ 送舊包等於白白丟掉 **−2.075%**。
-   **要做的事**：`regression_suite.py`（**八**項）→ `make_submission.py all` →
-   `m67c_make_linux_bundle.py` → GPU 機 WSL `verify_final_tar.sh` → Drive 覆蓋。
-   ⚠️ **錨要一起換**：`make_submission._ANCHOR`、`m67c` 的 `ANCHOR`/`ANCHOR48`/`_SOURCES`
-   目前都指 M74；**`final48` 那輪的預期值會從 `1.295547821428148` 變成 M80 的 48 核值**
-   （tier 開著 ⇒ 不再是 M74 的 1.293461）。
-   ⚠️ **只差 GPU 機 WSL 的 `verify_final_tar.sh`** —— 這台**沒有 WSL / Docker / Linux bash**
-   （08-03 實測 `wsl -l -v` 無 distro），做不了。
-   👉 runbook：`FINAL_LINUX_VERIFY_RUNBOOK.md`（**內含的預期逐位值要跟著 M80 更新**）。
+1. **Final 送件包：本機已重打包完成（含 M80），只剩兩件事**
+   ✅ 2026-08-07 做完：八項 gate ALL PASS → `make_submission.py all` 逐位 `1.293461035226291`
+   → **解開後套件 @48c 逐位 `1.2666234250706565`（0 ULP warn）** → bundle 重建。
+   身分 = `op_wrapper.py` md5 **`445118482de5f128a23ffc48583691a4`**。錨已全換 M80。
+   **還沒做（兩件，都不在這台機器上）**：
+   (a) **GPU 機 WSL `verify_final_tar.sh`**（兩輪：預設 `1.293461035226291` /
+   `final48` **`1.2666234250706565`**）—— 這台**沒有 WSL / Docker / Linux bash**
+   （08-03 首測、08-07 複測，`wsl -l -v` 無 distro）。
+   👉 照抄 `FINAL_LINUX_VERIFY_RUNBOOK.md`（已改寫成 M80 版，md5 與預期值都是新的）。
+   ⚠️ round 2b 這次**不再是 round 2 的副本**：48c 與預設差 58 案，是 M80 那 8 隻新 profile
+   唯一會被執行到、也是第一次在 Linux 上跑的地方 ⇒ ULP warn 不只 case 84 屬可預期。
+   (b) **Drive 覆蓋 Final 位置**（使用者自己上傳，上傳後回報 op_wrapper md5）。
    ⚠️ **Beta 已過、使用者裁示不換件** ⇒ 這包是給 **Final（8/21）** 的，不要去覆蓋 Beta。
 
 2. **M62 micro-cap skip gate（唯一還活著的技術項目，但先過雙標關）**

@@ -37,7 +37,7 @@ Modes:
                                        OFFICIAL command (cwd=verify/cadc1075):
                                            python iccad2026_evaluate.py --evaluate op_wrapper.py
                                        and bit-compare all 100 cases against
-                                       results_M74_default.json (1.293461035226291)
+                                       results_M80_default.json (1.293461035226291)
     python make_submission.py all      both (default)
 
 Importable without side effects; m48_coldstart_dryrun.py's `opwrapper` variant
@@ -61,10 +61,15 @@ _BUILD = _REPO / "build_submission"
 _STAGE = _BUILD / _TEAM
 _TAR = _BUILD / f"{_TEAM}.tar.gz"
 _VERIFY = _BUILD / "verify"
-# M76 ship chain: the anchor follows what the tree actually produces. It was
-# results_shipped_m71.json (1.305389893450635 = the uploaded Beta package); the
-# tree has been M74 since 2026-07-30 and M74 is what this package now carries.
-_ANCHOR = _REPO / "results_M74_default.json"        # 1.293461035226291
+# M80 ship chain: the anchor follows what the tree actually produces. It was
+# results_shipped_m71.json (1.305389893450635 = the uploaded Beta package), then
+# results_M74_default.json; the tree has been M80 since 2026-08-05.
+# The VALUE is unchanged: M80's tier is cores-gated (>=40) and this box packages
+# at 16 cores, so the M80 default run is 0-mover identical to the M74 one. The
+# rename is for identity hygiene (cf. results_shipped_m51.json, whose name went
+# stale while its contents moved on). The 48-core anchor -- where M80 really
+# shows up, 1.2666234250706565 -- lives in m67c_make_linux_bundle.py (ANCHOR48).
+_ANCHOR = _REPO / "results_M80_default.json"        # 1.293461035226291
 _RESULTS_NAME = "results_m67b_opwrapper.json"
 
 _CONDA_PY = Path(r"C:\Users\Nordra\.conda\envs\iccadv\python.exe")
