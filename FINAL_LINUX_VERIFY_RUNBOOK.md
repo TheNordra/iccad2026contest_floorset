@@ -1,5 +1,12 @@
 # Final 保底包 — GPU 機 Linux 驗證 runbook（可直接照抄）
 
+> ## ✅ 2026-08-07：這關已經跑完，兩輪 ALL PASS
+> `op_wrapper.py` md5 `445118482de5f128a23ffc48583691a4` 那顆包，在 GPU 機 WSL2 上
+> round 2（預設 `1.293461035226291`）與 round 2b（`final48` `1.2666234250706565`）
+> **都通過** ⇒ Win/WSL 雙邊逐位相同，**M80 的 48 核路徑已有 Linux 上的硬證明**。
+> **下面的步驟只有在「包又換過」時才需要重跑**——屆時 §0 的三個 md5 與 §3 的兩個
+> 預期值都要跟著換，尤其 `ANCHOR48`（`m67c_make_linux_bundle.py` 內嵌的 `_TIER3_PY`）。
+
 > 這台開發機**沒有 WSL / Docker / Linux bash**（2026-08-03 首測、2026-08-07 複測，`wsl -l -v`
 > 只印 usage、無任何 distro）⇒ 這一關只能在 **GPU 機的 WSL2 Ubuntu-22.04** 上跑。
 > 跑完 Final 保底包就零風險了。

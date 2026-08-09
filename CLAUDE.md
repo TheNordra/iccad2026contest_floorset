@@ -19,9 +19,11 @@
   **這是自 M71 以來最大的單一 lever。**
 - **local 分數要分兩個數字講**：低核（本機 16、WSL）**逐位不變 1.293461035226291**（tier 惰性）；
   **48 核形狀 = 1.266623425**（−2.075%）。評分機是 48 核 ⇒ 真正出貨的是後者。
-- ✅ **Final 包已重打包含 M80**（2026-08-07）：`op_wrapper.py` md5 `445118482de5f128a23ffc48583691a4`，
-  本機四關全綠（八項 gate / 官方 verify / **套件 @48c 逐位 1.2666234250706565** / bundle）。
-  只剩 **GPU 機 WSL 那輪 + Drive 覆蓋**，見「下一步 1」。
+- ✅ **Final 包已重打包含 M80 且五關全綠**（2026-08-07）：`op_wrapper.py` md5 `445118482de5f128a23ffc48583691a4`。
+  本機四關（八項 gate / 官方 verify / **套件 @48c 逐位 1.2666234250706565** / bundle）
+  ＋ **GPU 機 WSL `verify_final_tar.sh` 兩輪 ALL PASS**（使用者 08-07 回報）
+  ⇒ **Win/WSL 雙邊逐位相同，M80 的 48 核路徑在 Linux 上已有硬證明**。
+  只剩 **Drive 覆蓋 Final 位置**，見「下一步 1」。
 - **ML 全線 RED，M80 把它釘得更死**：cloud 從 R=128 → 256 → **512**，per-case oracle 一路
   +2.03% → +2.649% → **+3.081%**，但 LOO 預測器三次都文風不動（global 恆 +0.166%／
   band 0.051→0.044%／knn5 0.127→0.128%）⇒ **oracle 與可預測值的差距三次都是變寬**。組員也已用 oracle 天花板自判 ML-as-placer 死。
@@ -70,14 +72,18 @@
 
 ### 📦 送件狀態（Beta 已上傳；**Final deadline 2026-08-21**）
 
-> **🚧 2026-08-07 重打包完成：Final 包已含 M80，本機全綠，尚未上傳。**（取代 08-01 那顆 M74 包）
+> **✅ 2026-08-07 Final 包完成並驗畢（Win + GPU 機 WSL 雙邊），只差 Drive 覆蓋。**（取代 08-01 那顆 M74 包）
 > 交付物 `build_submission/cadc1075.tar.gz`（309696 B、6 檔），**`op_wrapper.py` md5 `445118482de5f128a23ffc48583691a4`**（110089 B；tar md5 `1ffd503d4ae18933733cd342362ec5ab`，不可重現、僅供本輪比對）。
 > 已過（本機四關）：
 > 1. `regression_suite.py` **八項 OVERALL ALL PASS**（731s；m80 那列帶 `V3 shipped prefix == HEAD`）；
 > 2. `make_submission.py all` —— 官方指令逐位 `1.293461035226291`、100/100 feasible、`bit-exact: OK`；
 > 3. 🆕 **解開後的套件 + `ICCAD_ADAPTIVE_CORES=48`** —— 逐位 `1.2666234250706565`、**0 ULP warn**、100/100 feasible ⇒ **打包軸已排除**，GPU 機 round 2b 若失敗只可能是平台差異；
 > 4. `m67c_make_linux_bundle.py`（bundle `C:\Users\Nordra\Downloads\m67c-linux-verify.tar.gz`，md5 `06c8a4710496968fb5c2f823dff1a4de`、161613096 B，**內嵌 tar 與磁碟上那顆同一個 md5**；建 bundle 會重 stage ⇒ tar md5 是事後重量的，並逐檔確認 6 個 member 與通過 verify 的 stage 目錄相同）。
-> **還沒做**：GPU 機 WSL 的 `verify_final_tar.sh`（含 `final48`）、Drive 覆蓋 Final 位置。
+> 5. ✅ **GPU 機 WSL `verify_final_tar.sh` 兩輪 ALL PASS**（使用者 2026-08-07 回報）——
+>    round 2 預設 `1.293461035226291` / round 2b `final48` `1.2666234250706565`，
+>    兩輪都 100/100 feasible、無 `constructive.exe` 產物。**M80 那 8 隻新 profile
+>    第一次在 Linux 上執行就逐位相同**，M73 那次「Win/WSL 雙邊逐位」的紀錄在 M80 上延續。
+> **還沒做**：只剩 **Drive 覆蓋 Final 位置**（使用者自己上傳）。
 > 錨已改指 M80：`make_submission._ANCHOR` = `results_M80_default.json`（值不變，純命名；與 M74 那顆 0 movers）、
 > `m67c` 的 `ANCHOR` 同上、**`ANCHOR48` = `results_M80_c48_on.json`（`1.2666234250706565`）**、`_SOURCES` 跟著換。
 > ⚠️ 舊的 `ANCHOR48` 指著 M74 的 1.293461 ⇒ **不改的話 `final48` 必 FAIL，而且會長得像「Linux 不可重現」**。
@@ -127,19 +133,16 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 > **M80 的「加大 R」續挖（R=512 RED，2026-08-06）**）在死路 ledger，不在這裡。
 > **本節在每個 milestone 收尾時必須改寫**，見 `[[keep-next-steps-current]]`。
 
-1. **Final 送件包：本機已重打包完成（含 M80），只剩兩件事**
+1. **Final 送件包：五關全綠，只剩「把檔案放上 Drive」**
    ✅ 2026-08-07 做完：八項 gate ALL PASS → `make_submission.py all` 逐位 `1.293461035226291`
-   → **解開後套件 @48c 逐位 `1.2666234250706565`（0 ULP warn）** → bundle 重建。
+   → **解開後套件 @48c 逐位 `1.2666234250706565`（0 ULP warn）** → bundle 重建
+   → **GPU 機 WSL `verify_final_tar.sh` 兩輪 ALL PASS**（Win/WSL 雙邊逐位相同）。
    身分 = `op_wrapper.py` md5 **`445118482de5f128a23ffc48583691a4`**。錨已全換 M80。
-   **還沒做（兩件，都不在這台機器上）**：
-   (a) **GPU 機 WSL `verify_final_tar.sh`**（兩輪：預設 `1.293461035226291` /
-   `final48` **`1.2666234250706565`**）—— 這台**沒有 WSL / Docker / Linux bash**
-   （08-03 首測、08-07 複測，`wsl -l -v` 無 distro）。
-   👉 照抄 `FINAL_LINUX_VERIFY_RUNBOOK.md`（已改寫成 M80 版，md5 與預期值都是新的）。
-   ⚠️ round 2b 這次**不再是 round 2 的副本**：48c 與預設差 58 案，是 M80 那 8 隻新 profile
-   唯一會被執行到、也是第一次在 Linux 上跑的地方 ⇒ ULP warn 不只 case 84 屬可預期。
-   (b) **Drive 覆蓋 Final 位置**（使用者自己上傳，上傳後回報 op_wrapper md5）。
+   **還沒做（不在這台機器上）**：**Drive 覆蓋 Final 位置**——使用者自己上傳
+   `build_submission/cadc1075.tar.gz`（309696 B），上傳後回報 op_wrapper md5 當紀錄。
    ⚠️ **Beta 已過、使用者裁示不換件** ⇒ 這包是給 **Final（8/21）** 的，不要去覆蓋 Beta。
+   ⚠️ **包若還要再動**（例如 8/21 前又有新 lever 進 tree），整條鏈要重走一次，
+   而且 `ANCHOR48` 要跟著新的 48 核值——那顆錨過期時的失敗長相是「Linux 不可重現」。
 
 2. **M62 micro-cap skip gate（唯一還活著的技術項目，但先過雙標關）**
    前置 = pre-build 時間預測器 + 機速校準。⚠️ 離線增益只有 **+0.06%**，而我們已經用
