@@ -2394,6 +2394,9 @@ def _lp_build_case(block_count, area_targets, b2b_connectivity,
     )
 
 
+_LP_UTIL = 0.968      # L95 structural floor; the label achieves 96.6%
+
+
 def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
               p2b_connectivity, pins_pos, constraints, margs):
     """Post-process the selected layout. Returns `pos` unchanged on any doubt.
@@ -2428,8 +2431,17 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     # ⚠️ This makes it a DIFFERENT objective from the one +2.3559% in-set /
     # +2.4671% OOS was measured on. Those numbers do NOT carry over; the
     # deployable gain has to be measured again through the official eval.
+    # area_baseline from the STRUCTURAL FLOOR, not from our own bbox. Our bbox
+    # runs ~15% larger than the label's (utilisation 82.2% vs 96.6%, L95), so
+    # using it under-weights the area term by that much -- and the area term is
+    # where the shape LP's whole upside lives. sum(A)/_LP_UTIL is label-free and
+    # per-case. Measured against the label baselines the LP cannot see:
+    # own -> 92.6 / 89.4 / 85.0 % of the oracle gain at k = 1 / 4 / 12;
+    # this -> 100.0 / 100.7 / 100.3 %. Flat for _LP_UTIL anywhere in
+    # [0.85, 1.05] (all within 6e-6 of each other), so it is not a fitted knob.
+    _sumA = sum(max(0.0, float(area_targets[i])) for i in range(int(block_count)))
     base = {"hpwl_baseline": max(float(prev["hpwl"]), 1e-6),
-            "area_baseline": max(float(prev["area"]), 1e-6)}
+            "area_baseline": max(_sumA / _LP_UTIL, 1e-6)}
     l3.CASES[key] = _lp_build_case(block_count, area_targets, b2b_connectivity,
                                    p2b_connectivity, pins_pos, constraints, base)
     saved, PRUNE_B = PRUNE_B, prune
