@@ -44,8 +44,12 @@ _SHIP = ("optimizer_constructive.py", "constructive.cpp", "optimizer_claude.py")
 def _run_phase(args, env_over=None, timeout=900):
     env = dict(os.environ)
     env.update(env_over or {})
+    # Explicit utf-8/replace: text=True decodes with the LOCALE codec, and
+    # compiler/OS messages are not valid cp950 on a zh-TW box -- the reader
+    # thread then dies and r.stderr comes back None, which phase 3 reads.
     r = subprocess.run([_PY, str(Path(__file__).resolve()), *args],
-                       capture_output=True, text=True, timeout=timeout, env=env)
+                       capture_output=True, text=True, timeout=timeout,
+                       env=env, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         print(r.stdout)
         print(r.stderr, file=sys.stderr)

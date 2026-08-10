@@ -10,7 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path(r"C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet")
+REPO = Path(__file__).resolve().parent   # this checkout, not the one
+                                         # this tool was written in
 sys.path.insert(0, str(REPO / "iccad2026contest"))
 sys.path.insert(0, str(REPO))
 

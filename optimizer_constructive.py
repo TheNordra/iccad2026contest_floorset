@@ -35,6 +35,8 @@ import math
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
@@ -1103,11 +1105,359 @@ except ValueError:
     _PROFILE_TIMEOUT = 120.0
 
 
+# ---------------------------------------------------------------------------
+# L110: route A runs on ONE global work queue.
+#
+# L109 measured route A as a net 2.8x LOSS.  That was not route A's doing: the
+# wrapper nested two pools.  _solve_impl opens one thread per profile, and
+# every _run_profile_route_a used to open its OWN window-sized pool, so the box
+# ran n_profiles * window subprocesses at once (35 profiles * W12 = 420 on a
+# 32-core machine; the 13-profile corner still asked for 156).  The W sweep
+# degrading monotonically (W=4 -> 2.35s, W=16 -> 3.42s) is the signature of
+# that oversubscription, not a property of per-frame parallelism.
+#
+# Fix: every (profile, frame) task in the process shares one executor sized to
+# the core count, so the queue -- not the per-profile window -- is the only
+# concurrency limit.  The outer per-profile threads stay: with route A on they
+# never run work themselves, they only block on results.  Per-profile in-flight
+# stays small (ICCAD_ROUTE_A, default 4 = max_trials for n>=60) because once
+# the queue schedules, dispatching more frames than sequential selection could
+# ever consume is pure waste that crowds out other profiles.
+#
+# Selection is untouched: the winner is still replayed from the pre-post-
+# processing FSEL score in index order (strict '<', ties to the earlier index),
+# which is what makes route A bit-identical to the sequential run.
+_ROUTE_A_POOL = None
+_ROUTE_A_LOCK = threading.Lock()
+# Live/peak concurrent frame subprocesses. The peak is the direct measurement
+# of the thing this change fixes -- it must never exceed _route_a_cores().
+_ROUTE_A_LIVE = 0
+_ROUTE_A_PEAK = 0
+# Total frame-subprocess CPU-seconds and task count. The work MULTIPLIER
+# (this vs the sequential pool's total) is what decides route A: the queue can
+# only convert idle cores into wall, so it wins iff headroom > multiplier.
+_ROUTE_A_WORK = 0.0
+_ROUTE_A_TASKS = 0
+_ROUTE_A_FSEL_MISMATCH = 0
+# Times route A yielded nothing and _run_profile degraded to the sequential
+# path. Must be 0 in any shipping gate: non-zero means the resolved binary
+# does not answer ICCAD_FORCE_FRAME_IDX/ICCAD_FRAME_REPORT.
+_ROUTE_A_DEGRADED = 0
+
+# L110 two-phase: run_pipeline runs compact_layout/hpwl_push/slide ONCE, on the
+# selected frame (constructive.cpp:1867-1875) -- OUTSIDE the frame loop. Route A
+# splits the loop across processes, so each task pays that whole tail on its own
+# single-frame winner and 3/4 of them get thrown away. Measured: the tail is
+# 69-88% of a frame task, and dropping it takes the work multiplier vs the
+# sequential profile from 2.03x to 1.44x (8 profiles, uncontended, min of 3).
+#
+# It is safe to drop because FSEL is emitted at :1852, BEFORE the tail -> the
+# selection key is bit-identical either way (asserted over every scanned index
+# of 8 profiles, and re-checked at runtime into _ROUTE_A_FSEL_MISMATCH).
+# So: scan every candidate frame cheaply, then re-run ONLY the winner in full.
+# ICCAD_ROUTE_A_2PHASE=0 restores the one-phase behaviour for A/B.
+_ROUTE_A_SCAN_ENV = {"ICCAD_NO_COMPACT": "1", "ICCAD_NO_PUSH": "1"}
+
+
+def _route_a_cores() -> int:
+    """Concurrency cap for the global frame queue.
+
+    Deliberately NOT _effective_cores()/_effective_cores_hi(): both honour
+    ICCAD_ADAPTIVE_CORES, which is a *forced* tier-gating value (the 48c
+    corners force 48 on this 32-core box). Sizing the queue from a forced
+    value would re-create the oversubscription this replaces.
+    ICCAD_ROUTE_A_CORES overrides for experiments."""
+    v = os.environ.get("ICCAD_ROUTE_A_CORES", "")
+    if v:
+        try:
+            c = int(v)
+            if c > 0:
+                return c
+        except ValueError:
+            pass
+    try:
+        if hasattr(os, "sched_getaffinity"):
+            return len(os.sched_getaffinity(0)) or 1
+        return os.cpu_count() or 1
+    except Exception:
+        return 1
+
+
+def _route_a_pool():
+    """The single process-wide frame queue (created on first route-A use)."""
+    global _ROUTE_A_POOL
+    if _ROUTE_A_POOL is None:
+        with _ROUTE_A_LOCK:
+            if _ROUTE_A_POOL is None:
+                _ROUTE_A_POOL = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_route_a_cores(), thread_name_prefix="routeA")
+    return _ROUTE_A_POOL
+
+
+def route_a_stats() -> Dict[str, int]:
+    """Peak concurrent frame subprocesses since the last reset (verification
+    hook: peak must be <= cores)."""
+    with _ROUTE_A_LOCK:
+        return {"live": _ROUTE_A_LIVE, "peak": _ROUTE_A_PEAK,
+                "work": _ROUTE_A_WORK, "tasks": _ROUTE_A_TASKS,
+                "fsel_mismatch": _ROUTE_A_FSEL_MISMATCH,
+                "degraded": _ROUTE_A_DEGRADED,
+                "cores": _route_a_cores()}
+
+
+def route_a_reset_stats() -> None:
+    global _ROUTE_A_LIVE, _ROUTE_A_PEAK, _ROUTE_A_WORK, _ROUTE_A_TASKS
+    global _ROUTE_A_FSEL_MISMATCH, _ROUTE_A_DEGRADED
+    with _ROUTE_A_LOCK:
+        _ROUTE_A_LIVE = _ROUTE_A_PEAK = _ROUTE_A_TASKS = 0
+        _ROUTE_A_FSEL_MISMATCH = _ROUTE_A_DEGRADED = 0
+        _ROUTE_A_WORK = 0.0
+
+
+def _run_profile_frame(args):
+    global _ROUTE_A_LIVE, _ROUTE_A_PEAK, _ROUTE_A_WORK, _ROUTE_A_TASKS
+    exe, inp, base_env, idx = args
+    env = dict(base_env)
+    env["ICCAD_FORCE_FRAME_IDX"] = str(idx)
+    env["ICCAD_FRAME_REPORT"] = "1"
+    with _ROUTE_A_LOCK:
+        _ROUTE_A_LIVE += 1
+        new_peak = _ROUTE_A_LIVE > _ROUTE_A_PEAK
+        if new_peak:
+            _ROUTE_A_PEAK = _ROUTE_A_LIVE
+        peak = _ROUTE_A_PEAK
+    if new_peak:
+        # Peaks are monotone and capped by the pool, so this fires at most
+        # `cores` times per process -- cheap enough to keep out of a mode flag.
+        # Lets the official-eval subprocess report the concurrency it actually
+        # reached, which is the measurement L110 is making.
+        p = os.environ.get("ICCAD_ROUTE_A_STATS", "")
+        if p:
+            try:
+                with open(p, "w") as fh:
+                    fh.write(f"{peak} {_route_a_cores()}\n")
+            except Exception:
+                pass
+    t0 = time.perf_counter()
+    try:
+        r = subprocess.run([str(exe)], input=inp, capture_output=True, text=True,
+                           timeout=_PROFILE_TIMEOUT, env=env)
+    finally:
+        wall = time.perf_counter() - t0
+        with _ROUTE_A_LOCK:
+            _ROUTE_A_LIVE -= 1
+            _ROUTE_A_WORK += wall
+            _ROUTE_A_TASKS += 1
+    n_frames = max_trials = None
+    ok, sc = 0, None
+    for line in r.stderr.splitlines():
+        if line.startswith("FRAMES "):
+            _, a, b = line.split()
+            n_frames, max_trials = int(a), int(b)
+        elif line.startswith("FSEL "):
+            _, o, s = line.split()
+            ok, sc = int(o), float(s)
+    return {
+        "idx": idx,
+        "ok": ok,
+        "sc": sc,
+        "out": r.stdout,
+        "wall": wall,
+        "n_frames": n_frames,
+        "max_trials": max_trials,
+    }
+
+
+def _run_profile_route_a(env: Dict[str, str], inp: str, inflight: int) -> Dict[str, object]:
+    """One profile's frames, dispatched onto the shared global queue.
+
+    Frames are submitted strictly in index order and every submitted frame is
+    awaited, so `got` is always the contiguous prefix [0, nxt). Submission
+    stops as soon as `succ` (successes seen so far, all of them inside that
+    prefix) reaches max_trials -> the prefix is guaranteed to contain the
+    max_trials-th success, which is exactly what the sequential replay rule
+    below needs. Same guarantee the old batch loop gave, without waiting for a
+    whole batch to drain before refilling.
+    """
+    global _ROUTE_A_FSEL_MISMATCH
+    # _BIN, NOT a hardcoded sibling: that is the binary _ensure_compiled()
+    # resolved (bundled bin/constructive_linux first, else the compile chain,
+    # each accepted only after the 1-block smoke). A hardcoded name would not
+    # exist in the submission package at all -- and because the cores gate
+    # keeps route A off on a <40-core box, nothing local would notice.
+    exe = Path(env.get("ICCAD_CONSTRUCTIVE_BIN", str(_BIN)))
+    pool = _route_a_pool()
+    # from `env`, not os.environ: same convention as ICCAD_ROUTE_A above, so a
+    # caller can A/B the two phases per profile without touching the process.
+    two_phase = env.get("ICCAD_ROUTE_A_2PHASE", "1") != "0"
+    greedy = env.get("ICCAD_ROUTE_A_GREEDY", "0") != "0"
+    scan_env = dict(env, **_ROUTE_A_SCAN_ENV) if two_phase else env
+    got = {}
+    succ = 0
+    waves = 0
+    n_frames = max_trials = None
+    nxt = 0                      # next index to submit
+    pend = {}                    # future -> idx
+    t0 = time.perf_counter()
+
+    def _room() -> bool:
+        # n_frames/max_trials are unknown until the first result lands, so the
+        # opening submissions are blind -- the same cheap bet L108 documented
+        # (indices past the end cost only setup and report ok=0), except the
+        # bet is now `inflight` frames, not a whole window.
+        #
+        # The two stopping rules trade WORK against LATENCY, and which one is
+        # right depends on whether the box is work- or latency-bound:
+        #   thrifty (default) -- stop at succ + len(pend) >= max_trials. A frame
+        #     in flight might yet succeed, so going past that speculates on a
+        #     success we may already have. Scans what sequential scans (measured:
+        #     8 frames, vs 11 for greedy) but caps in-profile parallelism at
+        #     max_trials, so the successful frames get discovered serially.
+        #   greedy (ICCAD_ROUTE_A_GREEDY=1) -- stop at succ >= max_trials, so
+        #     `inflight` can exceed max_trials and the whole candidate span runs
+        #     at once. Costs wasted frames, buys latency.
+        # Either way the replay guarantee above holds: got is the contiguous
+        # prefix [0, nxt) and submission only stops once that prefix is known to
+        # contain max_trials successes (if in-flight frames fail, the count
+        # drops back and the loop resumes).
+        head = succ if greedy else succ + len(pend)
+        return (len(pend) < inflight
+                # Only the OPENING burst may be blind. Both "unknown yet"
+                # escapes below stay true forever against a binary that
+                # never emits FRAMES (anything pre-L108), so without this
+                # bound nxt climbs without end and route A HANGS instead of
+                # failing -- measured: no result in 600s, on a 21-block case.
+                and (n_frames is not None or nxt < inflight)
+                and (n_frames is None or nxt < n_frames)
+                and (max_trials is None or head < max_trials))
+
+    while True:
+        while _room():
+            pend[pool.submit(_run_profile_frame, (exe, inp, scan_env, nxt))] = nxt
+            nxt += 1
+        if not pend:
+            break
+        done, _ = concurrent.futures.wait(
+            pend, return_when=concurrent.futures.FIRST_COMPLETED)
+        waves += 1
+        for f in done:
+            pend.pop(f, None)
+            r = f.result()
+            got[r["idx"]] = r
+            succ += int(bool(r["ok"]))
+            if r["n_frames"] is not None:
+                n_frames, max_trials = r["n_frames"], r["max_trials"]
+    span = time.perf_counter() - t0
+    best_i = None
+    best_sc = None
+    trials = 0
+    for r in sorted(got.values(), key=lambda item: item["idx"]):
+        if not r["ok"]:
+            continue
+        trials += 1
+        if best_sc is None or r["sc"] < best_sc:
+            best_sc = r["sc"]
+            best_i = r["idx"]
+        if max_trials is not None and trials >= max_trials:
+            break
+    if best_i is None:
+        # "answered" separates "no frame won" (benign: the sequential path
+        # would shelf-fallback here, and dropping the profile is what the
+        # 48c on-vs-off A/B was validated with) from "the binary never
+        # emitted a FRAMES line at all", which means it predates L108 and
+        # every profile of every case is about to die.
+        return {"out": None, "answered": n_frames is not None}
+    win = got[best_i]
+    if two_phase:
+        # Phase 2: the scan runs produced the right SCORES but deliberately
+        # skipped the tail, so their stdout is not a finished layout. Re-run the
+        # winning index once, in full, THROUGH THE QUEUE -- calling it inline
+        # would run it on the caller's outer per-profile thread, i.e. outside
+        # the concurrency cap, which is the exact oversubscription L110 removes
+        # (measured: peak 46 subprocesses on a 32-slot queue).
+        win = pool.submit(_run_profile_frame, (exe, inp, env, best_i)).result()
+        span = time.perf_counter() - t0
+        if not win["ok"] or win["sc"] != got[best_i]["sc"]:
+            # Cannot happen: FSEL precedes compact/push. Counted, not acted on
+            # -- the full re-run IS the correct output either way, and silently
+            # dropping the profile would hide the bug instead of surfacing it.
+            with _ROUTE_A_LOCK:
+                _ROUTE_A_FSEL_MISMATCH += 1
+    return {
+        "ok": win["ok"],
+        "sc": win["sc"],
+        "out": win["out"],
+        "span": span,
+        "dispatched": len(got) + (1 if two_phase else 0),
+        "scanned": len(got),
+        "two_phase": two_phase,
+        "waves": waves,
+        "n_frames": got[best_i].get("n_frames"),
+        "max_trials": got[best_i].get("max_trials"),
+    }
+
+
+_ROUTE_A_INFLIGHT = 4        # = max_trials for n>=60; see _run_profile_route_a
+_ROUTE_A_CORES_MIN = 40
+
+
+def _route_a_default() -> int:
+    """Cores-gated default, same bet and same shape as _m80_active/tier-5.
+
+    Route A only converts IDLE cores into wall, so on a small box it is pure
+    overhead. Uses _effective_cores_hi() (unknown -> 0) so a detection failure
+    falls back to the shipped one-subprocess-per-profile path in BOTH
+    directions. ICCAD_ROUTE_A=0 still forces it off; any explicit value wins."""
+    return _ROUTE_A_INFLIGHT if _effective_cores_hi() >= _ROUTE_A_CORES_MIN else 0
+
+
 def _run_profile(env_over: Dict[str, str], inp: str, n: int):
-    """Run one profile; return positions or None."""
+    """Run one profile; return positions or None.
+
+    ICCAD_ROUTE_A unset = _route_a_default(): the global frame queue on a
+    >=_ROUTE_A_CORES_MIN box, one subprocess per profile (= shipped) below
+    that, and shipped again if core detection fails. 0 forces it off; any
+    other value is the per-profile in-flight cap on the queue (1 = the
+    default cap 4). See _run_profile_route_a for why the value no longer
+    controls concurrency."""
+    global _ROUTE_A_DEGRADED
     env = dict(os.environ)
     env.update(env_over)
+    _v = env.get("ICCAD_ROUTE_A", "")
     try:
+        route_a = int(_v) if _v != "" else _route_a_default()
+    except ValueError:
+        route_a = 0
+    try:
+        # _ROUTE_A_DEGRADED != 0 latches "this binary does not answer
+        # ICCAD_FRAME_REPORT" for the rest of the process. The binary cannot
+        # change mid-run, and a pre-L108 one ignores ICCAD_FORCE_FRAME_IDX,
+        # so every wasted frame task runs the WHOLE pipeline -- ~5x the work
+        # per profile. Scope of the saving, honestly: _solve_impl starts all
+        # profile threads at once, so within the FIRST case they all read 0
+        # and all pay; the latch saves cases 2..N, not case 1. Read without
+        # the lock for that reason -- the race is already lost by design.
+        if route_a >= 1 and _ROUTE_A_DEGRADED == 0:
+            ra = _run_profile_route_a(env, inp,
+                                      _ROUTE_A_INFLIGHT if route_a == 1 else route_a)
+            if ra.get("out") is not None:
+                return _parse_output(ra["out"], n)
+            if ra.get("answered", True):
+                return None            # no frame won; shipped behaviour
+            # The binary never emitted FRAMES: it predates L108, so route A
+            # is about to lose EVERY profile of EVERY case and the run sinks
+            # to the SA fallback at ~10.0 -- invisibly, because the cores
+            # gate keeps route A off on any box smaller than the grader.
+            # Degrade to the shipped sequential path and make the gate hear
+            # about it (make_submission.py verify greps stderr for
+            # "fallback"; l113_ship_gate.py does too).
+            with _ROUTE_A_LOCK:
+                _ROUTE_A_DEGRADED += 1
+                first = _ROUTE_A_DEGRADED == 1
+            if first:
+                print("[constructive] route A binary answers no "
+                      "ICCAD_FRAME_REPORT (pre-L108?); sequential fallback",
+                      file=sys.stderr)
         r = subprocess.run([str(_BIN)], input=inp, capture_output=True,
                            text=True, timeout=_PROFILE_TIMEOUT, env=env)
         if r.returncode != 0 or not r.stdout.strip():

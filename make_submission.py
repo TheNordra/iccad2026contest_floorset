@@ -97,8 +97,14 @@ _MERGE_HEADER = '''
 # The SA MyOptimizer class, the GNN blocks and the SA compile chain are
 # intentionally NOT merged: the wrapper never calls them, and their module-
 # level _BIN/_ensure_compiled/MyOptimizer would shadow the constructive ones.
+#
+# NOTE: no `import time` here. optimizer_constructive.py imports it already
+# (route A's queue times its frame tasks), and a second module-level binding
+# trips the collision assert below. That assert is what stops the SA slice
+# from shadowing _BIN/_ensure_compiled/MyOptimizer, so it stays at full
+# strength -- the redundant import goes instead. The `time` pin in
+# build_op_wrapper_text() below keeps this from rotting silently.
 # ═════════════════════════════════════════════════════════════════════════════
-import time
 from io import StringIO
 
 from iccad2026_evaluate import (calculate_hpwl_b2b, calculate_hpwl_p2b,
@@ -211,7 +217,14 @@ def build_op_wrapper_text() -> str:
         if pat in tail:
             raise AssertionError(f"merged tail: forbidden {pat!r} (would shadow "
                                  f"the constructive module state)")
-    clash = _toplevel_names(cons, "cons") & _toplevel_names(tail, "tail")
+    cons_names = _toplevel_names(cons, "cons")
+    # The tail's SA code calls time.perf_counter but no longer imports time
+    # itself (see _MERGE_HEADER); pin the dependency it now inherits from cons.
+    for need in ("time",):
+        if need not in cons_names:
+            raise AssertionError(f"merged op_wrapper: tail needs {need!r} but "
+                                 f"optimizer_constructive.py no longer imports it")
+    clash = cons_names & _toplevel_names(tail, "tail")
     if clash:
         raise AssertionError(f"merged op_wrapper: module-level name collisions: {sorted(clash)}")
     return text

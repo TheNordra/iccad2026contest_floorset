@@ -135,6 +135,18 @@ static int HPWL_SAFE_CLUSTER_SLIDE = 0; // donor M55 ICCAD_HPWL_SAFE_CLUSTER_SLI
                                     // soft-violation signature is unchanged and HPWL strictly improves
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
+// L108 route A (per-frame parallelism, OFFLINE SCHEDULING ONLY -- both default
+// off => bit-identical to shipped).  The frame trial loop in run_pipeline is
+// semantically independent per frame (`items` is reset to items_base at the top
+// of every iteration) but NOT thread-safe (pack_in_frame writes the file-scope
+// pos/placed/prev_pos/use_prev).  So the parallelism is done as PROCESSES: each
+// worker derives the same deterministic frame list and evaluates exactly one
+// index.  Sequential selection is then replayed by the wrapper, which needs the
+// pre-post-processing layout_score -- that is what FRAME_REPORT emits.
+// Measured 2026-08-06 (l107_setup_share.py): setup+post is only ~10% of a run,
+// so paying it per worker still leaves 3.6-4.9x on the heavy cases.
+static int FORCE_FRAME_IDX = -1;   // ICCAD_FORCE_FRAME_IDX=i: evaluate frames[i] only
+static bool FRAME_REPORT = false;  // ICCAD_FRAME_REPORT=1: stderr FRAMES/FSEL lines
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
                                    // frame loop from the measured compacted bbox aspect (a
                                    // shape the blocks already fit) and re-run once; the single
@@ -1751,7 +1763,15 @@ static void solve() {
     vector<Item> items_base=items;   // original sorted order, captured once (reframe reuses it)
     // M26 reframe: wrap the whole frames -> best(compacted+pushed) pipeline as a
     // reusable unit so it can be re-run on a measured-bbox-seeded frame set.
-    auto run_pipeline=[&](const vector<pair<double,double>>& frms)->vector<XYWH>{
+    auto run_pipeline=[&](const vector<pair<double,double>>& frms_in)->vector<XYWH>{
+    // L108 route A: with FORCE_FRAME_IDX set, evaluate that one candidate only.
+    // Default (-1) leaves `frms` aliasing the caller's list => bit-identical.
+    vector<pair<double,double>> frms_one;
+    if (FORCE_FRAME_IDX >= 0){
+        if (FORCE_FRAME_IDX < (int)frms_in.size()) frms_one.push_back(frms_in[FORCE_FRAME_IDX]);
+        if (FRAME_REPORT) fprintf(stderr,"FRAMES %d %d\n",(int)frms_in.size(),max_trials);
+    } else if (FRAME_REPORT) fprintf(stderr,"FRAMES %d %d\n",(int)frms_in.size(),max_trials);
+    const vector<pair<double,double>>& frms = (FORCE_FRAME_IDX >= 0) ? frms_one : frms_in;
     vector<XYWH> best; bool have_best=false; double best_score=1e300; int trials=0;
     for (auto& f:frms){
         items=items_base;
@@ -1827,6 +1847,10 @@ static void solve() {
         if (!have_best||sc<best_score){ best_score=sc; best=c1; have_best=true; }
         if (trials>=max_trials) break;
     }
+    // L108: the wrapper replays the sequential winner-pick, so it needs the score
+    // the sequential loop compares on -- layout_score(c1) BEFORE compaction/push.
+    if (FRAME_REPORT) fprintf(stderr,"FSEL %d %.17g\n",(int)have_best,
+                              have_best?best_score:0.0);
     if (!have_best) best=shelf_fallback(order);
     // Compaction squeezes void out of the SELECTED layout (downside-protected:
     // returns the original if no directional pack beats it by layout_score).
@@ -1960,6 +1984,8 @@ int main() {
     if (const char* e=getenv("ICCAD_ORDER_MOVE")){ int v=atoi(e); if (v>0) ORDER_MOVE=v; }
     if (const char* e=getenv("ICCAD_CLUSTER_ORD")){ int v=atoi(e); if (v==1||v==2) CLUSTER_ORD=v; }
     if (getenv("ICCAD_REFRAME")) REFRAME=true;
+    if (const char* e=getenv("ICCAD_FORCE_FRAME_IDX")){ int v=atoi(e); if (v>=0) FORCE_FRAME_IDX=v; }  // L108
+    if (getenv("ICCAD_FRAME_REPORT")) FRAME_REPORT=true;                                               // L108
     if (getenv("ICCAD_GUIDE_MED")) GUIDE_MED=true;
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
