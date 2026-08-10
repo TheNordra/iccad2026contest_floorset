@@ -2271,8 +2271,14 @@ def lp_pass(ci, P, rho, sep_trim=False):
     freeze = set()
     for attempt in range(3):
         t0 = time.perf_counter()
-        if PRUNE_B is not None and not sep_trim:
-            B, _rounds = solve_pruned(ci, P, freeze, rho=rho, prune_B=PRUNE_B)
+        # HPWL pruning and the separation transitive reduction used to be
+        # mutually exclusive here purely because solve_pruned did not forward
+        # sep_trim. They are independent reductions -- after pruning,
+        # separation is the MAJORITY of the remaining rows (56-73% on the
+        # heavy cases), so the combination is the interesting one.
+        if PRUNE_B is not None:
+            B, _rounds = solve_pruned(ci, P, freeze, rho=rho, prune_B=PRUNE_B,
+                                      sep_trim=sep_trim)
         else:
             B = build_and_solve(ci, P, freeze, rho=rho, sep_trim=sep_trim)
         if B["res"].status != 0:
@@ -2292,7 +2298,8 @@ def lp_pass(ci, P, rho, sep_trim=False):
     return None, dict(status="cluster_break", t=0.0, t_build=0.0, t_solve=0.0, lp_obj=None, attempts=3), None
 
 
-def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3):
+def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
+                 sep_trim=False):
     """build_and_solve with HPWL pruning made EXACT by verification.
 
     Dropping `t >= |z|` in favour of `sgn(dC) * z` can only LOWER the objective
@@ -2305,14 +2312,16 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3):
     build if it has not converged in `max_rounds`.
     """
     if prune_B is None:
-        return build_and_solve(ci, P, freeze_units, rho=rho), 0
+        return build_and_solve(ci, P, freeze_units, rho=rho,
+                               sep_trim=sep_trim), 0
     keep = set()
     for rnd in range(max_rounds):
         d = build_and_solve(ci, P, freeze_units, rho=rho, prune_B=prune_B,
-                            force_keep=keep)
+                            force_keep=keep, sep_trim=sep_trim)
         res = d["res"]
         if res.status != 0:
-            return build_and_solve(ci, P, freeze_units, rho=rho), rnd + 1
+            return build_and_solve(ci, P, freeze_units, rho=rho,
+                                   sep_trim=sep_trim), rnd + 1
         x = res.x
         bad = set()
         for tid, lin, dC, _w in d["prune_dropped_terms"]:
@@ -2326,7 +2335,8 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3):
             d["prune_rounds"] = rnd + 1
             return d, rnd + 1
         keep |= bad
-    return build_and_solve(ci, P, freeze_units, rho=rho), max_rounds
+    return build_and_solve(ci, P, freeze_units, rho=rho,
+                           sep_trim=sep_trim), max_rounds
 
 
 _HARD_MASKS = {}
@@ -2447,7 +2457,15 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     saved, PRUNE_B = PRUNE_B, prune
     try:
         for _ in range(max(1, iters)):
-            newP, tele, _B = lp_pass(key, P, 0.06)
+            # sep_trim=True: the separation transitive reduction. Exact
+            # (a removed row stays implied by the ones that survive) and
+            # independent of the HPWL pruning -- they used to be mutually
+            # exclusive only because solve_pruned did not forward the flag.
+            # After pruning, separation is 56-73% of the remaining rows on
+            # the heavy cases. Measured over 100 cases, min of 3:
+            # weighted tLP 0.2670s -> 0.1947s (1.37x) with the quality
+            # identical to every digit (1.236783247, kept 100/100).
+            newP, tele, _B = lp_pass(key, P, 0.06, sep_trim=True)
             if tele["lp_obj"] is None:
                 break
             m = _proxy_metrics(newP, *margs)
