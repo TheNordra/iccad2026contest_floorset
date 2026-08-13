@@ -46,6 +46,11 @@ import m67_oos_probe as m67                                  # noqa: E402
 import m77_oos_probe as m77                                  # noqa: E402
 
 CACHE = _DIR / "l124_r3_cache.pkl"
+# L126: the screen generalised. `--flag NAME` makes this the twin-screening
+# machine for ANY live C++ knob, which is the reusable half of what L124 found:
+# a mechanism's RED may only be a RED for its deployment form, and the cheap way
+# to tell is the per-case 2-way oracle.
+FLAG = "ICCAD_MIB_BUCKET"
 
 
 def _capture(oc, lay, bucket):
@@ -75,7 +80,7 @@ def _capture(oc, lay, bucket):
             got[kk] = pos
         return pos
 
-    os.environ["ICCAD_MIB_BUCKET"] = bucket
+    os.environ[FLAG] = bucket
     oc._run_profile = spy
     try:
         opt = oc.MyOptimizer(verbose=False)
@@ -226,7 +231,13 @@ def main():
     ap.add_argument("--nmin", type=int, default=101)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--ks", type=int, nargs="*", default=[1, 2, 4, 8, 16])
+    ap.add_argument("--flag", default="ICCAD_MIB_BUCKET",
+                    help="the C++ knob to twin-screen")
+    ap.add_argument("--cache", default="l124_r3_cache.pkl")
     a = ap.parse_args()
+    global FLAG, CACHE
+    FLAG = a.flag
+    CACHE = _DIR / a.cache
     (mode_build if a.mode == "build" else mode_curve)(a)
 
 
