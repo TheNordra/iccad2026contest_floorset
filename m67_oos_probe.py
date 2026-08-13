@@ -215,13 +215,22 @@ def _seed_index_from_m52():
     return got
 
 
-def _index(workers):
-    """{worker/stem: (n, n_layouts)} for worker_0..worker_{workers-1}."""
+def _index(workers, lo=0):
+    """{worker/stem: (n, n_layouts)} for worker_{lo}..worker_{workers-1}.
+
+    L123: `lo` exists so the SECOND sample can be drawn. Historically this always
+    started at worker_0, i.e. every OOS number on record comes from one sample
+    (s1). M77 established that a ship decision needs two DISJOINT samples --
+    s1 = workers 0..9, s2 = workers 10..19, intersection empty -- because a
+    single corpus cannot distinguish a mechanism from that corpus's luck.
+    Sample knobs stay out of _sig() (see :104) and the cache is keyed per case,
+    so drawing s2 costs only the new cases and invalidates nothing.
+    """
     got = _seed_index_from_m52()
     if got:
         print(f"[index] seeded {got} files from m52_phase0_cache.pkl")
     todo = []
-    for w in range(workers):
+    for w in range(lo, workers):
         for f in sorted(glob.glob(str(_DIR / "floorset_lite" / f"worker_{w}"
                                       / "layouts_*.th"))):
             if _key_of(f) not in _C["index"]:
@@ -237,7 +246,7 @@ def _index(workers):
                 print(f"[index]   {i + 1}/{len(todo)} ({time.time() - t0:.0f}s)")
         _csave()
     idx = {k: v for k, v in _C["index"].items()
-           if int(k.split("/")[0].split("_")[1]) < workers}
+           if lo <= int(k.split("/")[0].split("_")[1]) < workers}
     return idx
 
 
@@ -486,7 +495,7 @@ def mode_gate0(args):
     print("=" * 78)
     print("GATE 0-c  training-side baseline / label-floor sanity")
     print("=" * 78)
-    idx = _index(args.workers)
+    idx = _index(args.workers, args.workers_lo)
     specs, missing = _sample(idx, 1, 1)
     for key, L, n in specs[:5]:
         d = torch.load(_path_of(key))
@@ -511,7 +520,7 @@ def mode_gate0(args):
 
 
 def mode_run(args):
-    idx = _index(args.workers)
+    idx = _index(args.workers, args.workers_lo)
     specs, missing = _sample(idx, args.per_n, args.heavy_per_n)
     if missing:
         print(f"[warn] no training file for n={missing} "
@@ -566,7 +575,7 @@ def mode_run(args):
 
 
 def _rows(args):
-    idx = _index(args.workers)
+    idx = _index(args.workers, args.workers_lo)
     specs, _ = _sample(idx, args.per_n, args.heavy_per_n)
     if args.limit:
         specs = specs[:args.limit]
@@ -1026,6 +1035,23 @@ _ARMS["m80big"] = {"ICCAD_M80_TIER": "1", "ICCAD_M80_MIN_N": "100"}
 _ARMS["m80off"] = {"ICCAD_M80_TIER": "0"}
 _M80_ARMS = frozenset({"m80", "m80big", "m80off"})
 
+# L123 MIB shape bucketing. A pure C++ flag, so it moves neither the pool nor the
+# REFINE band and gate A's common checks are the whole self-check here.
+#
+# Direction, same lesson as the M80 pair above: ICCAD_MIB_BUCKET ships DEFAULT ON,
+# so `mib` (turn it on) is a no-op against a baseline resolved by stripping the
+# key, and `miboff` is the arm that measures anything. Read the reported delta
+# with the sign flipped: shipped is the BUCKETING side, the arm is the old
+# give-up behaviour, so "arm worse" means the change is worth something.
+#
+# ⚠️ Liveness cannot come from gate A for a C++-flag arm (M78 records the failure
+# mode: a binary that ignores the env var reports a flat, believable zero). It
+# comes from l123_mib_gate.py g4held instead, which measured the flag changing
+# 9 of 80 held-out cases and MIB violations 316 -> 307 against a locked-aware
+# floor of exactly 307.
+_ARMS["miboff"] = {"ICCAD_MIB_BUCKET": "0"}
+_M123_ARMS = frozenset({"miboff"})
+
 _M75_ARMS = (frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"}
              - _M76_ARMS - _M80_ARMS)
 
@@ -1135,11 +1161,23 @@ def _theta_gate_a(arm):
     # a ship) fails Gate A on a correct pool.
     _t5_on = oc._effective_cores_hi() >= oc._M67F_CORES_MIN
     _big_exp = 35 if _t5_on else 13
-    chk(f"knob-off pool == shipped (35/35/{_mid_exp}/{_big_exp}/{_big_exp}, "
-        f"tier-3 {'ON' if _t3_on else 'OFF'} / tier-5 "
-        f"{'ON' if _t5_on else 'OFF'} at {oc._effective_cores()} cores)",
-        off == {30: 35, 50: 35, 80: _mid_exp, 105: _big_exp, 120: _big_exp},
-        str(off))
+    # L123: and the SAME correction a third time, for the M80 knob-cloud tier.
+    # This expectation was written when M80 shipped OFF; it now defaults ON and
+    # appends its 8 profiles to EVERY band once _m80_active() fires, so at
+    # --force-cores 48 -- the only shape that decides a ship -- a perfectly
+    # correct pool reads 43 and Gate A failed every arm on it. Same class of bug
+    # as the tier-3 and tier-5 notes above: an expectation that hard-codes one
+    # core regime and silently indicts the other.
+    # _m80_active is per-band (it also honours ICCAD_M80_MIN_N), so the tier's
+    # contribution has to be evaluated per n rather than added as one constant.
+    _m80 = {n: len(oc._m80_active(n)) for n in (30, 50, 80, 105, 120)}
+    _exp = {30: 35, 50: 35, 80: _mid_exp, 105: _big_exp, 120: _big_exp}
+    _exp = {n: v + _m80[n] for n, v in _exp.items()}
+    chk(f"knob-off pool == shipped ({'/'.join(str(_exp[n]) for n in (30, 50, 80, 105, 120))}"
+        f", tier-3 {'ON' if _t3_on else 'OFF'} / tier-5 "
+        f"{'ON' if _t5_on else 'OFF'} / M80 {'ON' if any(_m80.values()) else 'OFF'} "
+        f"at {oc._effective_cores()} cores)",
+        off == _exp, str(off))
     chk("knob-off REFINE band == shipped (mid 6, big 4)",
         off_be == {80: {"ICCAD_REFINE_ITERS": "6"},
                    120: {"ICCAD_REFINE_ITERS": "4"}}, str(off_be))
@@ -1365,10 +1403,25 @@ def _theta_gate_a(arm):
             live = _m75_liveness(_ARMS[arm])
             _C["m75_live"][lk] = live
             _csave()
-        chk("knob is LIVE (some profile's binary output changes)",
-            live["nlive"] > 0,
-            f"{live['nlive']}/{live['npair']} (case,profile) pairs move; "
-            f"per-case {live['detail']}")
+        if arm in _M123_ARMS:
+            # L123 INVERTS this check, and that is not a loophole. MIB bucketing
+            # only fires where a group cannot already be unified, and all 100
+            # in-set groups can be -- which is exactly why in-set is bit-identical
+            # (G2/G3 reproduce 1.2367916697725434 and 1.293461035226291 to the
+            # digit). So in-set liveness MUST be zero here; a non-zero reading
+            # would mean the change leaked somewhere it was proven not to reach.
+            # The liveness that matters is held-out, and it is measured by
+            # `l123_mib_gate.py g4held`: 9 of 80 cases move, MIB violations
+            # 316 -> 307 against a locked-aware floor of exactly 307.
+            chk("knob is INERT in-set (all 100 groups already unified)",
+                live["nlive"] == 0,
+                f"{live['nlive']}/{live['npair']} pairs move (expected 0); "
+                f"held-out liveness: see l123_mib_gate.py g4held")
+        else:
+            chk("knob is LIVE (some profile's binary output changes)",
+                live["nlive"] > 0,
+                f"{live['nlive']}/{live['npair']} (case,profile) pairs move; "
+                f"per-case {live['detail']}")
     else:
         chk("norefine keeps the shipped pool", on == off, str(on))
         chk("norefine clears the REFINE band",
@@ -1664,7 +1717,7 @@ def _theta_report(args, arm):
     print("=" * 78)
     # pilot subset = first draw per n (the sample is prefix-stable in K)
     first = {}
-    for key, L, n in _sample(_index(args.workers), args.per_n, 1)[0]:
+    for key, L, n in _sample(_index(args.workers, args.workers_lo), args.per_n, 1)[0]:
         first[f"{key}/L{L}"] = n
     pilot = [t for t in trip if t["key"] in first]
     out = {}
@@ -1797,6 +1850,9 @@ def main():
     ap.add_argument("--per-n", type=int, default=2, dest="per_n")
     ap.add_argument("--heavy-per-n", type=int, default=4, dest="heavy_per_n")
     ap.add_argument("--workers", type=int, default=10)
+    ap.add_argument("--workers-lo", type=int, default=0,
+                    dest="workers_lo",
+                    help="L123: first worker to draw from. s1 = the default 0..9; s2 = --workers-lo 10 --workers 20, disjoint from s1.")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--force-cores", type=int, default=0, dest="force_cores",
                     help="M76: re-export ICCAD_ADAPTIVE_CORES AFTER the ICCAD_* "

@@ -518,6 +518,58 @@ _PROFILES.extend(_M80_EXTRA)
 # effective parallelism.
 _M80_CORES_MIN = 40
 
+# L124 (2026-08-12): MIB shape-bucketing TWINS. Eight shipped profiles duplicated
+# with ICCAD_MIB_BUCKET=1, appended so the proxy can arbitrate between the two
+# behaviours per case instead of one of them being forced on every case.
+#
+# WHY A TWIN AND NOT A GLOBAL FLAG. L123 measured the global overlay and it
+# FLIPPED SIGN across the two disjoint out-of-sample draws: s1 +0.6486%,
+# s2 -0.3730%. But the per-case oracle over {on, off} is positive on BOTH
+# (s1 +1.5388%, s2 +0.8590%) with the same 34/80 split each time -- the mechanism
+# is real, forcing one setting on every case is what failed. The proxy realises
+# 68-88% of that oracle (measured, not assumed: M76/M77 showed it is oracle-
+# perfect on heterogeneous candidates, which is why no per-case classifier is
+# needed -- that is the thing M56 and M79 killed).
+#
+# WHY THESE EIGHT. Every profile's ON twin was scored on how often it would win
+# if all twins existed; these are the top eight by combined s1+s2 tally, and all
+# eight have support in BOTH samples. Selecting the set on one sample and scoring
+# it on the other transfers at 80-83% (s1-set on s2 +0.4712%, s2-set on s1
+# +1.0943%), so this is not an in-sample artefact. Six of the eight are M80 tier
+# profiles: the aggressive knob combinations benefit most from bucketing.
+#
+# WHY APPEND AND NOT REPLACE. Appending is interference-free (replacing would
+# also remove the source profile's OFF output, which wins on ~42% of heavy
+# cases). 43 -> 51 stays well inside M67-E's free-restore budget, which puts the
+# max-bound -> sum-bound crossover at 75-80 profiles, so ΔRF is ~0 at 48 cores.
+# Cores-gated for the same reason M80 is: below the gate the pool is sum-bound
+# and eight more profiles would cost wall for a benefit that is held-out only
+# (in-set is a provable no-op -- all 100 in-set MIB groups already unify, which
+# is why in-set MIB has always read 0).
+_M124_SRC = (16, 31, 87, 88, 89, 90, 92, 93)
+_M124_EXTRA = [dict(_PROFILES[i], ICCAD_MIB_BUCKET="1") for i in _M124_SRC]
+_M124_BASE = len(_PROFILES)
+_M124_IDX = frozenset(range(_M124_BASE, _M124_BASE + len(_M124_EXTRA)))
+_PROFILES.extend(_M124_EXTRA)
+_M124_CORES_MIN = 40
+
+
+def _m124_active(block_count: int) -> FrozenSet[int]:
+    """Tier indices this call should add. Read at CALL time, never at import, so
+    a probe that sets the env after importing this module actually flips it.
+
+    Uses _effective_cores_hi() (unknown -> 0) for the same reason M80 and tier-5
+    do: this tier fires at HIGH core counts, so the 9999 sentinel that keeps
+    tier-4 safe would turn this one ON wherever detection fails.
+
+    ICCAD_M124_TWIN=0 is the kill switch, and it -- not a comparison against
+    HEAD -- is the permanent invariant once the tier ships on by default."""
+    if os.environ.get("ICCAD_M124_TWIN", "1") == "0":
+        return frozenset()
+    if _effective_cores_hi() < _M124_CORES_MIN:
+        return frozenset()
+    return _M124_IDX
+
 
 def _m80_active(block_count: int) -> FrozenSet[int]:
     """Tier indices this call should add. Read at CALL time (never at import) so
@@ -858,7 +910,8 @@ def _pool_indices(block_count: int) -> List[int]:
     # M80: same call-time-and-before-the-early-return discipline. Its own cores
     # gate lives inside _m80_active() because, unlike M72/M76, this tier is meant
     # to SHIP and the gate is the mechanism, not a measurement switch.
-    extra = (_M55_IDX if m55 else frozenset()) | esc | _m80_active(block_count)
+    extra = ((_M55_IDX if m55 else frozenset()) | esc
+             | _m80_active(block_count) | _m124_active(block_count))
     full = [i for i in range(len(_PROFILES))
             if i < _M55_BASE_LEN or i in extra]
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
