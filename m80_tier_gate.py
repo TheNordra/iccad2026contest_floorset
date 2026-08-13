@@ -46,9 +46,14 @@ _DIR = Path(__file__).parent
 NS = range(1, 131)
 VECFILE = _DIR / "m80_vectors.json"
 
-# Symmetric to m67g_tier5_gate.py's _ISOLATE: pin the OTHER high-core tier so a
+# Symmetric to m67g_tier5_gate.py's _ISOLATE: pin the OTHER high-core tiers so a
 # difference set here can only be M80's.
-_ISOLATE = {"ICCAD_M67F_TIER5": "0"}
+# L124 (2026-08-12): there are now THREE tiers gated at >= 40 cores, so this lock
+# has to name both of the others. Missing one does not weaken the gate quietly --
+# it fails it, on a correct pool, because the difference set picks up the tier
+# nobody pinned. Same shape as the Gate A bug in m67_oos_probe, which hard-coded
+# a pool size from before M80 existed and so failed every arm at --force-cores 48.
+_ISOLATE = {"ICCAD_M67F_TIER5": "0", "ICCAD_M124_TWIN": "0"}
 
 
 def _load(path, name):

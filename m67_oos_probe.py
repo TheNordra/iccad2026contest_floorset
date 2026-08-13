@@ -1052,8 +1052,20 @@ _M80_ARMS = frozenset({"m80", "m80big", "m80off"})
 _ARMS["miboff"] = {"ICCAD_MIB_BUCKET": "0"}
 _M123_ARMS = frozenset({"miboff"})
 
+# L124: the shipped form. The eight MIB twins are appended profiles, not a global
+# flag, so this arm REMOVES them from the pool -- unlike `miboff`, which left the
+# pool alone and only changed what every profile emitted. Direction is the M80
+# lesson again: the tier ships ON, so `m124off` is the arm that measures anything.
+# Read the reported delta with the sign flipped -- "arm worse" means the twins are
+# worth something.
+_ARMS["m124off"] = {"ICCAD_M124_TWIN": "0"}
+_M124_ARMS = frozenset({"m124off"})
+
+# L124: m124off must be excluded too -- it is a POOL arm, and the _M75_ARMS
+# branch asserts "knob leaves every pool untouched", which would fail it on
+# correct behaviour.
 _M75_ARMS = (frozenset(_ARMS) - {"pool", "refine", "m55", "m55x"}
-             - _M76_ARMS - _M80_ARMS)
+             - _M76_ARMS - _M80_ARMS - _M124_ARMS)
 
 # Liveness screen cases: a spread over the three weight bands, biased to cases
 # that carry the cluster structures these knobs act on. The screen is PER
@@ -1141,6 +1153,10 @@ def _theta_gate_a(arm):
         os.environ.pop(k, None)
     off = {n: len(oc._pool_indices(n)) for n in (30, 50, 80, 105, 120)}
     off_be = {n: dict(oc._band_env(n)) for n in (80, 120)}
+    # The high-core tier sizes have to be read HERE, with the arm's keys stripped,
+    # or an arm that gates one of them off makes its own expectation disappear.
+    _hi_tiers = {n: len(oc._m80_active(n)) + len(oc._m124_active(n))
+                 for n in (30, 50, 80, 105, 120)}
     os.environ.update(_ARMS[arm])
     on = {n: len(oc._pool_indices(n)) for n in (30, 50, 80, 105, 120)}
     on_be = {n: dict(oc._band_env(n)) for n in (80, 120)}
@@ -1170,7 +1186,11 @@ def _theta_gate_a(arm):
     # core regime and silently indicts the other.
     # _m80_active is per-band (it also honours ICCAD_M80_MIN_N), so the tier's
     # contribution has to be evaluated per n rather than added as one constant.
-    _m80 = {n: len(oc._m80_active(n)) for n in (30, 50, 80, 105, 120)}
+    # L124: and a fourth time. This expectation has now gone stale once per tier
+    # (tier-3, tier-5, M80, the MIB twins), always the same way: a hard-coded
+    # number that indicts a correct pool. Derive the high-core tiers from the
+    # gates themselves so the next one does not repeat it.
+    _m80 = _hi_tiers
     _exp = {30: 35, 50: 35, 80: _mid_exp, 105: _big_exp, 120: _big_exp}
     _exp = {n: v + _m80[n] for n, v in _exp.items()}
     chk(f"knob-off pool == shipped ({'/'.join(str(_exp[n]) for n in (30, 50, 80, 105, 120))}"
@@ -1373,6 +1393,25 @@ def _theta_gate_a(arm):
         chk("RUNTIME flip works (gate resolves per call)",
             flip[_own] == on[120] and flip["1"] - flip["0"] == len(_want80(120)),
             f"off {flip['0']} on {flip['1']} arm({_own}) {on[120]}")
+    elif arm in _M124_ARMS:
+        # The twins are appended profiles, so the arm must remove EXACTLY them,
+        # on every band, and disturb nothing else.
+        chk(f"arm removes exactly the {len(oc._M124_IDX)} MIB twins on every band",
+            all(off[n] == on[n] + len(oc._M124_IDX) for n in off),
+            f"{off} -> {on}")
+        chk("removed indices are exactly _M124_IDX",
+            all(set(_shipped_pool(n)) - set(oc._pool_indices(n)) == set(oc._M124_IDX)
+                for n in (30, 80, 120)))
+        chk("twins keep the M49/M50 REFINE band", on_be == off_be, str(on_be))
+        # The twins ride on their sources' env plus ICCAD_MIB_BUCKET=1; if the
+        # binary in play ignores that key the arm measures nothing and reports a
+        # believable zero (the M78 failure mode).
+        chk("every twin carries ICCAD_MIB_BUCKET=1",
+            all(oc._PROFILES[i].get("ICCAD_MIB_BUCKET") == "1"
+                for i in oc._M124_IDX))
+        chk("twins DO get the M71 overlay (their sources were measured under it)",
+            all("ICCAD_CLUSTER_BND_EXPOSE" in oc._profile_env(i, 120)
+                for i in oc._M124_IDX))
     elif arm in _M75_ARMS:
         # A pure C++ knob must move the BINARY and nothing on the Python side.
         chk("knob leaves every pool untouched (C++-only arm)", on == off,
@@ -1434,14 +1473,16 @@ def _theta_gate_a(arm):
 def _shipped_pool(n):
     for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
               "ICCAD_M55_POOL", "ICCAD_M73_ESCAPE", "ICCAD_M73_MIN_N",
-              "ICCAD_M73_SRC", "ICCAD_M80_TIER", "ICCAD_M80_MIN_N"):
+              "ICCAD_M73_SRC", "ICCAD_M80_TIER", "ICCAD_M80_MIN_N",
+              "ICCAD_M124_TWIN"):
         v = os.environ.pop(k, None)
         if v is not None:
             os.environ[f"_SAVE_{k}"] = v
     p = oc._pool_indices(n)
     for k in ("ICCAD_M67F_RESTORE", "ICCAD_ADAPTIVE_REFINE", "ICCAD_ADAPTIVE_POOL",
               "ICCAD_M55_POOL", "ICCAD_M73_ESCAPE", "ICCAD_M73_MIN_N",
-              "ICCAD_M73_SRC", "ICCAD_M80_TIER", "ICCAD_M80_MIN_N"):
+              "ICCAD_M73_SRC", "ICCAD_M80_TIER", "ICCAD_M80_MIN_N",
+              "ICCAD_M124_TWIN"):
         v = os.environ.pop(f"_SAVE_{k}", None)
         if v is not None:
             os.environ[k] = v

@@ -57,7 +57,11 @@ def _load(path, name):
 # tier joins the pool — V1 would see 48c != 17c and V3 would find M80's indices
 # in `t5 - base`. So this gate isolates tier-5 by pinning M80 OFF in every sweep;
 # m80_tier_gate.py owns the symmetric checks for M80 itself.
-_ISOLATE = {"ICCAD_M80_TIER": "0"}
+# L124 (2026-08-12): the comment above predicted exactly this ("would break the
+# moment another >=40-core tier joins the pool") and it did -- V3 found the eight
+# MIB-twin indices in `t5 - base`. Three tiers now share the >=40 gate, so the
+# lock names both of the others.
+_ISOLATE = {"ICCAD_M80_TIER": "0", "ICCAD_M124_TWIN": "0"}
 
 
 def _sweep(mod, cores=None, extra=None):
