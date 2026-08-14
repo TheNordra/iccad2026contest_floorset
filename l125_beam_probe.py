@@ -159,10 +159,12 @@ def mode_offpath(a):
     return 0 if ok else 1
 
 
-def _ab(w, k, sel, cases, tag):
-    beam = {"ICCAD_BEAM": "1", "ICCAD_BEAM_W": str(w), "ICCAD_BEAM_K": str(k)}
-    if sel is not None:
-        beam["ICCAD_BEAM_SEL"] = str(sel)
+def _ab(w, k, sel, cases, tag, beam=None):
+    if beam is None:
+        beam = {"ICCAD_BEAM": "1", "ICCAD_BEAM_W": str(w),
+                "ICCAD_BEAM_K": str(k)}
+        if sel is not None:
+            beam["ICCAD_BEAM_SEL"] = str(sel)
     jobs_off = [(ci, ri, None) for ci in cases for ri in range(len(RECIPES))]
     jobs_on = [(ci, ri, beam) for ci in cases for ri in range(len(RECIPES))]
     off = {(ci, ri): (pos, dt) for (ci, ri, _), pos, dt in _map(jobs_off)}
@@ -241,6 +243,37 @@ def mode_ab(a):
     return 0
 
 
+def mode_flag(a):
+    """L125's lesson applied as a PRE-SCREEN for any gated-off C++ knob.
+
+    A twin screen costs ~20 minutes; this costs ~2 and answers the two things
+    that decide whether the screen is worth running at all:
+
+      LIVE      does the flag change any output? (M75: liveness must be read from
+                per-profile binary output, never from portfolio output -- a flag
+                can change candidates without moving the proxy argmin, and four
+                flags reported fake zeroes that way)
+      NEUTRAL   is the ON side the same SPEED? L125 measured what happens when it
+                is not: at 48 cores the wall is the max-setter, so a slower twin
+                can only be attached to the ~quarter of the pool that has wall
+                headroom, and that quarter carried 12% of the value.
+
+    Default binary is the SHIPPING exe, because every knob worth pre-screening is
+    already compiled into it, gated off -- so this moves no md5 and invalidates no
+    cache.  ⚠️ dt here is measured under WORKERS parallelism and is only good for
+    spotting a gross multiplier; anything priced needs l125_beam_price.py measure.
+    """
+    global EXE_BEAM
+    EXE_BEAM = _DIR / a.bin
+    cases = [c["idx"] for c in CASES if c["n"] >= a.nmin]
+    if a.limit:
+        cases = cases[:a.limit]
+    print(f"[cfg] {a.flag}={a.val}  bin={a.bin}  {len(cases)} cases "
+          f"(n>={a.nmin}) x {len(RECIPES)} recipes {RECIPE_IDX}")
+    _ab(0, 0, None, cases, f"{a.flag}={a.val}", beam={a.flag: a.val})
+    return 0
+
+
 def mode_sweep(a):
     cases = [c["idx"] for c in CASES if c["n"] >= a.nmin]
     if a.limit:
@@ -254,14 +287,18 @@ def mode_sweep(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["offpath", "ab", "sweep"])
+    ap.add_argument("mode", choices=["offpath", "ab", "sweep", "flag"])
     ap.add_argument("--w", type=int, default=2)
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--sel", type=int, default=None)
     ap.add_argument("--nmin", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--flag", default="ICCAD_CLUSTER_BND_PERMUTE")
+    ap.add_argument("--val", default="1")
+    ap.add_argument("--bin", default="constructive.exe")
     a = ap.parse_args()
-    return {"offpath": mode_offpath, "ab": mode_ab, "sweep": mode_sweep}[a.mode](a)
+    return {"offpath": mode_offpath, "ab": mode_ab, "sweep": mode_sweep,
+            "flag": mode_flag}[a.mode](a)
 
 
 if __name__ == "__main__":

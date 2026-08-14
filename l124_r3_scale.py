@@ -51,6 +51,10 @@ CACHE = _DIR / "l124_r3_cache.pkl"
 # a mechanism's RED may only be a RED for its deployment form, and the cheap way
 # to tell is the per-case 2-way oracle.
 FLAG = "ICCAD_MIB_BUCKET"
+# L125: not every screenable knob is a boolean. `--on-val 2` screens
+# ICCAD_CLUSTER_ORD=2 against the same OFF endpoint; the cache still keys the ON
+# side "1" so `curve` needs no change.
+ON_VAL = "1"
 
 
 def _capture(oc, lay, bucket):
@@ -126,8 +130,10 @@ def mode_build(a):
             lay = m67._load_case(d, L)
             lay["base"], _ = m67._baseline_official(lay)
             rec = {}
-            for b in ("0", "1"):
+            for b in ("0", ON_VAL):
                 rec[b] = _capture(oc, lay, b)
+            if ON_VAL != "1":          # the rest of the file keys the ON side "1"
+                rec["1"] = rec.pop(ON_VAL)
             C[(a.sample, ck)] = dict(n=n, fk=fk, L=L, cap=rec)
             done += 1
             if done % 5 == 0:
@@ -164,11 +170,21 @@ def mode_curve(a):
     import torch
     C = pickle.load(open(CACHE, "rb"))
     rows = [(k[1], v) for k, v in C.items() if k[0] == a.sample]
-    print(f"[curve] {a.sample}: {len(rows)} cases")
+    # L127: picking K on the sample you score on is in-sample selection. With both
+    # halves in the cache, `--order-sample s2 --sample s1` measures the CROSS-sample
+    # transfer directly -- the number L124 reported as 80-83% and the one that
+    # decides whether a K-curve means anything.
+    osample = a.order_sample or a.sample
+    orows = rows if osample == a.sample else \
+        [(k[1], v) for k, v in C.items() if k[0] == osample]
+    print(f"[curve] score on {a.sample}: {len(rows)} cases; "
+          f"order from {osample}: {len(orows)} cases")
+    if not orows:
+        raise SystemExit(f"no {osample} records in {CACHE.name} -- build it first")
 
     lays = {}
     byf = collections.defaultdict(list)
-    for ck, v in rows:
+    for ck, v in rows + ([] if orows is rows else orows):
         byf[v["fk"]].append((ck, v))
     for fk in sorted(byf):
         d = torch.load(m67._path_of(fk))
@@ -179,7 +195,7 @@ def mode_curve(a):
 
     # how often each profile would be the ON-side winner if ALL twins existed
     tally = collections.Counter()
-    for ck, v in rows:
+    for ck, v in orows:
         off, on = v["cap"]["0"], v["cap"]["1"]
         lay = lays[ck]
         win = _arbitrate(off, on, set(on), lay["at"], lay["n"])
@@ -255,9 +271,15 @@ def main():
                     help="curve: restrict twin sources to these pool indices")
     ap.add_argument("--allow-max", type=int, default=0,
                     help="curve: restrict twin sources to indices <= this")
+    ap.add_argument("--on-val", default="1",
+                    help="build: the ON-side value of --flag (non-boolean knobs)")
+    ap.add_argument("--order-sample", default=None, choices=["s1", "s2"],
+                    help="curve: pick the K set on THIS sample and score on "
+                         "--sample (cross-sample transfer)")
     a = ap.parse_args()
-    global FLAG, CACHE
+    global FLAG, CACHE, ON_VAL
     FLAG = a.flag
+    ON_VAL = a.on_val
     CACHE = _DIR / a.cache
     (mode_build if a.mode == "build" else mode_curve)(a)
 
