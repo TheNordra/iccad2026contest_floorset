@@ -1,0 +1,11 @@
+# core.autocrlf is true in this repo, so a checkout on Windows rewrites LF to
+# CRLF in the working tree. For most files that is harmless. For the submission
+# package it is not: the package's IDENTITY is op_wrapper.py's md5 (the tar's own
+# md5 is not reproducible -- gzip embeds an mtime), every handoff verifies against
+# that md5, and a checked-out copy with CRLF would hash differently while looking
+# correct. Mark the package byte-exact in both directions.
+build_submission/** -text
+bin/constructive_linux -text
+*.exe -text
+*.pkl -text
+*.tar.gz -text
