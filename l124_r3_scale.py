@@ -190,6 +190,20 @@ def mode_curve(a):
     order = [i for i, _c in tally.most_common()]
     print(f"[curve] ON twins that ever win: {len(order)} profiles; "
           f"top: {tally.most_common(8)}")
+    # L125: a twin that is SLOWER than its host has an RF budget, and at 48 cores
+    # the wall is the max-setter, so a twin set costs exactly what its slowest
+    # member costs -- restricting the sources to an affordable subset is the whole
+    # lever. (For L124/L126 the twin cost the same as its host and `--allow` is a
+    # no-op.)  Filtering here rather than in the tally keeps the ordering
+    # comparable to an unrestricted run.
+    allow = None
+    if a.allow:
+        allow = set(a.allow)
+    elif a.allow_max:
+        allow = {i for i in order if isinstance(i, int) and i <= a.allow_max}
+    if allow is not None:
+        order = [i for i in order if i in allow]
+        print(f"[curve] sources restricted to {len(order)} affordable twins")
 
     def total(f):
         byn = collections.defaultdict(list)
@@ -217,8 +231,11 @@ def mode_curve(a):
         c = cost_for(flip)
         print(f"  K={K:<3} append {K:>2} ON twins      {c:.6f}   "
               f"{100 * (1 - c / base):+.4f}%   pool {43 + K}")
-    allf = cost_for(set().union(*[set(v['cap']['1']) for _ck, v in rows]))
-    print(f"  K=all                          {allf:.6f}   "
+    every = set().union(*[set(v['cap']['1']) for _ck, v in rows])
+    if allow is not None:
+        every &= allow
+    allf = cost_for(every)
+    print(f"  K=all ({len(every)})                    {allf:.6f}   "
           f"{100 * (1 - allf / base):+.4f}%   (upper bound, blows the RF budget)")
 
 
@@ -234,6 +251,10 @@ def main():
     ap.add_argument("--flag", default="ICCAD_MIB_BUCKET",
                     help="the C++ knob to twin-screen")
     ap.add_argument("--cache", default="l124_r3_cache.pkl")
+    ap.add_argument("--allow", type=int, nargs="*", default=None,
+                    help="curve: restrict twin sources to these pool indices")
+    ap.add_argument("--allow-max", type=int, default=0,
+                    help="curve: restrict twin sources to indices <= this")
     a = ap.parse_args()
     global FLAG, CACHE
     FLAG = a.flag
