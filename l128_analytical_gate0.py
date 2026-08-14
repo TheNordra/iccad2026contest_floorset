@@ -121,7 +121,11 @@ def cost_of(c, P):
                           c["base"], c["cons"][:c["n"]], c["b2b"], c["p2b"],
                           c["pins"], c["at"][:c["n"]],
                           target_positions=c["tp"][:c["n"]], median_runtime=1.0)
-    return float(m.cost), bool(m.is_feasible)
+    return float(m.cost), bool(m.is_feasible), dict(
+        hpwl_gap=float(m.hpwl_gap), area_gap=float(m.area_gap),
+        vrel=float(m.violations_relative),
+        vbnd=float(m.boundary_violations), vgrp=float(m.grouping_violations),
+        vmib=float(m.mib_violations))
 
 
 def weighted(per):
@@ -207,7 +211,7 @@ def seed_layout(c, scale, blend=1.0, free_only=True):
     return out
 
 
-def legalise(c, P0, iters, rho):
+def legalise(c, P0, iters, rho, hpwl_w=1.0, area_w=1.0):
     """Hand P0 to the shipped LP and let it derive a topology and legalise.
 
     Baseline-free objective, exactly as `_shape_lp` builds it.
@@ -216,15 +220,24 @@ def legalise(c, P0, iters, rho):
     sumA = sum(max(0.0, float(c["at"][i])) for i in range(c["n"]))
     hp = oc._proxy_metrics(P0, c["at"], c["b2b"], c["p2b"], c["pins"],
                            c["cons"], c["n"])["hpwl"]
-    base = {"hpwl_baseline": max(float(hp), 1e-6),
-            "area_baseline": max(sumA / oc._LP_UTIL, 1e-6)}
+    # The objective is 0.5*hpwl/hpwl_baseline + 0.5*area/area_baseline, so
+    # inflating a baseline is exactly re-weighting that term -- no edit to the
+    # shipped LP needed. hpwl_w=0 gives an AREA-ONLY LP, which matters because
+    # L112 measured the HPWL terms at 80.2% of rows and ~98% of columns while
+    # the `deep` decomposition shows 82% of the gain is the AREA term.
+    base = {"hpwl_baseline": max(float(hp), 1e-6) * (1e12 if hpwl_w == 0
+                                                     else 1.0 / hpwl_w),
+            "area_baseline": max(sumA / oc._LP_UTIL, 1e-6) * (1e12 if area_w == 0
+                                                              else 1.0 / area_w)}
     l3.CASES[key] = oc._lp_build_case(c["n"], c["at"], c["b2b"], c["p2b"],
                                       c["pins"], c["cons"], base)
     saved, oc.PRUNE_B = oc.PRUNE_B, None      # exact: no HPWL pruning in a probe
-    P, status = P0, "start"
+    P, status, tlp = P0, "start", 0.0
     try:
         for it in range(iters):
+            t1 = time.perf_counter()
             newP, tele, _B = oc.lp_pass(key, P, rho, sep_trim=False)
+            tlp += time.perf_counter() - t1
             status = tele["status"]
             if newP is None:
                 break
@@ -233,7 +246,7 @@ def legalise(c, P0, iters, rho):
         oc.PRUNE_B = saved
         l3.CASES.pop(key, None)
         oc._HARD_MASKS.pop(key, None)
-    return P, status
+    return P, status, tlp
 
 
 def _legal(c, P):
@@ -263,22 +276,33 @@ def run(a):
     cases = [c for c in CASES if c["n"] >= a.nmin]
     if a.limit:
         cases = cases[:a.limit]
-    per, feas, fails = {}, 0, {}
+    per, feas, fails, tlps = {}, 0, {}, {}
+    terms = {}
     t0 = time.time()
     for k, c in enumerate(cases):
         if a.mode == "calib":
             P = label_pos(c)
         elif a.mode == "ours":
             P = _OURS[c["idx"]]
+        elif a.mode == "deep":
+            # Our own shipped layout, taken to the LP's fixpoint. The shipped
+            # path runs ONE pass (k=1 is RF-optimal), so this is the offline
+            # ceiling of the LP line -- and the point is the DECOMPOSITION: which
+            # of the two gaps the LP can close under our own topology, and which
+            # it cannot. What it cannot is where a new mechanism has to go.
+            P, st, tl = legalise(c, _OURS[c["idx"]], a.iters, a.rho,
+                             a.hpwl_w, a.area_w)
+            fails[c["idx"]] = st; tlps[c["idx"]] = tl
         elif a.mode == "topolab":
-            P, st = legalise(c, label_pos(c), a.iters, a.rho)
-            fails[c["idx"]] = st
+            P, st, tl = legalise(c, label_pos(c), a.iters, a.rho)
+            fails[c["idx"]] = st; tlps[c["idx"]] = tl
         else:                                              # topo -- the gate
             P0 = seed_layout(c, a.scale, a.blend, not a.all_blocks)
-            P, st = legalise(c, P0, a.iters, a.rho)
-            fails[c["idx"]] = st
+            P, st, tl = legalise(c, P0, a.iters, a.rho)
+            fails[c["idx"]] = st; tlps[c["idx"]] = tl
         ok, why = _legal(c, P)
-        cost, f = cost_of(c, P)
+        cost, f, tm = cost_of(c, P)
+        terms[c["idx"]] = tm
         if not f:
             cost = 10.0
         else:
@@ -296,6 +320,16 @@ def run(a):
     print(f"  vs ours  ({ANCHOR_TOTAL:.6f})   {100 * (1 - tot / ANCHOR_TOTAL):+.4f}%")
     print(f"  vs floor ({LABEL_FLOOR:.4f})       "
           f"{100 * (tot / LABEL_FLOOR - 1):+.4f}% above")
+    if feas == len(cases):
+        def wt(k):
+            return (sum(CASES[i]["w"] * terms[i][k] for i in terms)
+                    / sum(CASES[i]["w"] for i in terms))
+        print(f"  decomposition   hpwl_gap {wt('hpwl_gap'):.4f}   "
+              f"area_gap {wt('area_gap'):.4f}   vrel {wt('vrel'):.5f}")
+        print(f"                  vbnd {wt('vbnd'):.2f}  vgrp {wt('vgrp'):.2f}  "
+              f"vmib {wt('vmib'):.2f}")
+    if tlps:
+        print(f"  weighted tLP    {weighted(tlps):.4f}s   sum {sum(tlps.values()):.1f}s")
     if fails:
         from collections import Counter
         print(f"  LP status: {dict(Counter(fails.values()))}")
@@ -304,7 +338,7 @@ def run(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["calib", "ours", "topolab", "topo"])
+    ap.add_argument("mode", choices=["calib", "ours", "topolab", "topo", "deep"])
     ap.add_argument("--scale", default="auto")
     ap.add_argument("--all-blocks", action="store_true",
                     help="also reshape CLUSTERED blocks (creates intra-unit "
@@ -313,6 +347,10 @@ def main():
                     help="topo: 0 = label shapes, 1 = our shapes")
     ap.add_argument("--iters", type=int, default=3)
     ap.add_argument("--rho", type=float, default=0.06)
+    ap.add_argument("--hpwl-w", type=float, default=1.0,
+                    help="deep: 0 = area-only LP")
+    ap.add_argument("--area-w", type=float, default=1.0,
+                    help="deep: 0 = hpwl-only LP")
     ap.add_argument("--nmin", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--verbose", action="store_true")

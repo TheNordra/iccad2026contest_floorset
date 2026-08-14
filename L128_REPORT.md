@@ -123,7 +123,65 @@ optimisation under the label's own topology beats it. Unreachable without the
 label, but it re-prices the headroom: the true ceiling of a perfect topology is
 ~12.4% below us, not 10.4%.
 
-## 5. Honest range
+## 5. Where the deficit actually lives (and 1.1079 is not a floor)
+
+The cost is `(1 + 0.5*(hpwl_gap + area_gap)) * exp(2*vrel)`, and all three terms
+are in the anchor json — nobody had ever split them. Weighted over the 100 cases:
+
+| | hpwl_gap | area_gap | vrel | worth if zeroed |
+|---|---|---|---|---|
+| **ours** (shipped) | 0.2422 | 0.1431 | 0.01789 | — |
+| zero hpwl_gap | — | | | **+10.15%** |
+| zero area_gap | | — | | **+6.00%** |
+| zero vrel | | | — | +3.57% |
+| all three | | | | +19.15% |
+
+**🚨 `fp_sol` verbatim is NOT a floor.** It scores 1.1079 rather than 1.0 because
+the label layout *itself* violates soft constraints: its vrel is **0.05037**, with
+**2.82** boundary violations per case against our **0.89**. We are 3× better there
+already. So the reachable target at our own violation level is `exp(2*0.01789)` =
+**1.0364**, and the headroom is **19.15%**, not 10.4%. Every previous document
+that treated 1.1079 as the ceiling was understating the prize by ~9 points.
+
+### Deep LP closes the AREA gap and not the HPWL gap
+
+Our own layout taken to the LP's fixpoint (`deep --iters 12`, exact, no pruning):
+
+| | hpwl_gap | area_gap | weighted | vs shipped |
+|---|---|---|---|---|
+| shipped (LP at k=1) | 0.2422 | 0.1431 | 1.236792 | — |
+| **deep, joint objective** | 0.2241 (−7.5%) | **0.0730 (−49%)** | 1.190991 | **+3.70%** |
+| deep, **area-only** | 0.2597 (**worse**) | 0.0709 | 1.207571 | +2.36% |
+
+This is the quantitative form of "the deficit is topological": under a **fixed**
+topology the LP recovers **half the density deficit** and almost none of the
+wirelength, because reducing wirelength means moving blocks *past* each other, and
+that is a topology change. Note the 12 passes each re-derive the topology from the
+new positions, so this is not a single frozen graph — local topology re-derivation
+genuinely does not cross the barrier, which is M64's "529 flips, 0 movers" again.
+
+### The area-only LP: a real 2.34×, against a 5.1× bar
+
+Since the gain is 82% area and L112 measured the HPWL terms at 80.2% of rows and
+~98% of columns, an area-only LP looked like most of the gain for a fraction of
+the cost. Measured, min-of-3, weighted tLP over 100 cases:
+
+| arm | tLP | quality |
+|---|---|---|
+| joint, k=1 | **1.0714s** | — |
+| area-only, k=1 | **0.4573s** (**2.34× cheaper**) | 1.237970 (slightly *worse* than shipped) |
+
+**2.34× does not clear the 5.1× that `lp-depth-k1-is-rf-optimal` requires**, and
+running it deep costs ~5.1× the shipped pass for +2.36%, which the RF model
+already rejects. RED — but it is a *measured* 2.34×, so the number is now on
+record instead of being an assumption.
+
+⚠️ **My own 82% estimate was wrong; the realised figure is 64%.** The
+counterfactual assumed HPWL would stay put when unpriced. It does not — the LP
+trades it away (0.2422 → 0.2597). **An un-priced term in an LP objective is not a
+neutral term; it is a term the solver is free to spend.**
+
+## 6. Honest range
 
 - one corpus (in-set 100) and one legaliser; `--scale auto` and `--scale 1.0` were
   both tried and agree
@@ -135,8 +193,18 @@ label, but it re-prices the headroom: the true ceiling of a perfect topology is
   (`lp-baseline-is-label-derived`), so §3's costs are comparable to the shipped
   number rather than inflated by an oracle constant
 
-## 6. Artefacts
+## 7. Artefacts
 
 | file | what |
 |---|---|
-| `l128_analytical_gate0.py` | `calib` / `ours` / `topolab` / `topo`, with `--blend`, `--scale`, `--all-blocks` |
+| `l128_analytical_gate0.py` | `calib`/`ours`/`topolab`/`topo`/`deep`; `--blend`, `--scale`, `--all-blocks`, `--hpwl-w`, `--area-w`; reports the three-term decomposition and weighted tLP |
+| `l128_deep12.log`, `l128_deep12_areaonly.log` | the two fixpoint runs |
+
+## 8. The one-line position after this
+
+Everything still on the table is behind the **topology barrier**: the LP's own
+fixpoint leaves **hpwl_gap 0.2241** (worth ~11%) and **area_gap 0.0730** (worth
+~3.6%), and 12 topology re-derivations do not move the first one. Crossing that
+barrier needs a global placer built from scratch — analytical stage, density
+penalty, its own legaliser — which is a multi-week build. **Nothing measured here
+changes the submission**, and the submission is done.
