@@ -68,6 +68,7 @@ EPS = 1e-9
 # overlaps everything" and the compaction chains blow the bbox up. Give it the
 # room a real packing needs.
 DENSITY = float(os.environ.get("L129_DENSITY", "0.80"))
+REFINE_AREA = os.environ.get("L129_REFINE_AREA", "1") != "0"
 # 🚨 1=left, 2=right, 4=TOP, 8=BOTTOM. Verified against BOTH the official
 # evaluator (iccad2026_evaluate.py:521, "1=left, 2=right, 4=top, 8=bottom") and
 # constructive.cpp:50. The first draft of this file had 4/8 swapped; it was
@@ -345,7 +346,7 @@ def spread(v, units, cx, cy):
 
 
 # ── stage C: legalise -- relation selection + longest-path compaction ───────
-def legalise(v, units, cx, cy, rounds=40):
+def legalise(v, units, cx, cy, rounds=40, axis0=None):
     """Overlap-free by CONSTRUCTION.
 
     For each unit pair pick the axis whose overlap is cheaper to remove and
@@ -363,8 +364,10 @@ def legalise(v, units, cx, cy, rounds=40):
     px, py = cx.copy(), cy.copy()
 
     need = [u["need"] for u in units]
-    axis = {}
+    axis = dict(axis0) if axis0 is not None else {}
     for a in range(U):
+        if axis0 is not None:
+            break
         for b in range(a + 1, U):
             ox = (W[a] + W[b]) / 2.0 - abs(cx[b] - cx[a])
             oy = (H[a] + H[b]) / 2.0 - abs(cy[b] - cy[a])
@@ -426,7 +429,7 @@ def legalise(v, units, cx, cy, rounds=40):
         lx, bad = compact(0, px, W)
         if lx is None:
             if bad is None:
-                return None, None
+                return None, None, axis
             k, ps = bad
             for p in ps:                            # flip the offenders to y
                 axis[(min(k, p), max(k, p))] = 1
@@ -434,15 +437,15 @@ def legalise(v, units, cx, cy, rounds=40):
         ly, bad = compact(1, py, H)
         if ly is None:
             if bad is None:
-                return None, None
+                return None, None, axis
             k, ps = bad
             for p in ps:
                 axis[(min(k, p), max(k, p))] = 0
             continue
         _push_to_max(axis, px, lx, W, 0, need, pre)
         _push_to_max(axis, py, ly, H, 1, need, pre)
-        return lx, ly
-    return None, None
+        return lx, ly, axis
+    return None, None, axis
 
 
 def _push_to_max(axis, C, low, size, ax, need, pre):
@@ -468,6 +471,105 @@ def _push_to_max(axis, C, low, size, ax, need, pre):
             low[k] = hi - size[k]
 
 
+def _bbox(units, lx, ly):
+    U = len(units)
+    x0 = min(lx); y0 = min(ly)
+    x1 = max(lx[k] + units[k]["w"] for k in range(U))
+    y1 = max(ly[k] + units[k]["h"] for k in range(U))
+    return (x1 - x0) * (y1 - y0), x1 - x0, y1 - y0
+
+
+def _critical(units, axis, C, low, size, ax):
+    """The chain that sets the extent on `ax`, as the list of pairs along it.
+
+    The bbox on an axis IS the longest chain in that constraint graph, so the
+    only way to shrink it is to move one of the chain's relations to the other
+    axis. Anything not on the chain is slack and flipping it cannot help.
+    """
+    U = len(low)
+    rank = {k: r for r, k in enumerate(sorted(range(U), key=lambda k: (C[k], k)))}
+    pred = [[] for _ in range(U)]
+    for (a, b), s in axis.items():
+        if s != ax:
+            continue
+        lo, hi = (a, b) if rank[a] < rank[b] else (b, a)
+        pred[hi].append(lo)
+    k = max(range(U), key=lambda k: low[k] + size[k])
+    chain = []
+    seen = set()
+    while k not in seen:
+        seen.add(k)
+        best = None
+        for q in pred[k]:
+            if abs(low[q] + size[q] - low[k]) <= 1e-6:
+                if best is None or low[q] < low[best]:
+                    best = q
+        if best is None:
+            break
+        chain.append((min(k, best), max(k, best)))
+        k = best
+    return chain
+
+
+def _axis_allowed(units, cx, cy, a, b, t):
+    """Same boundary test legalise makes at selection time.
+
+    🚨 refine_area must re-apply it. The first version did not, and flipping a
+    pair onto an axis that a needL/needR/needB/needT unit forbids silently
+    reintroduced boundary violations: area_gap improved 0.955 -> 0.892 while vrel
+    went 0.1481 -> 0.1636 and the TOTAL got worse. Optimising one term of the
+    cost while quietly breaking another is the failure mode to watch for here.
+    """
+    need = [u["need"] for u in units]
+    if t == 0:
+        lo, hi = (a, b) if (cx[a], a) < (cx[b], b) else (b, a)
+        return not (need[lo]["R"] or need[hi]["L"])
+    lo, hi = (a, b) if (cy[a], a) < (cy[b], b) else (b, a)
+    return not (need[lo]["T"] or need[hi]["B"])
+
+
+def refine_area(v, units, cx, cy, axis, lx, ly, budget=60):
+    """Flip relations off the critical path while the bbox shrinks.
+
+    Only the AXIS of a pair is ever changed, never its orientation, so both
+    graphs stay sub-orders of the centre orderings and stay acyclic -- the same
+    invariant the boundary handling relies on.
+    """
+    best_a, bw, bh = _bbox(units, lx, ly)
+    W = [u["w"] for u in units]
+    H = [u["h"] for u in units]
+    used = 0
+    while used < budget:
+        ax = 0 if bw >= bh else 1
+        chain = _critical(units, axis, cx if ax == 0 else cy,
+                          lx if ax == 0 else ly, W if ax == 0 else H, ax)
+        if not chain:
+            break
+        improved = False
+        for pair in chain[:12]:
+            if used >= budget:
+                break
+            if axis.get(pair) != ax:
+                continue
+            if not _axis_allowed(units, cx, cy, pair[0], pair[1], 1 - ax):
+                continue                      # would break a boundary requirement
+            trial = dict(axis)
+            trial[pair] = 1 - ax
+            used += 1
+            nx, ny, naxis = legalise(v, units, cx, cy, axis0=trial)
+            if nx is None:
+                continue
+            a, w2, h2 = _bbox(units, nx, ny)
+            if a < best_a - 1e-9:
+                best_a, bw, bh = a, w2, h2
+                lx, ly, axis = nx, ny, naxis
+                improved = True
+                break
+        if not improved:
+            break
+    return lx, ly, axis
+
+
 def place(c):
     v = case_view(c)
     units = build_units(v)
@@ -484,7 +586,9 @@ def place(c):
     W = [u["w"] for u in units]
     H = [u["h"] for u in units]
     for _ in range(6):
-        nx, ny = legalise(v, units, cx, cy)
+        nx, ny, ax0 = legalise(v, units, cx, cy)
+        if nx is not None and REFINE_AREA:
+            nx, ny, ax0 = refine_area(v, units, cx, cy, ax0, nx, ny)
         if nx is None:
             break
         area = ((max(nx[k] + W[k] for k in range(len(units)))
