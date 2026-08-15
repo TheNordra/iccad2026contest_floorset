@@ -74,6 +74,7 @@ EPS = 1e-9
 DENSITY = float(os.environ.get("L129_DENSITY", "0.80"))
 REFINE_AREA = os.environ.get("L129_REFINE_AREA", "1") != "0"
 LP_POLISH = os.environ.get("L129_LP", "1") != "0"
+MIB_UNIFY = os.environ.get("L129_MIB", "1") != "0"
 # 🚨 1=left, 2=right, 4=TOP, 8=BOTTOM. Verified against BOTH the official
 # evaluator (iccad2026_evaluate.py:521, "1=left, 2=right, 4=top, 8=bottom") and
 # constructive.cpp:50. The first draft of this file had 4/8 swapped; it was
@@ -139,8 +140,68 @@ def choose_dims(v, i):
     return w, A / w
 
 
+# -- stage B2: MIB shape unification ----------------------------------------
+def unify_mib(v, dims):
+    """Every member of a MIB group must carry an IDENTICAL (w,h).
+
+    The official count is `distinct shapes - 1` per group
+    (iccad2026_evaluate.py:508-517), and identical shape implies identical AREA
+    while the +-1% area band is a HARD constraint -- so a group can only reach
+    zero when its area targets span at most 1.01/0.99 = 1.0202x. Wider groups get
+    BUCKETED into the fewest shape classes, which is L124's mechanism and is
+    provably the locked-aware minimum.
+
+    Construction-time and free at runtime, which is the bar L122 set for anything
+    on this axis.
+    """
+    SPAN = 1.01 / 0.99
+    groups = {}
+    for i in range(v["n"]):
+        m = v["cons"][i][2]
+        if m:
+            groups.setdefault(m, []).append(i)
+
+    def assign(bucket):
+        if not bucket:
+            return
+        # the common area must sit in the intersection of every member's band
+        lo = max(v["area"][i] * 0.99 for i in bucket)
+        hi = min(v["area"][i] * 1.01 for i in bucket)
+        if lo > hi:
+            return                                   # cannot unify; leave as is
+        A = math.sqrt(lo * hi)
+        side = math.sqrt(A)
+        for i in bucket:
+            dims[i] = (side, side)
+
+    for _g, mem in groups.items():
+        if len(mem) <= 1:
+            continue
+        pinned = [i for i in mem if _is_fixedshape(v, i)]
+        free = [i for i in mem if not _is_fixedshape(v, i)]
+        if pinned:
+            # a fixed member cannot move, so it dictates the shape; everyone
+            # whose area band admits that exact rectangle joins it, the rest
+            # keep what they had (and are counted, correctly, as violations)
+            w, h = dims[pinned[0]]
+            A = w * h
+            for i in free:
+                if abs(A - v["area"][i]) <= 0.01 * v["area"][i]:
+                    dims[i] = (w, h)
+            continue
+        order = sorted(free, key=lambda i: v["area"][i])
+        cur = []
+        for i in order:
+            if cur and v["area"][i] > v["area"][cur[0]] * SPAN:
+                assign(cur)
+                cur = []
+            cur.append(i)
+        assign(cur)
+    return dims
+
+
 # ── units: a cluster is one rigid unit ──────────────────────────────────────
-def build_units(v):
+def build_units(v, DIMS=None):
     """Returns units, each a dict with member ids and their intra-unit offsets.
 
     Cluster members are shelf-packed abutting, so the unit is one touching
@@ -154,7 +215,7 @@ def build_units(v):
         by_cl.setdefault(cl if cl else ("solo", i), []).append(i)
     units = []
     for key, mem in by_cl.items():
-        dims = {i: choose_dims(v, i) for i in mem}
+        dims = {i: DIMS[i] for i in mem}
         if len(mem) == 1:
             i = mem[0]
             w, h = dims[i]
@@ -577,7 +638,10 @@ def refine_area(v, units, cx, cy, axis, lx, ly, budget=60):
 
 def place(c):
     v = case_view(c)
-    units = build_units(v)
+    DIMS = {i: choose_dims(v, i) for i in range(v['n'])}
+    if MIB_UNIFY:
+        unify_mib(v, DIMS)
+    units = build_units(v, DIMS)
     cx, cy, uof = global_place(v, units)
     cx, cy = spread(v, units, cx, cy)
     # One compaction is not enough: the relation set is all n^2/2 pairs, so the
@@ -701,6 +765,10 @@ def mode_run(a):
                          cost=float(m.cost), is_feasible=bool(m.is_feasible),
                          hpwl_gap=float(m.hpwl_gap), area_gap=float(m.area_gap),
                          violations_relative=float(m.violations_relative),
+                         vbnd=float(m.boundary_violations),
+                         vgrp=float(m.grouping_violations),
+                         vmib=float(m.mib_violations),
+                         nsoft=float(m.max_possible_violations),
                          runtime_seconds=dt, error=None))
     tot = len(CASES[:a.limit] if a.limit else CASES)
     print(f"\n=== L129 global placer ===")
@@ -713,7 +781,8 @@ def mode_run(a):
             wsum = sum(math.exp(r["block_count"] / 12.0) for r in ok)
             wc = sum(math.exp(r["block_count"] / 12.0) * r["cost"] for r in ok) / wsum
             print(f"  weighted solo cost (feasible only)   {wc:.6f}")
-            for k in ("hpwl_gap", "area_gap", "violations_relative"):
+            for k in ("hpwl_gap", "area_gap", "violations_relative",
+                      "vbnd", "vgrp", "vmib", "nsoft"):
                 m = sum(math.exp(r["block_count"] / 12.0) * r[k] for r in ok) / wsum
                 print(f"    {k:<22} {m:.4f}")
         print(f"  wall             {time.time() - t0:.1f}s total")
