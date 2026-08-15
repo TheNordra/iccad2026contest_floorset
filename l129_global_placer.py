@@ -75,6 +75,7 @@ DENSITY = float(os.environ.get("L129_DENSITY", "0.80"))
 REFINE_AREA = os.environ.get("L129_REFINE_AREA", "1") != "0"
 LP_POLISH = os.environ.get("L129_LP", "1") != "0"
 MIB_UNIFY = os.environ.get("L129_MIB", "1") != "0"
+BND_SHELF = os.environ.get("L129_BND_SHELF", "1") != "0"
 # 🚨 1=left, 2=right, 4=TOP, 8=BOTTOM. Verified against BOTH the official
 # evaluator (iccad2026_evaluate.py:521, "1=left, 2=right, 4=top, 8=bottom") and
 # constructive.cpp:50. The first draft of this file had 4/8 swapped; it was
@@ -223,26 +224,84 @@ def build_units(v, DIMS=None):
                               pre=_is_pre(v, i)))
             continue
         tot = sum(dims[i][0] * dims[i][1] for i in mem)
-        target = math.sqrt(max(tot, EPS))
-        order = sorted(mem, key=lambda i: -dims[i][1])
-        rows, cur, curw = [], [], 0.0
-        for i in order:
-            w, _h = dims[i]
-            if cur and curw + w > target:
+        target = math.sqrt(max(tot, EPS)) if not BND_SHELF else             math.sqrt(max(tot, EPS))
+        code = {i: v["cons"][i][4] for i in mem}
+
+        if BND_SHELF:
+            # Boundary-aware shelf packing. tag_boundary only claims a side when
+            # the requiring member actually sits at that extreme of the unit, and
+            # the plain height-sorted shelf leaves 18% of side requirements
+            # unclaimed (measured: L 85.7 / R 81.2 / T 73.7 / B 84.9 % claimed).
+            # Placing them where they can reach is what closes that.
+            #   BOTTOM -> first row, which starts at y=0
+            #   TOP    -> last row, TOP-aligned inside it (rows are as tall as
+            #             their tallest member, so a shorter one has to be
+            #             lifted or it never reaches the unit's top edge)
+            #   LEFT   -> first in its row
+            #   RIGHT  -> last in its row, and that row right-aligned to the
+            #             unit width
+            wantB = [i for i in mem if code[i] & B_BOTTOM]
+            wantT = [i for i in mem if code[i] & B_TOP and i not in wantB]
+            rest = [i for i in mem if i not in wantB and i not in wantT]
+            rest.sort(key=lambda i: -dims[i][1])
+
+            def mkrow(seed, pool):
+                """A row: LEFT-wanters first, RIGHT-wanters last."""
+                row = list(seed)
+                wl = sum(dims[i][0] for i in row)
+                while pool and wl + dims[pool[0]][0] <= target:
+                    row.append(pool.pop(0))
+                    wl += dims[row[-1]][0]
+                if not row and pool:
+                    row.append(pool.pop(0))
+                row.sort(key=lambda i: (0 if code[i] & B_LEFT else
+                                        (2 if code[i] & B_RIGHT else 1)))
+                return row
+
+            rows = []
+            pool = list(rest)
+            if wantB:
+                rows.append(mkrow(wantB, pool))
+            while pool:
+                rows.append(mkrow([], pool))
+            if wantT:
+                rows.append(mkrow(wantT, []))
+
+            widths = [sum(dims[i][0] for i in r) for r in rows]
+            uw = max(widths) if widths else 0.0
+            off, y = {}, 0.0
+            for r, roww in zip(rows, widths):
+                rh = max(dims[i][1] for i in r)
+                # right-align the row when it carries a RIGHT-wanter, so that
+                # member's right edge coincides with the unit's
+                x = (uw - roww) if any(code[i] & B_RIGHT for i in r) else 0.0
+                last = (r is rows[-1])
+                for i in r:
+                    yy = (y + rh - dims[i][1]) if (last and code[i] & B_TOP) else y
+                    off[i] = (x, yy)
+                    x += dims[i][0]
+                y += rh
+            order = [i for r in rows for i in r]
+        else:
+            order = sorted(mem, key=lambda i: -dims[i][1])
+            rows, cur, curw = [], [], 0.0
+            for i in order:
+                w, _h = dims[i]
+                if cur and curw + w > target:
+                    rows.append(cur)
+                    cur, curw = [], 0.0
+                cur.append(i)
+                curw += w
+            if cur:
                 rows.append(cur)
-                cur, curw = [], 0.0
-            cur.append(i)
-            curw += w
-        if cur:
-            rows.append(cur)
-        off, y, uw = {}, 0.0, 0.0
-        for row in rows:
-            x = 0.0
-            for i in row:
-                off[i] = (x, y)
-                x += dims[i][0]
-            uw = max(uw, x)
-            y += max(dims[i][1] for i in row)
+            off, y, uw = {}, 0.0, 0.0
+            for row in rows:
+                x = 0.0
+                for i in row:
+                    off[i] = (x, y)
+                    x += dims[i][0]
+                uw = max(uw, x)
+                y += max(dims[i][1] for i in row)
         units.append(dict(mem=order, off=[off[i] for i in order], w=uw, h=y,
                           pre=any(_is_pre(v, i) for i in mem), dims=dims))
     for u in units:
