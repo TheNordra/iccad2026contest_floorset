@@ -61,6 +61,10 @@ for _k in sorted(k for k in os.environ if k.startswith("ICCAD_")):
 import numpy as np                                                  # noqa: E402
 from iccad2026_evaluate import ContestEvaluator, evaluate_solution  # noqa: E402
 from proxy_analysis import build_opt_target_pos                     # noqa: E402
+import optimizer_constructive as oc                                 # noqa: E402
+
+# The wrapper's `l3` is an internal shim class, not the m53 module (L128).
+_l3 = oc.l3
 
 EPS = 1e-9
 # Bisection into a square of side sqrt(total_area) asks for 100% density, which
@@ -69,6 +73,7 @@ EPS = 1e-9
 # room a real packing needs.
 DENSITY = float(os.environ.get("L129_DENSITY", "0.80"))
 REFINE_AREA = os.environ.get("L129_REFINE_AREA", "1") != "0"
+LP_POLISH = os.environ.get("L129_LP", "1") != "0"
 # 🚨 1=left, 2=right, 4=TOP, 8=BOTTOM. Verified against BOTH the official
 # evaluator (iccad2026_evaluate.py:521, "1=left, 2=right, 4=top, 8=bottom") and
 # constructive.cpp:50. The first draft of this file had 4/8 swapped; it was
@@ -612,6 +617,54 @@ def place(c):
 
 
 # ── evaluation ──────────────────────────────────────────────────────────────
+
+# -- stage D: exact-HPWL polish, reusing the shipped LP ----------------------
+def lp_polish(c, P, iters=6):
+    """Hand the legalised layout to the SHIPPED LP.
+
+    Not a new solver: build_and_solve already minimises EXACT linear HPWL under a
+    fixed topology (an aux column and two rows per (edge,axis) give a true
+    absolute value; only the area constraint is linearised). L128 showed it works
+    whenever its input is already legal -- and this placer's output is legal by
+    construction, which is precisely the precondition L128 found the label's
+    transplanted topology could not meet.
+
+    Objective is the shipped BASELINE-FREE one (own hpwl, structural floor for
+    area), so the result stays comparable to the shipped number rather than being
+    inflated by an oracle constant.
+    """
+    key = "l129"
+    n = c["n"]
+    sumA = sum(max(0.0, float(c["at"][i])) for i in range(n))
+    P0 = [tuple(float(x) for x in q) for q in P]
+    try:
+        hp = oc._proxy_metrics(P0, c["at"], c["b2b"], c["p2b"], c["pins"],
+                               c["cons"], n)["hpwl"]
+    except Exception:
+        return P
+    base = {"hpwl_baseline": max(float(hp), 1e-6),
+            "area_baseline": max(sumA / oc._LP_UTIL, 1e-6)}
+    _l3.CASES[key] = oc._lp_build_case(n, c["at"], c["b2b"], c["p2b"],
+                                       c["pins"], c["cons"], base)
+    saved, oc.PRUNE_B = oc.PRUNE_B, None
+    Q = P0
+    try:
+        for _ in range(iters):
+            newQ, tele, _B = oc.lp_pass(key, Q, 0.06, sep_trim=False)
+            if newQ is None:
+                break
+            if not oc.hard_ok(P0, newQ, key):
+                break
+            Q = newQ
+    except Exception:
+        Q = P0
+    finally:
+        oc.PRUNE_B = saved
+        _l3.CASES.pop(key, None)
+        oc._HARD_MASKS.pop(key, None)
+    return Q
+
+
 def official(c, P):
     m = evaluate_solution({"positions": [list(p) for p in P], "runtime": 1.0},
                           c["base"], c["cons"][:c["n"]], c["b2b"], c["p2b"],
@@ -626,6 +679,8 @@ def mode_run(a):
     for c in (CASES[:a.limit] if a.limit else CASES):
         t1 = time.perf_counter()
         P = place(c)
+        if P is not None and LP_POLISH:
+            P = lp_polish(c, P)
         dt = time.perf_counter() - t1
         if P is None:
             if a.verbose:
