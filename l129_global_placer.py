@@ -68,7 +68,12 @@ EPS = 1e-9
 # overlaps everything" and the compaction chains blow the bbox up. Give it the
 # room a real packing needs.
 DENSITY = float(os.environ.get("L129_DENSITY", "0.80"))
-B_LEFT, B_RIGHT, B_BOTTOM, B_TOP = 1, 2, 4, 8      # constructive.cpp's codes
+# 🚨 1=left, 2=right, 4=TOP, 8=BOTTOM. Verified against BOTH the official
+# evaluator (iccad2026_evaluate.py:521, "1=left, 2=right, 4=top, 8=bottom") and
+# constructive.cpp:50. The first draft of this file had 4/8 swapped; it was
+# harmless only because choose_dims uses the UNION (B_TOP|B_BOTTOM), and it would
+# have inverted every boundary decision below.
+B_LEFT, B_RIGHT, B_TOP, B_BOTTOM = 1, 2, 4, 8
 
 print("[l129] loading dataset ...", flush=True)
 _ev = ContestEvaluator(data_path=str(_DIR), verbose=False)
@@ -175,7 +180,45 @@ def build_units(v):
                           pre=any(_is_pre(v, i) for i in mem), dims=dims))
     for u in units:
         u.setdefault("dims", {u["mem"][0]: (u["w"], u["h"])})
+    tag_boundary(v, units)
     return units
+
+
+def tag_boundary(v, units):
+    """Per-unit needL/needR/needT/needB.
+
+    A boundary block must touch the BBOX edge, so the requirement is really a
+    statement about the unit's constraint-graph position:
+
+        needL  <=>  the unit must have NO x-predecessor  (it lands at xmin)
+        needR  <=>  the unit must have NO x-successor    (it can then be pushed
+                    to xmax, which is safe precisely because nothing is to its
+                    right on x, and anything not x-ordered with it is y-separated
+                    and cannot overlap whatever x it takes)
+        needB / needT are the same statement on y.
+
+    A flag is only claimed when the requiring member actually sits at that
+    extreme of its unit; a clustered block buried in the middle of the shelf
+    packing cannot reach the bbox edge and the violation is accepted rather than
+    silently mis-encoded.
+    """
+    for u in units:
+        need = {"L": False, "R": False, "T": False, "B": False}
+        for t, i in enumerate(u["mem"]):
+            code = v["cons"][i][4]
+            if not code:
+                continue
+            ox, oy = u["off"][t]
+            w, h = u["dims"][i]
+            if code & B_LEFT and ox <= EPS:
+                need["L"] = True
+            if code & B_RIGHT and ox + w >= u["w"] - EPS:
+                need["R"] = True
+            if code & B_BOTTOM and oy <= EPS:
+                need["B"] = True
+            if code & B_TOP and oy + h >= u["h"] - EPS:
+                need["T"] = True
+        u["need"] = need
 
 
 # ── stage A: quadratic global placement ─────────────────────────────────────
@@ -319,12 +362,29 @@ def legalise(v, units, cx, cy, rounds=40):
     # preplaced units must land exactly where they are; their centre is fixed
     px, py = cx.copy(), cy.copy()
 
+    need = [u["need"] for u in units]
     axis = {}
     for a in range(U):
         for b in range(a + 1, U):
             ox = (W[a] + W[b]) / 2.0 - abs(cx[b] - cx[a])
             oy = (H[a] + H[b]) / 2.0 - abs(cy[b] - cy[a])
-            axis[(a, b)] = 0 if ox <= oy else 1
+            cheap = 0 if ox <= oy else 1
+            # Which unit would become the predecessor on each axis is fixed by
+            # the centre order -- the same order `compact` sorts on -- so the
+            # boundary test can be made here. Only the AXIS is ever changed,
+            # never the orientation, so the graphs stay acyclic.
+            lo_x, hi_x = (a, b) if (cx[a], a) < (cx[b], b) else (b, a)
+            lo_y, hi_y = (a, b) if (cy[a], a) < (cy[b], b) else (b, a)
+            okx = not (need[lo_x]["R"] or need[hi_x]["L"])
+            oky = not (need[lo_y]["T"] or need[hi_y]["B"])
+            if okx and oky:
+                axis[(a, b)] = cheap
+            elif okx:
+                axis[(a, b)] = 0
+            elif oky:
+                axis[(a, b)] = 1
+            else:
+                axis[(a, b)] = cheap        # unsatisfiable pair; take the cheap one
 
     def compact(ax, C, size):
         """Longest path along `ax`, honouring pinned units. Returns lows."""
@@ -373,12 +433,39 @@ def legalise(v, units, cx, cy, rounds=40):
             continue
         ly, bad = compact(1, py, H)
         if ly is None:
+            if bad is None:
+                return None, None
             k, ps = bad
             for p in ps:
                 axis[(min(k, p), max(k, p))] = 0
             continue
+        _push_to_max(axis, px, lx, W, 0, need, pre)
+        _push_to_max(axis, py, ly, H, 1, need, pre)
         return lx, ly
     return None, None
+
+
+def _push_to_max(axis, C, low, size, ax, need, pre):
+    """Slide every needR/needT unit that has no successor on `ax` out to the max.
+
+    Longest-path compaction packs everything toward the minimum, so a unit with
+    no successor is merely somewhere, not at the far edge. Pushing it out is
+    provably overlap-free: anything ordered with it on `ax` is by construction on
+    its low side, and anything NOT ordered with it on `ax` is ordered on the
+    other axis and so cannot overlap at any coordinate it takes here.
+    """
+    U = len(low)
+    key = "R" if ax == 0 else "T"
+    rank = {k: r for r, k in enumerate(sorted(range(U), key=lambda k: (C[k], k)))}
+    succ = [0] * U
+    for (a, b), s in axis.items():
+        if s != ax:
+            continue
+        succ[a if rank[a] < rank[b] else b] += 1
+    hi = max(low[k] + size[k] for k in range(U))
+    for k in range(U):
+        if need[k][key] and not succ[k] and not pre[k]:
+            low[k] = hi - size[k]
 
 
 def place(c):
