@@ -76,6 +76,11 @@ REFINE_AREA = os.environ.get("L129_REFINE_AREA", "1") != "0"
 LP_POLISH = os.environ.get("L129_LP", "1") != "0"
 MIB_UNIFY = os.environ.get("L129_MIB", "1") != "0"
 BND_SHELF = os.environ.get("L129_BND_SHELF", "1") != "0"
+# IRLS=1 (plain quadratic) is the DEFAULT and the measured best: see the
+# note on refine_area. Reweighting by 1/|delta| collapses connected units
+# together, and the spread the quadratic term provides is what makes the
+# ordering readable at all. IRLS=4 measured 1.709 -> 2.018.
+IRLS = int(os.environ.get("L129_IRLS", "1"))
 # 🚨 1=left, 2=right, 4=TOP, 8=BOTTOM. Verified against BOTH the official
 # evaluator (iccad2026_evaluate.py:521, "1=left, 2=right, 4=top, 8=bottom") and
 # constructive.cpp:50. The first draft of this file had 4/8 swapped; it was
@@ -371,42 +376,48 @@ def global_place(v, units):
                 fx[k] = v["otp"][i][0] - ox + u["w"] / 2.0
                 fy[k] = v["otp"][i][1] - oy + u["h"] / 2.0
                 break
-    L = np.zeros((U, U))
-    bx = np.zeros(U)
-    by = np.zeros(U)
-    for i, j, w in v["b2b"]:
-        if w <= 0 or i >= v["n"] or j >= v["n"]:
-            continue
-        a, b = uof.get(i), uof.get(j)
-        if a is None or b is None or a == b:
-            continue
-        L[a, a] += w
-        L[b, b] += w
-        L[a, b] -= w
-        L[b, a] -= w
-    for p, j, w in v["p2b"]:
-        if w <= 0 or j >= v["n"] or p >= len(v["pins"]):
-            continue
-        a = uof.get(j)
-        if a is None:
-            continue
-        L[a, a] += w
-        bx[a] += w * v["pins"][p][0]
-        by[a] += w * v["pins"][p][1]
+    def build(wx, wy):
+        """Assemble the weighted Laplacian for one IRLS sweep.
+
+        The quadratic objective sum w*(du-dv)^2 is NOT HPWL, which is
+        sum w*|du-dv|. Reweighting each edge by 1/|du-dv| from the previous
+        solve turns the sequence of quadratic solves into a minimiser of the L1
+        objective (the standard linearisation), and the ORDER it produces is the
+        only thing stage A ever contributes -- the bisection keeps the order and
+        throws the coordinates away, and the LP then solves exact HPWL inside
+        whatever topology that order implies.
+        """
+        L = np.zeros((U, U))
+        bx = np.zeros(U)
+        by = np.zeros(U)
+        for i, j, w in v["b2b"]:
+            if w <= 0 or i >= v["n"] or j >= v["n"]:
+                continue
+            a, b = uof.get(i), uof.get(j)
+            if a is None or b is None or a == b:
+                continue
+            wa = w * wx.get((a, b), 1.0)
+            L[a, a] += wa
+            L[b, b] += wa
+            L[a, b] -= wa
+            L[b, a] -= wa
+        for p, j, w in v["p2b"]:
+            a = uof.get(j)
+            if w <= 0 or j >= v["n"] or p >= len(v["pins"]) or a is None:
+                continue
+            wp = w * wy.get((p, a), 1.0)
+            L[a, a] += wp
+            bx[a] += wp * v["pins"][p][0]
+            by[a] += wp * v["pins"][p][1]
+        return L, bx, by
     # anything unconnected would leave a singular row; pull it weakly to the
     # centroid of the pins (or the origin if there are none)
     px = np.mean([p[0] for p in v["pins"]]) if v["pins"] else 0.0
     py = np.mean([p[1] for p in v["pins"]]) if v["pins"] else 0.0
-    for k in range(U):
-        L[k, k] += 1e-6
-        bx[k] += 1e-6 * px
-        by[k] += 1e-6 * py
     free = ~fixed
     if not free.any():
         return fx, fy, uof
-    for axis, (M, rhs, f) in enumerate(((L, bx, fx), (L, by, fy))):
-        pass
-    def solve(rhs, fv):
+    def solve(L, rhs, fv):
         r = rhs[free] - L[np.ix_(free, fixed)] @ fv[fixed]
         try:
             sol = np.linalg.solve(L[np.ix_(free, free)], r)
@@ -415,7 +426,34 @@ def global_place(v, units):
         out = fv.copy()
         out[free] = sol
         return out
-    return solve(bx, fx), solve(by, fy), uof
+    ex, ey = {}, {}
+    X = Y = None
+    for sweep in range(max(1, IRLS)):
+        L, bx, by = build(ex, ey)
+        for k in range(U):
+            L[k, k] += 1e-6
+            bx[k] += 1e-6 * px
+            by[k] += 1e-6 * py
+        if not free.any():
+            return fx, fy, uof
+        X, Y = solve(L, bx, fx), solve(L, by, fy)
+        if sweep + 1 >= IRLS:
+            break
+        # reweight by 1/|delta| -> the quadratic sequence converges on HPWL
+        ex, ey = {}, {}
+        for i, j, w in v["b2b"]:
+            a, b = uof.get(i), uof.get(j)
+            if a is None or b is None or a == b:
+                continue
+            d = abs(X[a] - X[b]) + abs(Y[a] - Y[b])
+            ex[(a, b)] = 1.0 / max(d, 1e-6)
+        for pi, j, w in v["p2b"]:
+            a = uof.get(j)
+            if a is None or pi >= len(v["pins"]):
+                continue
+            d = abs(X[a] - v["pins"][pi][0]) + abs(Y[a] - v["pins"][pi][1])
+            ey[(pi, a)] = 1.0 / max(d, 1e-6)
+    return X, Y, uof
 
 
 # ── stage A2: spreading (this is the half that makes it a PLACER) ──────────
@@ -596,6 +634,33 @@ def _push_to_max(axis, C, low, size, ax, need, pre):
             low[k] = hi - size[k]
 
 
+def _hpwl(v, units, lx, ly):
+    """True HPWL of a legal layout, straight from block centres.
+
+    Cheap enough to sit inside the flip search (no LP needed), which is what lets
+    the local search optimise the metric the cost actually charges rather than
+    bbox area alone.
+    """
+    cx = {}
+    cy = {}
+    for k, u in enumerate(units):
+        for t, i in enumerate(u["mem"]):
+            ox, oy = u["off"][t]
+            w, h = u["dims"][i]
+            cx[i] = lx[k] + ox + w / 2.0
+            cy[i] = ly[k] + oy + h / 2.0
+    tot = 0.0
+    for i, j, w in v["b2b"]:
+        if w <= 0 or i not in cx or j not in cx:
+            continue
+        tot += w * (abs(cx[i] - cx[j]) + abs(cy[i] - cy[j]))
+    for pi, j, w in v["p2b"]:
+        if w <= 0 or j not in cx or pi >= len(v["pins"]):
+            continue
+        tot += w * (abs(cx[j] - v["pins"][pi][0]) + abs(cy[j] - v["pins"][pi][1]))
+    return tot
+
+
 def _bbox(units, lx, ly):
     U = len(units)
     x0 = min(lx); y0 = min(ly)
@@ -661,6 +726,23 @@ def refine_area(v, units, cx, cy, axis, lx, ly, budget=60):
     invariant the boundary handling relies on.
     """
     best_a, bw, bh = _bbox(units, lx, ly)
+    a0 = max(best_a, EPS)
+    h0 = max(_hpwl(v, units, lx, ly), EPS)
+
+    def score(nx, ny):
+        """The cost charges 0.5*area_gap + 0.5*hpwl_gap, so the search weighs
+        them the same way.
+
+        MEASURED: this changed the 30-case result by exactly NOTHING (1.708551
+        to every digit, hpwl_gap 0.4265, area_gap 0.4297). Kept because it is the
+        correct objective and costs nothing, but the null result is the finding:
+        this search runs BEFORE lp_polish, and the LP then re-solves HPWL exactly
+        inside whatever topology comes out, so any HPWL the search buys here is
+        simply re-derived. Pre-LP HPWL work is not a lever."""
+        a, _w, _h = _bbox(units, nx, ny)
+        return 0.5 * a / a0 + 0.5 * _hpwl(v, units, nx, ny) / h0
+
+    best_s = score(lx, ly)
     W = [u["w"] for u in units]
     H = [u["h"] for u in units]
     used = 0
@@ -684,9 +766,10 @@ def refine_area(v, units, cx, cy, axis, lx, ly, budget=60):
             nx, ny, naxis = legalise(v, units, cx, cy, axis0=trial)
             if nx is None:
                 continue
-            a, w2, h2 = _bbox(units, nx, ny)
-            if a < best_a - 1e-9:
-                best_a, bw, bh = a, w2, h2
+            sc = score(nx, ny)
+            if sc < best_s - 1e-12:
+                a, w2, h2 = _bbox(units, nx, ny)
+                best_s, best_a, bw, bh = sc, a, w2, h2
                 lx, ly, axis = nx, ny, naxis
                 improved = True
                 break
