@@ -9,3 +9,9 @@ bin/constructive_linux -text
 *.exe -text
 *.pkl -text
 *.tar.gz -text
+
+# L131 fix package (built + verified 2026-08-16, NOT uploaded). Same reasoning as
+# build_submission/ above: its identity is op_wrapper.py's md5
+# (2967efb6876f70685a18e1a160644fdd) and a CRLF rewrite on checkout would hash
+# differently while looking correct. The pattern above does NOT cover this path.
+build_submission.L131FIX/** -text
