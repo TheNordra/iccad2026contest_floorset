@@ -1,13 +1,14 @@
-# L136 — the MARGIN fix, built and verified: +0.6725% on the graded score
+# L136 — the MARGIN fix, built and verified on Linux: +0.6272% graded
 
 Implements L135. The uploaded artefact is untouched; `build_submission/` was
 backed up, used, and restored byte-for-byte. The new package is in
 **`build_submission.L136FIX/`** and is **not uploaded**.
 
-    48c (GRADED)   1.2367916697725434 -> 1.2284738198320346   +0.6725%
-    32c default    1.293461035226291  -> 1.2772224039603648   +1.2555%
-    feasible       100/100 -> 100/100
-    avg runtime    0.9799s -> 0.9795s
+    48c LINUX (GRADED)  1.2362075522257698 -> 1.2284538948373953   +0.6272%
+    48c Windows         1.2367916697725434 -> 1.2284738198320346   +0.6725%
+    32c default (Win)   1.293461035226291  -> 1.2772224039603648   +1.2555%
+    feasible            100/100 -> 100/100  (both platforms)
+    avg runtime         0.9799s -> 0.9795s  (Windows)
 
 ## 1. The change
 
@@ -81,10 +82,37 @@ MARGIN-affected ones). So the two builds agree, and the known Windows/Linux scor
 gap (1.2367916697725434 vs 1.2362075522257698) comes from the Python/LP layer,
 not the C++.
 
-⚠️ **What is NOT verified: the full 100-case score under Linux.** WSL has Python
-3.14.4 with no torch, and installing it was out of scope. The graded number will
-be the Linux one, which historically sits ~0.005 below the Windows one. Every
-figure in this report is the Windows measurement.
+## 3b. ✅ Verified under Linux, on the grader's path
+
+Installed CPU torch **2.12** (the grader's version — closer than the Windows
+env's 2.11), shapely, scipy, tqdm and matplotlib into WSL: ~1.1 GB, no files
+deleted. The official command was then run against the built package with
+`ICCAD_ADAPTIVE_CORES=48`.
+
+| | Windows | Linux |
+|---|---|---|
+| shipped (48c) | 1.2367916697725434 | 1.2362075522257698 |
+| **L136 (48c)** | 1.2284738198320346 | **1.2284538948373953** |
+| **gain vs shipped** | **+0.6725%** | **+0.6272%** |
+
+100/100 feasible on both. **The gain holds on the platform that is actually
+graded**, at +0.6272%.
+
+🔑 **The bundled binary was genuinely used**: the run left no `constructive.exe`
+compile artefact, which is the hard proof that the M67-A bundled-binary-first
+path fired rather than the on-site compile fallback. That is the path a
+source-only change would have missed entirely (§3).
+
+Side observation, not chased: the Windows/Linux disagreement **shrank 29×**, from
+`+0.000584` on the shipped package to `+0.0000199` on L136. The two platforms now
+agree to 2e-5. Plausibly the 1e-4 frame slack was itself a source of
+platform-dependent divergence, but the mechanism was not investigated and this is
+reported as an observation, not a claim.
+
+⚠️ Avg runtime reads **5.11s** under WSL against 0.98s on Windows. That is drvfs
+overhead on `/mnt/c`, not a regression — local scoring uses
+`RuntimeFactor = 1.0` (the evaluator says so explicitly), so it does not enter
+the score.
 
 ## 4. 🚨 A packaging mistake worth recording
 
@@ -134,15 +162,29 @@ PATH="/c/msys64/ucrt64/bin:$PATH" "C:/Users/.01/anaconda3/envs/floorset/python.e
 wsl.exe -e bash -lc "cd /mnt/c/ICCAD_ml/ship_final && g++ -O3 -std=c++17 -static-libstdc++ -static-libgcc -o bin/constructive_linux constructive.cpp && objdump -T bin/constructive_linux | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1"
 ```
 
+The Linux score (the graded one). WSL needs `torch shapely scipy tqdm matplotlib`
+(~1.1 GB; use torch 2.12 to match the grader). `_l136_linux/` is built by
+extracting `build_submission.L136FIX/cadc1075.tar.gz`, overlaying
+`iccad2026contest/iccad2026_evaluate.py`, copying `make_submission._LOADER_FILES`
+and linking `LiteTensorDataTest` — the same preparation `l113_ship_gate.py` does:
+```bash
+wsl.exe -e bash -lc "cd /mnt/c/ICCAD_ml/ship_final/_l136_linux/cadc1075 && PYTHONIOENCODING=utf-8 ICCAD_ADAPTIVE_CORES=48 python3 -u iccad2026_evaluate.py --evaluate op_wrapper.py -o results_l136_linux.json"
+```
+Afterwards check that **no `constructive.exe` exists** in that directory — that is
+the proof the bundled binary ran rather than the on-site compile fallback.
+
 ## 8. What is now on the table
 
 Two built, verified, unuploaded packages:
 
-| | 48c graded | binary rebuilt? | risk |
+| | 48c LINUX (graded) | binary rebuilt? | Linux-verified? |
 |---|---|---|---|
-| `build_submission.L131FIX/` | 1.2358546851248895 (+0.0758%) | no — md5 unchanged | minimal |
-| **`build_submission.L136FIX/`** | **1.2284738198320346 (+0.6725%)** | **yes** | binary + packing both change |
+| `build_submission.L131FIX/` | not measured (Windows +0.0758%) | no — md5 unchanged | no |
+| **`build_submission.L136FIX/`** | **1.2284538948373953 (+0.6272%)** | **yes** | **yes, 100/100** |
 
-L136 is 8.9× the gain and carries real risk L131 does not: a new binary built on
-a much newer toolchain (glibc verified equal, full Linux score not), and a
-packing that moved on half the cases. Both remain decisions, not tasks.
+L136 is ~8× the gain, and it is now the better-VERIFIED of the two: it is the
+only package measured on the platform that is actually graded, through the
+bundled-binary path, at 100/100 feasible. Its residual risk is that the packing
+moved on half the cases and the binary comes from a much newer toolchain
+(glibc verified equal at 2.38, PIE preserved, output byte-identical to the
+Windows build). Both remain decisions, not tasks.
