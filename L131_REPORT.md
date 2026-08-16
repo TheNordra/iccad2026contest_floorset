@@ -96,3 +96,115 @@ cluster, so the RATE should transfer; the per-set magnitude need not.
 **Not done, by decision:** the submission is uploaded and frozen and stays that
 way. This report is what a fix would be worth, measured rather than guessed, so
 the decision can be made on a number.
+
+---
+
+# 6. IMPLEMENTED AND VERIFIED (still not uploaded)
+
+The fix is now built and verified end-to-end. **The uploaded artefact is
+untouched**: `build_submission/` was backed up first, and after verification it
+was restored byte-for-byte to the shipped package (`op_wrapper.py`
+`ad8c5dcb…`, tar `c08a0844…`, 373,844 B). The fixed package lives beside it, in
+**`build_submission.L131FIX/`**.
+
+## 6.1 The change
+
+`_snap_group_abutment()` in `optimizer_constructive.py`, applied at **all three**
+`solve()` exits (constructive, SA fallback, row fallback — they all emit
+`origin + offset` layouts). `op_wrapper.py` is generated from that file, so the
+package picks it up with no C++ rebuild.
+
+Unit-checked: identity (same object, zero cost) when no cluster group exists; a
+2.8e-14 gap closes to exactly 0.0; a real gap of 5.0 survives untouched.
+
+## 6.2 The measured result
+
+| | shipped | with the fix | delta |
+|---|---|---|---|
+| **48c (the GRADED score)** | 1.2367916697725434 | **1.2358546851248895** | **+0.0758%** |
+| 32c default | 1.293461035226291 | **1.2894881807430367** | **+0.3071%** |
+| feasible | 100/100 | **100/100** | — |
+| avg cost | 1.3301 | 1.3271 | |
+| avg runtime | 0.9799s | 0.9972s | +1.8% |
+
+🔑 **The offline simulation predicted the deployed number exactly.** L131 §3
+computed 1.235854685125 by snapping the anchor's positions; the real package
+scores **1.2358546851248895**. Ten decimal places, which is about as good as a
+prediction of a deployment gets.
+
+The 32c gain is 4× the 48c gain because that configuration produces different
+layouts and lands more groups on the wrong side of an ULP: cost changed on cases
+32, 62, 80, 82, 86 (each losing one violation) versus 66, 69, 78 at 48c.
+
+⚠️ **avg runtime 0.9799 → 0.9972s (+1.8%) is not explained.** The snap is O(m²)
+over groups of ≤10 blocks and cannot cost that; it is most likely run-to-run
+variance in the 100-case evaluation, but it was **not isolated** and should not
+be quoted as free until it is.
+
+## 6.3 Package identity
+
+| file | shipped | fixed |
+|---|---|---|
+| `op_wrapper.py` | `ad8c5dcb3b0ec878e30464cdbf9d00dc` | **`2967efb6876f70685a18e1a160644fdd`** |
+| `op_src.py` | same as above | same as above |
+| **`bin/constructive_linux`** | `62602aba…` | **`62602aba…` UNCHANGED** |
+| `constructive.cpp`, `README.md`, `requirements.txt` | — | **byte-identical** |
+| `cadc1075.tar.gz` | `c08a0844…`, 373,844 B | `9dcd54cc…`, 376,840 B |
+
+**No C++ rebuild happened**, exactly as §2 predicted — the binary md5 is
+unchanged, so nothing about the GLIBC/PIE/static analysis needs redoing.
+
+`make_submission.py stage` → PASS (hygiene OK, 6 files).
+
+## 6.4 Both gates "FAIL", and that is the correct result
+
+`make_submission.py verify` and `l113_ship_gate.py --cores 48` both report FAIL.
+Both are **bit-exactness checks against the frozen anchor**, so a fix necessarily
+fails them:
+
+    verify:  BIT-EXACT FAIL: 20 differences
+             total_score 1.2894881807430367 != 1.293461035226291
+    gate:    G4 total 1.2358546851248895 != 1.2367916697725434
+             cost differs on 3 case(s): [66, 69, 78]
+
+Every difference is in the improving direction and feasibility stays 100/100.
+**If either gate had PASSED, the fix would not have been applied.** Anyone
+re-running these needs a new anchor before the gates mean anything again.
+
+## 6.5 🚨 Two things found while doing this
+
+1. **The tar's md5 is not reproducible** — three consecutive `stage` runs gave
+   376,858 / 376,866 / 376,840 bytes with three different md5s, while
+   `op_wrapper.py`'s md5 was stable across all of them. This is already
+   documented in `.gitattributes` ("the tar's own md5 is not reproducible --
+   gzip embeds an mtime"); it is restated here because the package's identity
+   must be tracked by `op_wrapper.py`'s md5, never the tar's.
+2. **git does not hold the uploaded `constructive.cpp` byte-exactly.** Auditing
+   all six files, tar-vs-HEAD:
+
+   | file | uploaded tar | git HEAD | |
+   |---|---|---|---|
+   | `op_wrapper.py` / `op_src.py` | `ad8c5dcb…` | `ad8c5dcb…` | OK |
+   | `README.md`, `requirements.txt` | — | — | OK |
+   | `bin/constructive_linux` | `62602aba…` | `62602aba…` | OK |
+   | **`constructive.cpp`** | **`937d0e15…`** | **`2aa712ff…`** | **DIFFERS** |
+
+   Line endings only (a 2091-insert / 2091-delete diff on a 2091-line file): the
+   package was committed at `60f89a6`, `.gitattributes` marked it `-text` later
+   at `53e1ae4`, and that does not renormalise blobs already in the index. It is
+   **functionally harmless** — `constructive.cpp` is the on-site compile
+   fallback and a C++ compiler does not care about CRLF — and the 08-15 handoff's
+   "all three md5s reproduce" claim covered `op_wrapper.py`,
+   `bin/constructive_linux` and the tar, none of which are affected. But a fresh
+   clone does not reproduce that one file byte-for-byte, and the worktree copy
+   (which is the uploaded one) now shows as modified because `cp -r` reset the
+   mtimes and forced git past its stat cache. **Do not `git checkout` it** — that
+   would replace the uploaded bytes with the LF version.
+
+## 6.6 What remains a decision, not a task
+
+The fixed package is built, verified, and sitting in `build_submission.L131FIX/`.
+It is **not uploaded and not staged for upload**. Uploading means replacing a
+verified submission with five days to the deadline, for a measured **+0.0758%**
+on the graded 48c score. That trade is the same one §5 described; it now just has
+a real artefact behind it instead of an estimate.
