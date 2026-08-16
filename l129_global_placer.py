@@ -81,6 +81,28 @@ BND_SHELF = os.environ.get("L129_BND_SHELF", "1") != "0"
 # together, and the spread the quadratic term provides is what makes the
 # ordering readable at all. IRLS=4 measured 1.709 -> 2.018.
 IRLS = int(os.environ.get("L129_IRLS", "1"))
+# GORDIAN alternation (L130). OFF by default so the v6 baseline (1.745, 64/100)
+# stays reproducible from this file; L129_GORDIAN=1 replaces the
+# one-solve-then-one-destructive-bisection stage A with solve/partition/re-solve.
+# Priced BEFORE building (l130_gordian_price.py): stage A is 0.46% of weighted
+# runtime and the added KKT solves are 0.06%, so this lever cannot move the wall.
+GORDIAN = os.environ.get("L129_GORDIAN", "0") != "0"
+# regions are split until they hold at most this many units; 1 reproduces
+# `spread`'s leaf behaviour (a lone free unit is pinned at its region centre)
+GORDIAN_MIN = int(os.environ.get("L129_GORDIAN_MIN", "1"))
+GORDIAN_MAXLVL = int(os.environ.get("L129_GORDIAN_LEVELS", "16"))
+# boundary-aware partitioning; without it the alternation buys hpwl and area and
+# pays for both in boundary violations (see _bnd_rank)
+GORDIAN_BND = os.environ.get("L129_GORDIAN_BND", "1") != "0"
+# snap the final coordinates to leaf region centres, keeping only the ORDER the
+# alternation found (see _snap_leaves)
+GORDIAN_SNAP = os.environ.get("L129_GORDIAN_SNAP", "1") != "0"
+# bit-exact abutment at emit time (see _emit_abut). OFF by default so the v6
+# anchor stays reproducible; it is a separate lever and is measured as one.
+EXACT_ABUT = os.environ.get("L129_EXACT_ABUT", "0") != "0"
+# never flip the same pair twice inside one legalise call (see the note in
+# `legalise`). OFF by default so the v6 anchor stays reproducible.
+LEGAL_LOCK = os.environ.get("L129_LEGAL_LOCK", "0") != "0"
 # 🚨 1=left, 2=right, 4=TOP, 8=BOTTOM. Verified against BOTH the official
 # evaluator (iccad2026_evaluate.py:521, "1=left, 2=right, 4=top, 8=bottom") and
 # constructive.cpp:50. The first draft of this file had 4/8 swapped; it was
@@ -275,13 +297,18 @@ def build_units(v, DIMS=None):
             widths = [sum(dims[i][0] for i in r) for r in rows]
             uw = max(widths) if widths else 0.0
             off, y = {}, 0.0
+            rowx, rowh, lift = [], [], set()
             for r, roww in zip(rows, widths):
                 rh = max(dims[i][1] for i in r)
                 # right-align the row when it carries a RIGHT-wanter, so that
                 # member's right edge coincides with the unit's
                 x = (uw - roww) if any(code[i] & B_RIGHT for i in r) else 0.0
+                rowx.append(x)
+                rowh.append(rh)
                 last = (r is rows[-1])
                 for i in r:
+                    if last and code[i] & B_TOP:
+                        lift.add(i)
                     yy = (y + rh - dims[i][1]) if (last and code[i] & B_TOP) else y
                     off[i] = (x, yy)
                     x += dims[i][0]
@@ -300,17 +327,24 @@ def build_units(v, DIMS=None):
             if cur:
                 rows.append(cur)
             off, y, uw = {}, 0.0, 0.0
+            rowx, rowh, lift = [], [], set()
             for row in rows:
                 x = 0.0
+                rowx.append(0.0)
+                rowh.append(max(dims[i][1] for i in row))
                 for i in row:
                     off[i] = (x, y)
                     x += dims[i][0]
                 uw = max(uw, x)
                 y += max(dims[i][1] for i in row)
         units.append(dict(mem=order, off=[off[i] for i in order], w=uw, h=y,
-                          pre=any(_is_pre(v, i) for i in mem), dims=dims))
+                          pre=any(_is_pre(v, i) for i in mem), dims=dims,
+                          rows=rows, rowx=rowx, rowh=rowh, lift=lift))
     for u in units:
         u.setdefault("dims", {u["mem"][0]: (u["w"], u["h"])})
+        if "rows" not in u:
+            i = u["mem"][0]
+            u["rows"], u["rowx"], u["rowh"], u["lift"] = [[i]], [0.0], [u["h"]], set()
     tag_boundary(v, units)
     return units
 
@@ -353,18 +387,17 @@ def tag_boundary(v, units):
 
 
 # ── stage A: quadratic global placement ─────────────────────────────────────
-def global_place(v, units):
-    """Minimise sum w*(du-dv)^2 over unit CENTRES, pins and preplaced pinned.
-
-    Quadratic rather than the true linear HPWL because it is one dense solve at
-    n<=120 and its optimum is the right neighbourhood; the exact-linear step
-    already exists downstream (the shipped LP).
-    """
-    U = len(units)
+def unit_map(units):
     uof = {}
     for k, u in enumerate(units):
         for i in u["mem"]:
             uof[i] = k
+    return uof
+
+
+def fixed_centres(v, units):
+    """Which unit CENTRES are pinned by a preplaced member, and where."""
+    U = len(units)
     fixed = np.zeros(U, dtype=bool)
     fx = np.zeros(U)
     fy = np.zeros(U)
@@ -376,40 +409,64 @@ def global_place(v, units):
                 fx[k] = v["otp"][i][0] - ox + u["w"] / 2.0
                 fy[k] = v["otp"][i][1] - oy + u["h"] / 2.0
                 break
-    def build(wx, wy):
-        """Assemble the weighted Laplacian for one IRLS sweep.
+    return fixed, fx, fy
 
-        The quadratic objective sum w*(du-dv)^2 is NOT HPWL, which is
-        sum w*|du-dv|. Reweighting each edge by 1/|du-dv| from the previous
-        solve turns the sequence of quadratic solves into a minimiser of the L1
-        objective (the standard linearisation), and the ORDER it produces is the
-        only thing stage A ever contributes -- the bisection keeps the order and
-        throws the coordinates away, and the LP then solves exact HPWL inside
-        whatever topology that order implies.
-        """
-        L = np.zeros((U, U))
-        bx = np.zeros(U)
-        by = np.zeros(U)
-        for i, j, w in v["b2b"]:
-            if w <= 0 or i >= v["n"] or j >= v["n"]:
-                continue
-            a, b = uof.get(i), uof.get(j)
-            if a is None or b is None or a == b:
-                continue
-            wa = w * wx.get((a, b), 1.0)
-            L[a, a] += wa
-            L[b, b] += wa
-            L[a, b] -= wa
-            L[b, a] -= wa
-        for p, j, w in v["p2b"]:
-            a = uof.get(j)
-            if w <= 0 or j >= v["n"] or p >= len(v["pins"]) or a is None:
-                continue
-            wp = w * wy.get((p, a), 1.0)
-            L[a, a] += wp
-            bx[a] += wp * v["pins"][p][0]
-            by[a] += wp * v["pins"][p][1]
-        return L, bx, by
+
+def assemble(v, units, uof, wx=None, wy=None):
+    """Assemble the weighted Laplacian for one IRLS sweep.
+
+    The quadratic objective sum w*(du-dv)^2 is NOT HPWL, which is
+    sum w*|du-dv|. Reweighting each edge by 1/|du-dv| from the previous
+    solve turns the sequence of quadratic solves into a minimiser of the L1
+    objective (the standard linearisation), and the ORDER it produces is the
+    only thing stage A ever contributes -- the bisection keeps the order and
+    throws the coordinates away, and the LP then solves exact HPWL inside
+    whatever topology that order implies.
+
+    Shared with the GORDIAN alternation, which solves this same system under
+    region centre-of-gravity constraints.
+    """
+    U = len(units)
+    wx = wx or {}
+    wy = wy or {}
+    L = np.zeros((U, U))
+    bx = np.zeros(U)
+    by = np.zeros(U)
+    for i, j, w in v["b2b"]:
+        if w <= 0 or i >= v["n"] or j >= v["n"]:
+            continue
+        a, b = uof.get(i), uof.get(j)
+        if a is None or b is None or a == b:
+            continue
+        wa = w * wx.get((a, b), 1.0)
+        L[a, a] += wa
+        L[b, b] += wa
+        L[a, b] -= wa
+        L[b, a] -= wa
+    for p, j, w in v["p2b"]:
+        a = uof.get(j)
+        if w <= 0 or j >= v["n"] or p >= len(v["pins"]) or a is None:
+            continue
+        wp = w * wy.get((p, a), 1.0)
+        L[a, a] += wp
+        bx[a] += wp * v["pins"][p][0]
+        by[a] += wp * v["pins"][p][1]
+    return L, bx, by
+
+
+def global_place(v, units):
+    """Minimise sum w*(du-dv)^2 over unit CENTRES, pins and preplaced pinned.
+
+    Quadratic rather than the true linear HPWL because it is one dense solve at
+    n<=120 and its optimum is the right neighbourhood; the exact-linear step
+    already exists downstream (the shipped LP).
+    """
+    U = len(units)
+    uof = unit_map(units)
+    fixed, fx, fy = fixed_centres(v, units)
+
+    def build(wx, wy):
+        return assemble(v, units, uof, wx, wy)
     # anything unconnected would leave a singular row; pull it weakly to the
     # centroid of the pins (or the origin if there are none)
     px = np.mean([p[0] for p in v["pins"]]) if v["pins"] else 0.0
@@ -508,6 +565,271 @@ def spread(v, units, cx, cy):
     return out_x, out_y
 
 
+# ── stage A2': the GORDIAN alternation (L130) ───────────────────────────────
+def _region_box(v, units, cx, cy):
+    """Root rectangle for the recursion.
+
+    Same convention as `spread` (origin at the min solved centre, side sized for
+    DENSITY) so the two stage-A forms are comparable, plus one guard `spread`
+    does not need: preplaced unit centres are HARD and the alternation's
+    constraints are stated relative to this box, so the box must at least span
+    them or every level asks the free units to average out an impossibility.
+    """
+    U = len(units)
+    A = np.array([max(units[k]["w"] * units[k]["h"], EPS) for k in range(U)])
+    side = math.sqrt(float(A.sum()) / max(DENSITY, 0.05))
+    ox = float(min(cx)) if U else 0.0
+    oy = float(min(cy)) if U else 0.0
+    pre = np.array([u["pre"] for u in units])
+    if pre.any():
+        ox = min(ox, float(cx[pre].min()))
+        oy = min(oy, float(cy[pre].min()))
+        side = max(side, float(cx[pre].max()) - ox, float(cy[pre].max()) - oy)
+    return A, ox, oy, side
+
+
+def _bnd_rank(need, horiz):
+    """Which end of a split a boundary-requiring unit must be sorted to.
+
+    🚨 The alternation's objective knows about wire and its constraints know
+    about area; NOTHING in it knows that a needL unit has to end up with no
+    x-predecessor. Without this the free solve is right to pull such a unit
+    inward -- and it then reads as a boundary violation downstream.
+
+    MEASURED, 30 cases, alternation without this: hpwl_gap 0.4265 -> 0.4172 and
+    area_gap 0.4297 -> 0.3851, both better, while vbnd went 2.0775 -> 2.8490 and
+    the TOTAL got worse (1.7086 -> 1.7767). Third occurrence of the same lesson:
+    a stage that improves one term of a multiplicative cost must re-enforce every
+    constraint the stages around it rely on.
+
+    Forcing the rank recursively is what makes it work: needL goes into the left
+    half at every horizontal split it meets, so it lands in the leftmost column
+    of leaves and is x-minimal in the centre order `legalise` reads.
+    """
+    if horiz:
+        lo, hi = need["L"], need["R"]
+    else:
+        lo, hi = need["B"], need["T"]
+    if lo and not hi:
+        return 0
+    if hi and not lo:
+        return 2
+    return 1
+
+
+def _split(region, key, A, minsize, need=None):
+    """Area-balanced bisection of one region along its longer side.
+
+    Ordering comes from the CURRENT solve, which is the whole point: at level
+    L the cut is made on coordinates that already know about levels 1..L-1's
+    constraints, instead of on one unconstrained solve's coordinates the way a
+    single destructive `spread` pass does.
+    """
+    idx, x0, y0, w, h = region
+    if len(idx) <= minsize:
+        return [region]
+    horiz = w >= h
+    k = key[0] if horiz else key[1]
+    if need is None:
+        idx = sorted(idx, key=lambda q: (k[q], q))
+    else:
+        idx = sorted(idx, key=lambda q: (_bnd_rank(need[q], horiz), k[q], q))
+    half, run, cut = float(A[idx].sum()) / 2.0, 0.0, 1
+    for t, q in enumerate(idx):
+        run += A[q]
+        if run >= half:
+            cut = max(1, min(len(idx) - 1, t + 1))
+            break
+    left, right = idx[:cut], idx[cut:]
+    fr = float(A[left].sum()) / max(float(A[idx].sum()), EPS)
+    if horiz:
+        return [(left, x0, y0, w * fr, h),
+                (right, x0 + w * fr, y0, w * (1 - fr), h)]
+    return [(left, x0, y0, w, h * fr),
+            (right, x0, y0 + h * fr, w, h * (1 - fr))]
+
+
+def _solve_cog(Lap, bx, by, fixed, fx, fy, regions, A):
+    """One constrained re-solve: minimise the quadratic subject to, for every
+    region, the area-weighted centre of gravity of its FREE units sitting at the
+    region's geometric centre.
+
+        min  x'Lx - 2b'x    s.t.  Ax = u
+        =>   [[L, A'], [A, 0]] [x; lam] = [b; u]
+
+    The KKT system is one dense (F+R) solve and both axes share the matrix, so
+    it is factored once for two right-hand sides.
+
+    Constraining only the FREE units (rather than free+fixed with the fixed
+    contribution moved to the rhs) is deliberate: a region whose area is mostly
+    preplaced would otherwise demand its handful of movable units average out to
+    a point far outside the box, and the next partition would then read that
+    excursion as an ordering. A region with no free unit contributes no row.
+
+    This is the step the single `spread` pass does not have. Spreading by
+    bisection assigns coordinates and throws the objective away; here the
+    objective is still being minimised WHILE the units are pushed apart, so
+    wirelength keeps a say at every level instead of only at level 0.
+    """
+    U = Lap.shape[0]
+    free = ~fixed
+    F = int(free.sum())
+    if F == 0:
+        return fx.copy(), fy.copy()
+    fidx = np.flatnonzero(free)
+    pos = {int(k): t for t, k in enumerate(fidx)}
+    Lf = Lap[np.ix_(free, free)]
+    rx = bx[free] - Lap[np.ix_(free, fixed)] @ fx[fixed]
+    ry = by[free] - Lap[np.ix_(free, fixed)] @ fy[fixed]
+
+    rows, ux, uy = [], [], []
+    for idx, x0, y0, w, h in regions:
+        mem = [q for q in idx if free[q]]
+        if not mem:
+            continue
+        tot = float(sum(A[q] for q in mem))
+        if tot <= EPS:
+            continue
+        r = np.zeros(F)
+        for q in mem:
+            r[pos[q]] = A[q] / tot
+        rows.append(r)
+        ux.append(x0 + w / 2.0)
+        uy.append(y0 + h / 2.0)
+    if not rows:
+        try:
+            sx = np.linalg.solve(Lf, rx)
+            sy = np.linalg.solve(Lf, ry)
+        except np.linalg.LinAlgError:
+            sx = np.linalg.lstsq(Lf, rx, rcond=None)[0]
+            sy = np.linalg.lstsq(Lf, ry, rcond=None)[0]
+        out_x, out_y = fx.copy(), fy.copy()
+        out_x[free], out_y[free] = sx, sy
+        return out_x, out_y
+
+    Am = np.array(rows)
+    R = Am.shape[0]
+    K = np.zeros((F + R, F + R))
+    K[:F, :F] = Lf
+    K[:F, F:] = Am.T
+    K[F:, :F] = Am
+    # regions are disjoint so the rows are independent by construction; the tiny
+    # negative block is only insurance against a degenerate all-zero row
+    K[F:, F:] = -1e-12 * np.eye(R)
+    rhs = np.zeros((F + R, 2))
+    rhs[:F, 0] = rx
+    rhs[:F, 1] = ry
+    rhs[F:, 0] = ux
+    rhs[F:, 1] = uy
+    try:
+        sol = np.linalg.solve(K, rhs)
+    except np.linalg.LinAlgError:
+        sol = np.linalg.lstsq(K, rhs, rcond=None)[0]
+    out_x, out_y = fx.copy(), fy.copy()
+    out_x[free] = sol[:F, 0]
+    out_y[free] = sol[:F, 1]
+    return out_x, out_y
+
+
+def _snap_leaves(regions, cx, cy, fixed, A, need, minsize):
+    """Place every free unit at its LEAF region centre, discarding the solve's
+    coordinates but keeping the order they produced.
+
+    🚨 A centre-of-gravity row is an AVERAGE. A unit is free to sit far outside
+    its region as long as its region-mates compensate, and the solve will happily
+    use that freedom to shorten wire. `legalise` then reads those coordinates
+    twice -- once to pick each pair's cheaper axis from the overlap of their real
+    (w,h), and once to orient it -- and the first read is meaningless when the
+    centres are excursions rather than a spread.
+
+    MEASURED, full 100, unsnapped: for n<80 the alternation wins everywhere
+    (-0.12 to -0.23 weighted cost, 32/41 cases) while for n>=80 -- which carries
+    96.3% of the weight -- hpwl_gap still improves 0.480 -> 0.429 but area_gap
+    blows out 0.439 -> 0.522. Excursions accumulate with unit count, so the
+    damage is exactly where the weight is.
+
+    Snapping is not a retreat to `spread`: the leaf a unit lands in was decided
+    by log2(U) constrained solves that each knew about wirelength, which is the
+    whole point of the alternation. What is thrown away is only the within-region
+    offset, and stage A never contributed that anyway -- the bisection has always
+    kept the order and discarded the coordinates.
+    """
+    out_x, out_y = cx.copy(), cy.copy()
+    stack = list(regions)
+    guard = 0
+    while stack and guard < 4096:
+        guard += 1
+        reg = stack.pop()
+        idx, x0, y0, w, h = reg
+        free_mem = [q for q in idx if not fixed[q]]
+        if not free_mem:
+            continue
+        if len(idx) > 1:
+            # only reachable when the alternation hit its level cap; finish the
+            # recursion geometrically, the way `spread` would
+            parts = _split(reg, (cx, cy), A, 1, need)
+            if len(parts) > 1:
+                stack.extend(parts)
+                continue
+        for q in free_mem:
+            out_x[q] = x0 + w / 2.0
+            out_y[q] = y0 + h / 2.0
+    return out_x, out_y
+
+
+def gordian(v, units):
+    """Stage A, alternating: solve -> partition -> re-solve under the new
+    regions -> partition again, until every region holds one unit.
+
+    L129 v6's stage A does all the spreading in ONE destructive step: an
+    unconstrained solve piles every connected unit onto a point, and a single
+    recursive bisection then reads an ORDER off that pile and discards the
+    objective. Everything after it (relation selection, compaction, the LP) is
+    confined to the topology that one order implies, which is why L128's two
+    cheap hpwl routes were both null -- they were operating downstream of the
+    only decision that matters.
+
+    The alternation keeps the objective alive during the spreading. Each level
+    adds one centre-of-gravity equality per region, which is weak enough that
+    units still move to shorten wire, and strong enough that they cannot pile
+    up again; the next partition is then made on coordinates that already
+    respect every earlier level.
+
+    Returns the same (cx, cy, uof) triple as global_place + spread.
+    """
+    U = len(units)
+    uof = unit_map(units)
+    fixed, fx, fy = fixed_centres(v, units)
+    Lap, bx, by = assemble(v, units, uof)
+    px = float(np.mean([p[0] for p in v["pins"]])) if v["pins"] else 0.0
+    py = float(np.mean([p[1] for p in v["pins"]])) if v["pins"] else 0.0
+    for k in range(U):
+        Lap[k, k] += 1e-6
+        bx[k] += 1e-6 * px
+        by[k] += 1e-6 * py
+    if not (~fixed).any():
+        return fx, fy, uof
+
+    # level 0 -- the unconstrained solve, exactly what global_place computes
+    cx, cy = _solve_cog(Lap, bx, by, fixed, fx, fy, [], np.ones(U))
+    A, ox, oy, side = _region_box(v, units, cx, cy)
+
+    need = [u["need"] for u in units] if GORDIAN_BND else None
+    regions = [(list(range(U)), ox, oy, side, side)]
+    for _lvl in range(max(1, GORDIAN_MAXLVL)):
+        nxt = []
+        for reg in regions:
+            nxt.extend(_split(reg, (cx, cy), A, max(1, GORDIAN_MIN), need))
+        if len(nxt) == len(regions):
+            break                       # every region terminal; nothing to add
+        regions = nxt
+        cx, cy = _solve_cog(Lap, bx, by, fixed, fx, fy, regions, A)
+    if GORDIAN_SNAP:
+        cx, cy = _snap_leaves(regions, cx, cy, fixed, A, need,
+                              max(1, GORDIAN_MIN))
+    return cx, cy, uof
+
+
 # ── stage C: legalise -- relation selection + longest-path compaction ───────
 def legalise(v, units, cx, cy, rounds=40, axis0=None):
     """Overlap-free by CONSTRUCTION.
@@ -581,29 +903,57 @@ def legalise(v, units, cx, cy, rounds=40, axis0=None):
                     # Flip only the single binding predecessor, not all of them:
                     # flipping the whole set thrashes between the two axes and
                     # burns the repair budget without converging.
-                    worst = max(pred[k], key=lambda p: low[p] + size[p])
-                    return None, (k, [worst])
+                    # Returned worst-first so the caller can skip a pair it has
+                    # already flipped once (LEGAL_LOCK) rather than oscillate.
+                    return None, (k, sorted(pred[k],
+                                            key=lambda p: -(low[p] + size[p])))
                 low[k] = want
             else:
                 low[k] = base
         return low, None
+
+    # 🚨 A pair flipped x->y and then straight back to x oscillates forever, and
+    # the loop just burns `rounds` and reports "did not converge".
+    #
+    # MEASURED (l132_coverage_probe.py): ALL 36 first-pass failures on the in-set
+    # 100 are this, and NONE are the other exit (a pinned unit with no
+    # predecessor to flip). Several fail having touched only ONE distinct pair in
+    # 40 rounds -- the same pair, forever. Raising rounds 40 -> 400 changes the
+    # outcome on exactly zero cases.
+    #
+    # LEGAL_LOCK flips each pair at most once and otherwise takes the next
+    # binding predecessor, so the repair either makes progress or admits it is
+    # out of moves.
+    locked = set()
+
+    def pick(k, cand):
+        for p in cand:
+            if not LEGAL_LOCK or (min(k, p), max(k, p)) not in locked:
+                return p
+        return None
 
     for _ in range(rounds):
         lx, bad = compact(0, px, W)
         if lx is None:
             if bad is None:
                 return None, None, axis
-            k, ps = bad
-            for p in ps:                            # flip the offenders to y
-                axis[(min(k, p), max(k, p))] = 1
+            k, cand = bad
+            p = pick(k, cand)
+            if p is None:
+                return None, None, axis
+            axis[(min(k, p), max(k, p))] = 1        # flip the offender to y
+            locked.add((min(k, p), max(k, p)))
             continue
         ly, bad = compact(1, py, H)
         if ly is None:
             if bad is None:
                 return None, None, axis
-            k, ps = bad
-            for p in ps:
-                axis[(min(k, p), max(k, p))] = 0
+            k, cand = bad
+            p = pick(k, cand)
+            if p is None:
+                return None, None, axis
+            axis[(min(k, p), max(k, p))] = 0
+            locked.add((min(k, p), max(k, p)))
             continue
         _push_to_max(axis, px, lx, W, 0, need, pre)
         _push_to_max(axis, py, ly, H, 1, need, pre)
@@ -784,8 +1134,11 @@ def place(c):
     if MIB_UNIFY:
         unify_mib(v, DIMS)
     units = build_units(v, DIMS)
-    cx, cy, uof = global_place(v, units)
-    cx, cy = spread(v, units, cx, cy)
+    if GORDIAN:
+        cx, cy, uof = gordian(v, units)
+    else:
+        cx, cy, uof = global_place(v, units)
+        cx, cy = spread(v, units, cx, cy)
     # One compaction is not enough: the relation set is all n^2/2 pairs, so the
     # bbox is whatever the chain structure happens to be, and the choice made
     # from the SPREAD centres is a poor one (area_gap ~1.21 regardless of how
@@ -814,12 +1167,48 @@ def place(c):
     if lx is None:
         return None
     out = [[0.0, 0.0, 0.0, 0.0] for _ in range(v["n"])]
+    if EXACT_ABUT:
+        _emit_abut(units, lx, ly, out)
+        return out
     for k, u in enumerate(units):
         for t, i in enumerate(u["mem"]):
             ox, oy = u["off"][t]
             w, h = u["dims"][i]
             out[i] = [lx[k] + ox, ly[k] + oy, w, h]
     return out
+
+
+def _emit_abut(units, lx, ly, out):
+    """Emit member coordinates by REPLAYING the shelf accumulation in absolute
+    coordinates, so a shared edge is the identical float on both sides.
+
+    🚨 `lx[k] + off_i` does not abut. The evaluator builds a block's far edge as
+    `x + w` (iccad2026_evaluate.py, shapely box), and floating-point addition is
+    not associative: `(lx + ox) + w` and `lx + (ox + w)` differ by an ULP. The
+    packing abuts exactly in exact arithmetic and lands +-2.8e-14 off in doubles.
+
+    MEASURED on case 66: the baseline landed on +2.84e-14 -- a GAP, so
+    `unary_union` returned two geometries and the group scored
+    `connected_components - 1 = 1`. The alternation landed on -2.84e-14 -- a hair
+    of OVERLAP, so the union merged and the group scored 0. Same packing, same
+    relative offsets to 1e-6, opposite verdicts.
+
+    So part of `grouping_violations` in this placer has been a coin flip on the
+    last bit, and any vgrp delta between two stage-A forms is that noise plus
+    whatever is real. Accumulating instead of offsetting removes it: the next
+    member's low edge is computed by the same `+ w` the evaluator uses for the
+    previous member's high edge, so they are bit-identical and the polygons touch.
+    """
+    for k, u in enumerate(units):
+        y = ly[k]
+        for r, row in enumerate(u["rows"]):
+            x = lx[k] + u["rowx"][r]
+            rh = u["rowh"][r]
+            for i in row:
+                w, h = u["dims"][i]
+                out[i] = [x, (y + rh - h) if i in u["lift"] else y, w, h]
+                x = x + w
+            y = y + rh
 
 
 # ── evaluation ──────────────────────────────────────────────────────────────
@@ -879,10 +1268,22 @@ def official(c, P):
     return m
 
 
+def _selected(a):
+    """--minn/--maxn exist because the weight is exp(n/12): the n>=80 cases carry
+    96% of it, so iterating on the first 30 (which are all small) measures the
+    3.7% of the score nobody is graded on."""
+    sel = CASES[:a.limit] if a.limit else CASES
+    if a.minn:
+        sel = [c for c in sel if c["n"] >= a.minn]
+    if a.maxn:
+        sel = [c for c in sel if c["n"] <= a.maxn]
+    return sel
+
+
 def mode_run(a):
     rows, cov, feas = [], 0, 0
     t0 = time.time()
-    for c in (CASES[:a.limit] if a.limit else CASES):
+    for c in _selected(a):
         t1 = time.perf_counter()
         P = place(c)
         if P is not None and LP_POLISH:
@@ -912,7 +1313,7 @@ def mode_run(a):
                          vmib=float(m.mib_violations),
                          nsoft=float(m.max_possible_violations),
                          runtime_seconds=dt, error=None))
-    tot = len(CASES[:a.limit] if a.limit else CASES)
+    tot = len(_selected(a))
     print(f"\n=== L129 global placer ===")
     print(f"  cases            {tot}")
     print(f"  legalised        {cov}/{tot}   ({100 * cov / max(tot, 1):.0f}% coverage)")
@@ -940,6 +1341,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", choices=["run"])
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--minn", type=int, default=0)
+    ap.add_argument("--maxn", type=int, default=0)
     ap.add_argument("--out", default="")
     ap.add_argument("--verbose", action="store_true")
     sys.exit(mode_run(ap.parse_args()))
