@@ -74,6 +74,14 @@ EPS = 1e-9
 DENSITY = float(os.environ.get("L129_DENSITY", "0.80"))
 REFINE_AREA = os.environ.get("L129_REFINE_AREA", "1") != "0"
 LP_POLISH = os.environ.get("L129_LP", "1") != "0"
+# L134: the LP is 95.8% of a case and each pass costs ~1.5s weighted (up to 4.9s
+# for ONE pass at n=99) against a 48c incumbent wall of 1.0-1.8s. These two make
+# the polish affordable-by-construction instead of unconditional:
+#   LP_BUDGET  stop before a pass once the case has already spent this long
+#   LP_MAXN    skip the polish entirely above this block count
+# 0 = off for both, i.e. the unconditional 6 passes that were measured before.
+LP_BUDGET = float(os.environ.get("L129_LP_BUDGET", "0"))
+LP_MAXN = int(os.environ.get("L129_LP_MAXN", "0"))
 MIB_UNIFY = os.environ.get("L129_MIB", "1") != "0"
 BND_SHELF = os.environ.get("L129_BND_SHELF", "1") != "0"
 # IRLS=1 (plain quadratic) is the DEFAULT and the measured best: see the
@@ -1230,6 +1238,8 @@ def lp_polish(c, P, iters=6):
     """
     key = "l129"
     n = c["n"]
+    if LP_MAXN and n > LP_MAXN:
+        return P
     sumA = sum(max(0.0, float(c["at"][i])) for i in range(n))
     P0 = [tuple(float(x) for x in q) for q in P]
     try:
@@ -1243,9 +1253,21 @@ def lp_polish(c, P, iters=6):
                                        c["pins"], c["cons"], base)
     saved, oc.PRUNE_B = oc.PRUNE_B, None
     Q = P0
+    t0 = time.perf_counter()
+    prev = 0.0
     try:
         for _ in range(iters):
+            if LP_BUDGET > 0:
+                # Charge the NEXT pass at the price of the last one. A pass cannot
+                # be interrupted once started, so budgeting on elapsed alone would
+                # always overshoot by a full pass -- and on the cases that matter
+                # a single pass is 4.9s against a 1.0-1.8s wall.
+                el = time.perf_counter() - t0
+                if el + prev > LP_BUDGET:
+                    break
+            tp = time.perf_counter()
             newQ, tele, _B = oc.lp_pass(key, Q, 0.06, sep_trim=False)
+            prev = time.perf_counter() - tp
             if newQ is None:
                 break
             if not oc.hard_ok(P0, newQ, key):
