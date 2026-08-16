@@ -1574,6 +1574,87 @@ def _row_fallback(block_count, area_targets, constraints, target_positions):
     return pos
 
 
+_SNAP_TOL = 1e-9
+
+
+def _snap_group_abutment(pos, constraints, block_count, tol=_SNAP_TOL):
+    """L131: close sub-ULP gaps between members of the same cluster group.
+
+    🚨 `origin + offset` DOES NOT ABUT in doubles. The evaluator builds a block's
+    far edge as `x + w` and floating-point addition is not associative, so
+    `(o+ox)+w` and `o+(ox+w)` differ by an ULP: a packing that abuts exactly in
+    exact arithmetic lands +-2.8e-14 off, and `unary_union` then either merges
+    the group or splits it. A split costs `connected_components - 1` grouping
+    violations.
+
+    MEASURED on the shipped 48c result: 2 of its 16 grouping violations are this,
+    on cases 69 (gap +2.842e-14) and 78 (+1.421e-14), both heavy. Snapping them
+    and re-running the OFFICIAL evaluator moves the weighted total
+    1.236791669773 -> 1.235854685125, i.e. **+0.0758%**, 0 new infeasibilities.
+    See L131_REPORT.md.
+
+    WHY A SNAP IS SAFE, and it is the reason this can be a post-process at all:
+      * `check_overlap` (iccad2026_evaluate.py:223) ignores overlaps below
+        **1e-6** on both axes -- "touching edges OK". Gaps here are ~1e-14 and a
+        snap moves a block by at most `tol` = 1e-9, so it cannot manufacture an
+        overlap violation, with five orders of magnitude to spare.
+      * preplaced blocks are NEVER moved (position is a HARD constraint);
+      * widths and heights are never touched (dimensions and area are HARD);
+      * only gaps strictly inside (0, tol] are closed, so a real gap stays a real
+        gap and a group that genuinely has two components keeps both.
+
+    Assigning `x_j = x_i + w_i` makes the two edges the identical float -- the
+    same expression the evaluator uses for block i's far edge -- so they touch.
+
+    Never raises: this sits on the shipped return path and M48's rule is that
+    nothing escapes `solve()`. On any surprise it returns the input unchanged.
+    """
+    try:
+        n = int(block_count)
+        if n <= 0 or constraints is None or pos is None or len(pos) < n:
+            return pos
+        groups = {}
+        pre = [False] * n
+        for i in range(n):
+            row = constraints[i]
+            pre[i] = int(row[1]) != 0
+            g = int(row[3])
+            if g:
+                groups.setdefault(g, []).append(i)
+        groups = [m for m in groups.values() if len(m) > 1]
+        if not groups:
+            return pos
+
+        P = [list(map(float, q)) for q in pos]
+        moved = False
+        for mem in groups:
+            for _ in range(4):                       # a chain a-b-c settles fast
+                for ax in (0, 1):
+                    oth = 1 - ax
+                    order = sorted(mem, key=lambda i: P[i][ax])
+                    for a in order:
+                        for b in order:
+                            if a == b or pre[b]:
+                                continue
+                            # a shared edge needs real overlap on the other axis
+                            lo = max(P[a][oth], P[b][oth])
+                            hi = min(P[a][oth] + P[a][oth + 2],
+                                     P[b][oth] + P[b][oth + 2])
+                            if hi - lo <= tol:
+                                continue
+                            far = P[a][ax] + P[a][ax + 2]
+                            gap = P[b][ax] - far
+                            if 0.0 < gap <= tol:
+                                P[b][ax] = far
+                                moved = True
+        if not moved:
+            return pos
+        out = [tuple(q) for q in P]
+        return out + list(pos[n:]) if len(pos) > n else out
+    except Exception:
+        return pos
+
+
 class MyOptimizer(FloorplanOptimizer):
     """Constructive fixed-outline placer, portfolio + proxy selection."""
 
@@ -1600,22 +1681,28 @@ class MyOptimizer(FloorplanOptimizer):
         # :917-922). Never triggered on the 100 local cases; a hidden weird
         # case degrades to the SA fallback (feasible 100/100, M43) and, if
         # even that raises, to a trivial hard-feasible row layout.
+        # L131: every exit goes through the abutment snap. It is a no-op unless a
+        # cluster group carries a sub-ULP gap, and it cannot fail (see the
+        # function). Applied here rather than inside the placer so it covers the
+        # SA and row fallbacks too -- they emit `origin + offset` layouts as well.
+        def _snap(p):
+            return _snap_group_abutment(p, constraints, block_count)
         try:
-            return self._solve_impl(block_count, area_targets, b2b_connectivity,
-                                    p2b_connectivity, pins_pos, constraints,
-                                    target_positions)
+            return _snap(self._solve_impl(
+                block_count, area_targets, b2b_connectivity,
+                p2b_connectivity, pins_pos, constraints, target_positions))
         except Exception as e:
             print(f"[constructive] solve raised {e!r}; python SA fallback",
                   file=sys.stderr)
         try:
-            return python_sa_solve(block_count, area_targets, b2b_connectivity,
-                                   p2b_connectivity, pins_pos, constraints,
-                                   target_positions)
+            return _snap(python_sa_solve(
+                block_count, area_targets, b2b_connectivity,
+                p2b_connectivity, pins_pos, constraints, target_positions))
         except Exception as e:
             print(f"[constructive] SA fallback raised {e!r}; row fallback",
                   file=sys.stderr)
-            return _row_fallback(block_count, area_targets, constraints,
-                                 target_positions)
+            return _snap(_row_fallback(block_count, area_targets, constraints,
+                                       target_positions))
 
     def _solve_impl(
         self,

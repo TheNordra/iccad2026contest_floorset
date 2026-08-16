@@ -50,6 +50,18 @@ using namespace std;
 static const int B_LEFT = 1, B_RIGHT = 2, B_TOP = 4, B_BOTTOM = 8;
 static const double MARGIN = 1e-4;
 static const double TOL = 1e-6;
+// L136: the FRAME must strictly contain the preplaced extent, but MARGIN (1e-4)
+// is a HUNDRED TIMES the evaluator's boundary tolerance (TOL = 1e-6, matching
+// iccad2026_evaluate.py:527). A preplaced block carrying a boundary requirement
+// therefore sits at the true edge while the bbox runs to edge+1e-4, and scores a
+// violation it can NEVER satisfy: its position is a hard constraint so it cannot
+// move to the bbox, and the packing is tightly abutted so the bbox cannot be
+// pulled in to meet it (L135 §4 -- all three post-process repairs fail).
+// Measured on the shipped 48c result: 10 such violations, worth up to +0.3566%.
+// FRAME_EPS keeps the strict containment MARGIN was there for while staying well
+// inside TOL. Used ONLY for frame/seed sizing; the packing candidate offsets and
+// the escape rows still use MARGIN.
+static const double FRAME_EPS = 1e-9;
 
 struct Edge { int i, j; double w; };
 struct Block {
@@ -680,7 +692,7 @@ static vector<pair<double,double>> frame_candidates() {
     set<pair<long long,long long>> seen; vector<pair<double,double>> frames;
     for (double s:scales) for (double a:aspects){
         double w=base*s*sqrt(a), h=base*s/sqrt(a);
-        w=max(w,max(pre_w+MARGIN,max_iw+MARGIN)); h=max(h,max(pre_h+MARGIN,max_ih+MARGIN));
+        w=max(w,max(pre_w+FRAME_EPS,max_iw+FRAME_EPS)); h=max(h,max(pre_h+FRAME_EPS,max_ih+FRAME_EPS));
         auto key=make_pair((long long)llround(w*1e6),(long long)llround(h*1e6));
         if (seen.insert(key).second) frames.push_back({w,h});
     }
@@ -1969,7 +1981,7 @@ static void solve() {
         vector<pair<double,double>> seeds; set<pair<long long,long long>> seen;
         for (double s:{1.00,1.02,1.05}) for (double am:{1.0,1.12,0.89}){
             double w=wc*s*am, h=hc*s/am;
-            w=max(w,max(pre_w+MARGIN,max_iw+MARGIN)); h=max(h,max(pre_h+MARGIN,max_ih+MARGIN));
+            w=max(w,max(pre_w+FRAME_EPS,max_iw+FRAME_EPS)); h=max(h,max(pre_h+FRAME_EPS,max_ih+FRAME_EPS));
             auto key=make_pair((long long)llround(w*1e6),(long long)llround(h*1e6));
             if (seen.insert(key).second) seeds.push_back({w,h});
         }
