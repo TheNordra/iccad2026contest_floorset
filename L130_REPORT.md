@@ -157,6 +157,13 @@ Headline solo numbers, full 100:
 
 ## 4. 🚨 Why a −5.1% solo win moves the gate the WRONG way
 
+> **Every gate number in this report was produced with `--dt 0`** and is
+> therefore the candidate's quality contribution *assuming its runtime is free*.
+> It is not: measured, the candidate sets a new 48c wall on 76/78 cases and NET
+> is **−38.297%** in set. See L133 §2. The comparisons below are still valid
+> against each other — they all make the same assumption — but none of them is a
+> deployment number.
+
 | | gate | beats portfolio on |
 |---|---|---|
 | v6 + abut | **+0.011%** | 67 (n=88), 28 (n=49), 10 (n=31) |

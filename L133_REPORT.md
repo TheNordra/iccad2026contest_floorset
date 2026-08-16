@@ -37,9 +37,48 @@ Two prerequisites did not exist and were built here:
 Selection efficiency 99.4% (D=0.40) and 98.2% (D=0.80) — the proxy is still
 landing on the oracle, so neither number is limited by arbitration.
 
-`dRF@48c = +0.000%` for both: **0 of 175 and 0 of 142 cases set a new wall.** The
-candidate is free at 48 cores, so nothing here is being lost to runtime. What is
-missing is quality.
+### 🚨 Those gate numbers assume the candidate is FREE. It is not.
+
+**Every gate figure above was produced with `--dt 0`, which TELLS the tool the
+candidate costs nothing.** The accompanying `dRF@48c = +0.000%, 0 of 175 cases
+set a new wall` is therefore a tautology, not a measurement, and an earlier
+version of this report drew "runtime is not the constraint and never was" from
+it. That was wrong.
+
+Re-scored with the candidate's measured per-case compute (`place` + `lp_polish`,
+which is exactly what a deployed form would pay):
+
+| | assume free (`--dt 0`) | **measured per-case cost** |
+|---|---|---|
+| in-set (D=0.40) | +0.045% | dRF **+38.342%** → NET **−38.297%** |
+| OOS (D=0.40) | +0.020% | dRF **+31.701%** → NET **−31.680%** |
+
+The candidate sets a new wall on **76/78** in-set and **155/175** OOS cases. At
+48 cores the wall is the max-setter (M67-E, 100/100), so one slow candidate
+raises it for the whole case:
+
+    worker_3/layouts_1568/L53   n=117   incumbent wall 1.55s   ML 27.77s
+    case 78                     n= 99   incumbent wall 1.36s   ML 35.92s
+
+Candidate runtime against the shipped 0.98s average:
+
+| | mean | median | max | weighted |
+|---|---|---|---|---|
+| v6 | 3.44s | 1.24s | 34.50s | 12.19s |
+| GORDIAN+abut | 3.74s | 1.07s | 28.01s | 13.59s |
+| base+abut+D=0.40 | 3.48s | 1.58s | 35.92s | 9.51s |
+
+🔑 **The line does not merely fail to clear the bar — deployed as it stands it
+would cost ~30–38% of total score.** 08-15 §4 flagged L129 as unpriced for
+exactly this reason ("this form raises the wall first"). L130 priced stage A
+(0.06%, correct) and never carried the pricing through to the candidate as a
+whole, which is the L125 rule and the one that mattered.
+
+The `+0.020%` figure remains meaningful as an **upper bound on the quality
+contribution** — what the candidate would be worth if its runtime were free —
+and that is the only way it should ever be quoted. 95.8% of the time is
+`lp_polish`; removing the LP takes the solo cost from ~1.76 back to ~2.4, so the
+runtime is not obviously separable from the quality.
 
 ## 3. Why this is a mechanism and not the in-set artefact
 
@@ -92,22 +131,26 @@ back in layouts that do not survive the hard checks.
 
 ## 5. Where the line actually stands
 
-    OOS NET     +0.020%
-    ship bar     0.30%      -> 15x short
-    M76 died at  +0.10%     -> this is 5x below the thing that already died
+    OOS quality contribution (dt=0)   +0.020%    <- upper bound, runtime free
+    ship bar                           0.30%     -> 15x short even so
+    OOS NET with measured runtime     -31.680%   <- what deploying it costs
 
-Both arms RED. `dRF@48c` is zero, so runtime is not the constraint and never was
-— the candidate is simply not good enough to beat a portfolio at 1.2935 on more
-than a handful of cases.
+Both arms RED, and on the honest number the line is not "close but short", it is
+**deeply negative**: the candidate is neither good enough to beat a portfolio at
+1.2935 on more than a handful of cases, nor cheap enough to be carried for free
+while it tries.
 
 **What is worth keeping from this line, in order:**
 
 1. **The abutment fix (L131)** — +0.0758% on the shipped result, officially
    measured, a correctness fix rather than a search win. Independent of
-   everything above and the only item here with a number above a house bar.
-2. **DENSITY=0.40** — validated OOS, worth +0.019pp over the shipped setting, and
-   free. Pick it on **coverage**, which is smooth, monotone and transfers; never
-   on the in-set gate.
+   everything above, carries **no runtime cost at all** (it is a coordinate
+   post-process), and the only item here with a number above a house bar.
+2. **DENSITY=0.40** — validated OOS, worth +0.019pp of *quality contribution*
+   over the shipped setting, and free as a knob. Pick it on **coverage**, which
+   is smooth, monotone and transfers; never on the in-set gate. It does not
+   rescue the runtime problem: it is a better setting for a candidate that still
+   cannot be afforded.
 3. **The GORDIAN alternation (L130)** — best solo quality ever produced by this
    line (−5.1% weighted cost, all three deficit terms) and NOT measured OOS,
    because at DENSITY=0.40 in set it gated at +0.000% and was not worth 240 more

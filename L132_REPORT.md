@@ -53,6 +53,11 @@ forced, chains are shorter, and a pin is less likely to be overrun.
 
 ## 3. 🚨 But the gate does not follow coverage, or solo cost, or anything
 
+> As in L130, every gate number here is `--dt 0` — the quality contribution with
+> runtime assumed free. Measured, this candidate costs 30–38% of total score
+> (L133 §2). The noise-floor argument below is unaffected, since all seven
+> DENSITY settings share the assumption.
+
 Full 100, baseline arm with exact abutment, gate at 48c (bar 0.05%):
 
 | DENSITY | coverage | weighted solo | **gate** | wins |
