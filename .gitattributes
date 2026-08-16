@@ -15,3 +15,7 @@ bin/constructive_linux -text
 # (2967efb6876f70685a18e1a160644fdd) and a CRLF rewrite on checkout would hash
 # differently while looking correct. The pattern above does NOT cover this path.
 build_submission.L131FIX/** -text
+
+# L136 fix package (built + verified 2026-08-16, NOT uploaded). Same reasoning
+# as build_submission/ above; the pattern there does NOT cover this path.
+build_submission.L136FIX/** -text
