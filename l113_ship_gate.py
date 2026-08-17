@@ -57,7 +57,7 @@ def _load(p):
     return j, {r["test_id"]: r for r in j["test_results"]}
 
 
-def run(cores: int, anchor: Path, test_id, keep: bool) -> bool:
+def run(cores: int, anchor: Path, test_id, keep: bool, extra_env=None) -> bool:
     print(f"== L113 package gate (ICCAD_ADAPTIVE_CORES={cores}) ==")
     if not anchor.exists():
         print(f"  FAIL: anchor {anchor.name} missing -- generate it first with the "
@@ -92,6 +92,14 @@ def run(cores: int, anchor: Path, test_id, keep: bool) -> bool:
     env["PYTHONIOENCODING"] = "utf-8"
     env["ICCAD_ADAPTIVE_CORES"] = str(cores)
     env["ICCAD_ROUTE_A_STATS"] = str(stats)
+    # L137: the ambient ICCAD_* strip above is deliberate (profile_audit.py:180)
+    # -- the package must be measured on shipped defaults, not on whatever the
+    # shell happens to carry. `--env K=V` re-admits ONE knob at a time and prints
+    # it, so an A/B is explicit in the transcript instead of ambient.
+    for kv in (extra_env or []):
+        k, _, v = kv.partition("=")
+        env[k] = v
+        print(f"  env override: {k}={v}")
     cmd = [ms._PY, "-u", "iccad2026_evaluate.py", "--evaluate", "op_wrapper.py",
            "-o", _RESULTS_NAME]
     if test_id is not None:
@@ -164,12 +172,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cores", type=int, default=48,
                     help="value forced into ICCAD_ADAPTIVE_CORES (default 48)")
-    ap.add_argument("--anchor", default="results_M80_48c_anchor.json")
+    # L137 RE-ANCHOR (2026-08-16): the tree is now L136 (L131 abutment snap +
+    # L136 FRAME_EPS), which is what was uploaded on 08-16, so the pre-L136
+    # anchors FAIL BY DESIGN on every case the fixes improved. Previous anchors,
+    # kept because they still describe real shipped artefacts:
+    #   results_M80_48c_anchor.json
+    #   results_L114_48c_lp_anchor.json   1.2367916697725434  (the 08-15 upload)
+    ap.add_argument("--anchor", default="results_L136_48c_anchor.json")
     ap.add_argument("--test-id", type=int, default=None,
                     help="single case (fast smoke); skips the total check")
     ap.add_argument("--keep", action="store_true", help="keep the extracted tree")
+    ap.add_argument("--env", action="append", default=[], metavar="K=V",
+                    help="re-admit one ICCAD_* knob past the ambient strip (L137)")
     a = ap.parse_args()
-    ok = run(a.cores, _REPO / a.anchor, a.test_id, a.keep)
+    ok = run(a.cores, _REPO / a.anchor, a.test_id, a.keep, a.env)
     print(f"\nL113 SHIP GATE: {'ALL PASS' if ok else 'FAIL'}")
     sys.exit(0 if ok else 1)
 

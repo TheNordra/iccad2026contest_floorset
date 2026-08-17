@@ -64,7 +64,13 @@ _VERIFY = _BUILD / "verify"
 # M76 ship chain: the anchor follows what the tree actually produces. It was
 # results_shipped_m71.json (1.305389893450635 = the uploaded Beta package); the
 # tree has been M74 since 2026-07-30 and M74 is what this package now carries.
-_ANCHOR = _REPO / "results_M74_default.json"        # 1.293461035226291
+# L137 RE-ANCHOR (2026-08-16): the tree is now L136 -- the L131 abutment snap
+# (optimizer_constructive._snap_group_abutment) plus the L136 FRAME_EPS fix in
+# constructive.cpp -- and that is what was uploaded on 08-16. Against the M74
+# anchor this gate FAILED BY DESIGN on every case the fixes improved, which
+# makes it useless as a regression gate; re-anchored so FAIL means regression.
+#   was: results_M74_default.json   1.293461035226291
+_ANCHOR = _REPO / "results_L136_default.json"       # 1.2772224039603648
 _RESULTS_NAME = "results_m67b_opwrapper.json"
 
 _CONDA_PY = Path(r"C:\Users\Nordra\.conda\envs\iccadv\python.exe")
