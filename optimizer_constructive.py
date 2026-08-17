@@ -554,6 +554,59 @@ _PROFILES.extend(_M124_EXTRA)
 _M124_CORES_MIN = 40
 
 
+# L137 (2026-08-17): the GORDIAN hint as a POOL TIER, not a global overlay.
+#
+# WHY A TIER. Applied globally (ICCAD_HINT_MODE=1 on every profile) the hint is
+# quality-positive -- in-set 48c 1.2284738 -> 1.2279371 (+0.0437%), OOS s1 240
+# cases 1.563347 -> 1.561957 (+0.0889%) with hpwl_gap 0.3135 -> 0.3116 and
+# area_gap 0.2569 -> 0.2529, both moving the way the mechanism predicts -- but it
+# also moves the 48c wall +1.76%, and that cost is NOT spread: case 90 alone is
+# 190% of the weighted delta and case 91 another 73% (over 100% because the rest
+# get FASTER). Timed on one profile, case 90 is 0.213 -> 0.380s while case 92,
+# the biggest quality gain, is 0.674 -> 0.674s unchanged.
+#
+# A tier removes exactly that cost. At >=40 cores the wall is the max-setter
+# (M67-E, 100/100), so a 0.38s hinted profile against case 90's 2.93s wall costs
+# nothing on the max term, and the existing profiles keep their exact runtime AND
+# their exact output. M76/M77 measured the proxy as oracle-perfect on
+# heterogeneous candidates, so an added candidate cannot lose quality -- it can
+# only fail to be selected.
+#
+# Same discipline as M72/M76/M80/M124: appended UNCONDITIONALLY so indices stay
+# stable (_BIG_REDUNDANT_IDX / _M45_BAND_DROP are index-based frozensets over
+# 0..40), gated at CALL time so a probe that sets the env after import actually
+# flips it, and NEVER inserted or reordered.
+#
+# Sources are four diverse always-in-pool base recipes (<_M55_BASE_LEN so they
+# are never dropped by the M55 gate): free_aspect, free_gm_wt_wire,
+# free_pin_wt_wire, free_gm_tight_wire -- spanning GUIDE_MED / BFS_PIN / tight
+# frames, since the hint changes the anchor term and that interacts with the
+# wire and frame knobs.
+_L137_SRC = (0, 2, 4, 5)
+_L137_EXTRA = [dict(_PROFILES[i], ICCAD_HINT_MODE="1") for i in _L137_SRC]
+_L137_BASE = len(_PROFILES)
+_L137_IDX = frozenset(range(_L137_BASE, _L137_BASE + len(_L137_EXTRA)))
+_PROFILES.extend(_L137_EXTRA)
+_L137_CORES_MIN = 40
+
+
+def _l137_active(block_count: int) -> FrozenSet[int]:
+    """Tier indices this call should add. CALL time, never import time.
+
+    Uses _effective_cores_hi() (unknown -> 0) for the same reason M80/M124 do:
+    this tier fires at HIGH core counts, so the 9999 sentinel that keeps tier-4
+    safe would switch it ON wherever detection fails -- and below the gate the
+    pool is sum-bound, where four more profiles DO cost wall.
+
+    Default OFF while the net is unresolved: the quality is measured and the
+    runtime is not yet, so this must not ship by accident."""
+    if os.environ.get("ICCAD_HINT_POOL", "0") != "1":
+        return frozenset()
+    if _effective_cores_hi() < _L137_CORES_MIN:
+        return frozenset()
+    return _L137_IDX
+
+
 def _m124_active(block_count: int) -> FrozenSet[int]:
     """Tier indices this call should add. Read at CALL time, never at import, so
     a probe that sets the env after importing this module actually flips it.
@@ -911,7 +964,8 @@ def _pool_indices(block_count: int) -> List[int]:
     # gate lives inside _m80_active() because, unlike M72/M76, this tier is meant
     # to SHIP and the gate is the mechanism, not a measurement switch.
     extra = ((_M55_IDX if m55 else frozenset()) | esc
-             | _m80_active(block_count) | _m124_active(block_count))
+             | _m80_active(block_count) | _m124_active(block_count)
+             | _l137_active(block_count))          # L137 GORDIAN-hint tier
     full = [i for i in range(len(_PROFILES))
             if i < _M55_BASE_LEN or i in extra]
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
@@ -1947,8 +2001,16 @@ class MyOptimizer(FloorplanOptimizer):
         # knob unset this is bit-identical to L136. Any failure falls back to
         # gnn_hint=None, i.e. the shipped path -- the hint is an optimisation,
         # never a dependency.
+        # The hint block rides in the ONE serialized input every profile shares,
+        # so it is computed at most once per case. A profile without
+        # ICCAD_HINT_MODE parses the block and ignores it, which is why the
+        # untiered profiles stay bit-identical -- verified by the gate.
+        # Computed when EITHER the tier is live (the deployment shape) or the
+        # global knob is set (the A/B shape kept for measurement).
         _hint = None
-        if os.environ.get("ICCAD_HINT_MODE", "0") != "0":
+        _want = (os.environ.get("ICCAD_HINT_MODE", "0") != "0"
+                 or bool(_l137_active(block_count)))
+        if _want:
             try:
                 _hint = _gordian_hint(block_count, area_targets,
                                       b2b_connectivity, p2b_connectivity,
