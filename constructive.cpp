@@ -88,6 +88,15 @@ static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
 //   1 = seed ONLY the sw==0 blocks, i.e. exactly the ones with no pull today
 //   2 = seed every block, overriding the placed-neighbour centroid
 static int HINT_MODE = 0;       // ICCAD_HINT_MODE
+// L137: cap the refine passes on a HINTED run only. The refine loop (see the M9
+// note above) has no convergence test -- its only early exit is run_frame
+// FAILING -- so on a case where the hint makes a previously-unpackable frame
+// pack, the loop stops aborting and runs all REFINE_ITERS passes. That is where
+// the whole runtime cost of the hint lives: measured on case 90, hinted and
+// unhinted are identical at REFINE_ITERS=1 (0.230s vs 0.236s) and 0.457s vs
+// 0.271s at the default 12. This caps that one term without touching the
+// unhinted path, which keeps its 12. 0 = no cap.
+static int HINT_REFINE = 0;     // ICCAD_HINT_REFINE
 static bool WIRE_FOR_ALL = false; // ICCAD_WIRE_FOR_ALL: compute wire for ALL bp positions
 static bool WIRE_ORDER = false;   // ICCAD_WIRE_ORDER: sort items by total_wire first (hpwl-first packing)
 static bool WIRE_TIEBREAK = false; // ICCAD_WIRE_TIEBREAK: total_wire as 2nd sort key after bscore
@@ -2101,6 +2110,7 @@ int main() {
     if (const char* e=getenv("ICCAD_WIRE_MULT")) { double v=atof(e); if (v>0) WIRE_MULT=v; }
     if (const char* e=getenv("ICCAD_ANCHOR_W"))  { double v=atof(e); if (v>=0) ANCHOR_W=v; }
     if (const char* e=getenv("ICCAD_HINT_MODE")) { int v=atoi(e); if (v>0) HINT_MODE=v; }   // L137
+    if (const char* e=getenv("ICCAD_HINT_REFINE")){ int v=atoi(e); if (v>0) HINT_REFINE=v; } // L137
     if (const char* e=getenv("ICCAD_LR_ASPECT"))  { double v=atof(e); if (v>0) LR_ASPECT=v; }
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
     if (const char* e=getenv("ICCAD_SOFT_ASPECT")){ double v=atof(e); if (v>0) SOFT_ASPECT=v; }
@@ -2126,6 +2136,11 @@ int main() {
     if (getenv("ICCAD_NO_JUMP")) PUSH_JUMP=false;
     if (const char* e=getenv("ICCAD_PUSH_PASSES")){ int v=atoi(e); if (v>=0) PUSH_PASSES=v; }
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
+    // L137: applied AFTER both knobs are read, and only ever downward, so an
+    // explicit ICCAD_REFINE_ITERS below the cap still wins and the unhinted path
+    // is untouched.
+    if (HINT_MODE && HINT_REFINE > 0 && REFINE_ITERS > HINT_REFINE)
+        REFINE_ITERS = HINT_REFINE;
     if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }
     if (getenv("ICCAD_WIRE_FOR_ALL")) WIRE_FOR_ALL=true;
     if (getenv("ICCAD_WIRE_ORDER")) WIRE_ORDER=true;

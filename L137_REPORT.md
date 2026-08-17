@@ -132,7 +132,52 @@ global overlay changes 49 cases precisely because every profile gets the hint.
 The tier code is kept (`_L137_IDX`, `ICCAD_HINT_POOL`, default OFF) — it is the
 measurement that establishes the above, and it is bit-identical when off.
 
-## 5. Where this actually stands
+## 5. Capping the refine loop: the arm that survives
+
+§3 found the whole runtime cost sits in refine passes that the hint stops from
+aborting. `ICCAD_HINT_REFINE` caps that loop **on hinted runs only**, applied
+after both knobs are read and only downward, so the unhinted path keeps its 12.
+
+    arm        in-set 48c    OOS s1 240      clean wall (6 heavy cases)
+    baseline   1.2284738     1.563347        1.4064s
+    no cap     1.2279371     1.561957        1.4578s   +3.66%
+    cap 4      1.2271766     1.562141        1.4128s   +0.46%
+    cap 2      1.2272830     1.564246        (-19%)
+                +0.1056%      cap4 +0.0771%
+                              cap2 -0.0575%
+
+All arms 100/100 and 240/240 feasible. **cap 4 is the surviving configuration:
++0.0771% OOS quality for a wall that is within half a percent of baseline.**
+
+🔑 **Capping the refine loop IMPROVES quality.** Counter-intuitive until you see
+what refine is: local coordinate descent, and M9 measured it as the main quality
+source (1.7045 -> 1.658) *when there is no global structure*. Given a good global
+hint, continuing to grind 12 local passes drifts away from it. Case 92 is the
+tell -- hinted it was 0.813s against 0.822s baseline, i.e. it had been running
+all 12 passes going nowhere, and capping took it to 0.283s.
+
+## 6. 🚨 Two measurements that were wrong, and how they were caught
+
+**The gate's wall-clock is unusable at this scale.** The cap sweep first read
+cap2 as "faster AND better", which I stated. Re-running the SAME arms showed the
+baseline's own wall moving 4.225s -> 5.051s, a **19.6% spread** -- larger than
+every effect being measured. The tell was internal inconsistency: cap6 (6 passes)
+cannot be 14.65% slower than no-cap (12 passes). Costs are bit-identical across
+repeats (the placer is deterministic), so quality was never in doubt; only the
+timing was. Replaced with per-profile min-of-2 timing evaluated through M67-E's
+own model, `max(max_k dt_k, sum_k dt_k / cores)`.
+
+**cap 2 was refuted by OOS after winning in-set on BOTH axes.** In set it looked
+unarguable: +0.0969% quality *and* -26/-29/-32% wall on the heavy cases, cleanly
+measured. Out of sample it is **-0.0575%, worse than baseline**. L133 measured
+this project's in-set→OOS transfer at 5-9%; that is why a two-axis in-set win was
+still carried to OOS instead of being recommended. It also inverted the ORDER:
+in set cap4 (+0.1056%) beat no-cap (+0.0437%) by 2.4x, out of sample no-cap
+(+0.0889%) edges cap4 (+0.0771%). An earlier draft of this report explained
+cap4's in-set/wall behaviour as a real non-monotonicity -- that structure was
+in-set noise, and the explanation is withdrawn.
+
+## 7. Where this actually stands
 
 **Settled:** the alternation improves the shipped placer's quality, out of
 sample, on the terms the mechanism predicts. This is the first time this project
@@ -148,16 +193,31 @@ submission and **the Beta results that would settle it have not arrived**
 (08-15 §5.2, still open). Layering another estimate on that estimate is exactly
 the L135 mistake, so it is not done here.
 
+**The recommendation is `ICCAD_HINT_MODE=1 ICCAD_HINT_REFINE=4`**, and the
+decision it still needs is the same one as before, only much smaller:
+
+    quality   +0.0771%  OOS, 240 cases, 240/240 feasible
+    wall      +0.46%    -> costs 0.3 x 0.46% = 0.14% on cases NOT at the runtime
+                           floor, and NOTHING on cases that are
+    worst case (nothing floored)   -0.06%
+    best case (all floored)        +0.0771%
+
+Alpha measured cost-weighted RF 0.70802 against a 0.70 floor, i.e. nearly
+everything is floored, which puts the expectation near the top of that band --
+but that anchor is from the M10-era 14-profile submission and **the Beta results
+that would settle it have not arrived** (08-15 §5.2, still open). The band is now
+narrow enough that the bet is small in both directions; it was 0-0.53% before the
+cap.
+
 **Next, in order:**
 
-1. **Bound the runtime instead of tuning quality.** Cases 90/91 are the entire
-   cost and the cause is known: more refine passes now succeed. A hinted-run cap
-   on `REFINE_ITERS` would bound it directly, and the quality of the capped arm
-   is one gate run to measure.
-2. **Re-calibrate with Beta results** when they arrive — that converts the
-   0–0.53% band into a number and settles the net by itself.
-3. Do NOT sweep `ICCAD_ANCHOR_W` before 1 and 2. Every gain so far came from
-   fixing semantics; the weight is the last thing to touch, not the first.
+1. **Beta results** settle it outright. Nothing else does.
+2. If shipping without them: `HINT_REFINE=4`, and re-verify the Linux binary and
+   the full package as L136 did -- the hint changes `constructive.cpp`, so the
+   bundled binary must be rebuilt or the grader runs the old one (L136 §3).
+3. Do NOT sweep `ICCAD_ANCHOR_W`. Every gain in this line came from repairing
+   semantics; the weight is the last thing to touch, and in-set cannot resolve
+   differences this size (§6).
 
 ## 6. Reproduce
 

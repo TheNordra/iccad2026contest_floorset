@@ -30,7 +30,9 @@ from collections import defaultdict
 # this one: the first run of this file reported HINT_MODE=0 for BOTH arms and
 # produced two byte-identical 240-case results, i.e. a clean, plausible,
 # completely empty A/B. Read it first, restore it after the imports.
-_HINT_MODE = os.environ.get("ICCAD_HINT_MODE", "0")
+_KNOBS = {k: os.environ[k] for k in ("ICCAD_HINT_MODE", "ICCAD_HINT_REFINE")
+          if k in os.environ}
+_HINT_MODE = _KNOBS.get("ICCAD_HINT_MODE", "0")
 
 import torch
 
@@ -50,12 +52,11 @@ def main():
     # restore the knob the probe's import stripped, so BOTH the python hint and
     # the C++ subprocesses that inherit this environment see it
     mode = _HINT_MODE
-    if mode != "0":
-        os.environ["ICCAD_HINT_MODE"] = mode
+    os.environ.update(_KNOBS)
     import optimizer_constructive as oc
-    print(f"[l137] ICCAD_HINT_MODE={os.environ.get('ICCAD_HINT_MODE', '0')} "
-          f"(requested {mode})  binary={oc._BIN.name if oc._BIN else '?'}",
-          flush=True)
+    print(f"[l137] restored {_KNOBS or '{}'}  "
+          f"(HINT_MODE now {os.environ.get('ICCAD_HINT_MODE', '0')})  "
+          f"binary={oc._BIN.name if oc._BIN else '?'}", flush=True)
     opt = oc.MyOptimizer(verbose=False)
 
     specs = M._specs(a.sample)
