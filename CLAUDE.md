@@ -40,9 +40,14 @@
   **`max(0.7,R^0.3)` 在 floor 區導數 = 0 ⇒ 小幅加時精確地免費**，M54/L115 那套 RF 定價作廢。
   ⚠️ 但 headroom **未知**（加權值分不出「全都遠低於門檻」與「全都剛好貼著」），
   而且 `0.70004 > 0.70` ⇒ **至少一案已越過邊緣**。前五名表格才能反推 median。
-- 💰 **最大的未兌現槓桿 = LP 深度**：`ICCAD_SHAPE_LP_ITERS=12` 實測 **local `1.1894699122309775`
-  （+3.175%、97 好 0 壞、100/100 feasible）**——組員說的「1.1 多」就是它，**合法非 oracle**。
-  卡在 RF 無法定價。見「下一步 3」。
+- 🏆 **L140 已兌現 LP 深度（`_LP_ITERS_DEFAULT` 1→2，commit `6ed76a8`，未上傳）**：
+  in-set 48c `1.213896277975`、**OOS s1 240 案 +1.0667%（226 好 / 0 壞 / 240 feasible）**、
+  **逐案 RF 投影後官方分 +0.970%**——是 L137 那次換件（+0.077%）的 **12 倍**。
+  k=3 只剩 +0.296%、k=4 是 **−3.125%**（77/100 案離開 RF floor）⇒ **2 是最佳值不是下限**，
+  而且在 10 格敏感度掃描中 k=2 **每一格都是正的**、8 格最佳。**純 Python ⇒ binary 不用重建。**
+  🚨 **LP 成本只能用 CPU time 量**：本機 wall 把 OOS 240 在 k=2 量成比 k=1 **還快**
+  （1507s vs 1601s，做更多工作），算出負成本、每 pass 錯 2.4 倍。`ICCAD_LP_TIMING=1`
+  用 `time.process_time()`（只算本行程，51 隻子行程污染不到）⇒ 每 pass **0.4446s、收費是平的**。
 - ⚠️ **`rf` / `m49big` / `m49mid` 三個離線閘現在是紅的**：快取錨我方 M80 的 exe
   （`a576feb6…`），組員動了三次 `constructive.cpp` 都沒重建 ⇒ **drop 常數已過期**。
   是**品質風險非可行性風險**，而且 M74 同型重推值 −0.769% ⇒ **是機會不只是債**，見「下一步 2」。
@@ -200,16 +205,12 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
    → m49 三 gate → `m67g_tier5_gate.py` → `m80_tier_gate.py`。本機約 45-60 分。
    ⚠️ **會改出貨常數 ⇒ 整條送件鏈要重走，含 Linux 那關。**
 
-3. **LP 深度 frontier（最大的未兌現槓桿，+3.175% 在桌上）**
-   `ICCAD_SHAPE_LP_ITERS=12` 實測 local **`1.1894699122309775`**（+3.175%、97 好 0 壞、
-   100/100 feasible）。合法、label-free（baseline 是 `ΣA/0.968`）。卡在 **RF 無法定價**。
-   **正確做法是先量 k=2/3/4 的 frontier**（L115 在舊樹上量到品質 +1.13/+1.88/+2.43%、
-   時間 2.1/3.3/4.4×），**不要直接跳 k=12**。
-   ⚠️ **本機 wall-clock 測不準**：實測 L137 比 L136「還快」（5.49s vs 6.54s），邏輯上不可能
-   ⇒ 噪聲 ≥20%（組員記過同樣的 19.6% spread）。**品質可信、時間不可信**；要量時間得用
-   per-profile min-of-N 走 `max(max dt, sum dt/cores)`。
-   **定案要件 = 前五名表格**：每隊 `total_score/raw_score` 就是他們的 cost-weighted RF，
-   RF_j ≈ 0.70 ⇒ 全場觸底、median 由更慢的隊伍決定 ⇒ 我們空間大；RF_j > 0.70 ⇒ 直接給 median 下界。
+3. **【本機做完，等 Linux】L140 = LP 深度 2 的換件包**
+   已進 tree（`6ed76a8`），Windows 兩道 gate 全綠、bundle 已重建
+   （`m67c-linux-verify.tar.gz` md5 `1c13d4a91aebe62b2d3903aa2ab77ce2`）。
+   `bin/constructive_linux` **不用重建**（旋鈕純 Python），所以 Linux 那關只是
+   複驗 python 層與 scipy 行為。跑完就可上傳。
+   ⚠️ 更深的 k **不要再試**：k=3 投影 +0.296%、k=4 **−3.125%**，已量畢。
 
 4. **violation 軸（組員 08-19 的頭號建議，我方未複驗）**
    同一棵樹三個語料的分解：in-set 100 的 vrel **0.0140**、OOS s1 240 **0.0967（6.9×）**、
@@ -361,7 +362,8 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
 - **🚨 改 `constructive.cpp` 必須重建 `bin/constructive_linux`，而 Windows 結構性看不到**：`_ensure_compiled` 在 `os.name == "nt"` 直接跳過 bundle 自己編 `constructive.exe`，但評分機跑 bundled ELF。失敗**靜默**（序列化 append-only，舊 binary 讀到 target_positions 就停、scanf 丟掉尾巴 ⇒ 不崩、只是安靜地丟掉整個機制）。`make_submission._binary_matches_source()` 現在會擋住
 - **48c 已不再跨平台逐位可重現**（Win scipy 1.15.3 vs Linux 1.18.0 落在同一退化 LP 的不同最佳解）⇒ 48c 那條 lane **不可用 bit-equality 當閘**，用 `l117_linux_verify.judge48()` 的不變式
 - **`make_submission.py verify` 在 16 核機器上必然 FAIL**：`results_L136_default.json` 是 32 核產物，tier-3 閘是 `_effective_cores() <= 16`。本機驗預設 lane 要強制 `ICCAD_ADAPTIVE_CORES=32`
-- **本機 wall-clock 噪聲 ≥20%**（實測 L137 比 L136「還快」＝不可能）⇒ **品質可信、時間不可信**；量時間要用 per-profile min-of-N 走 `max(max dt, sum dt/cores)`
+- **本機 wall-clock 噪聲 ≥20%**（實測 L137 比 L136「還快」、OOS 240 在 k=2 比 k=1 快 94s ＝ 都不可能）⇒ **品質可信、時間不可信**。量 LP 用 `ICCAD_LP_TIMING=1`（CPU time）；量 portfolio wall 用 per-profile min-of-N 走 `max(max dt, sum dt/cores)`
+- 🔑 **一個量測工具要先在「已知答案」的輸入上驗證過，它的輸出才算證據**。本 session 三次：judge48 報 FAIL（但它連已上傳的 L136 都判死）、`l137_oos_ab` 會靜默量出兩組相同的臂、wall 差算出負的 LP 成本（「更多 pass 不可能更快」一直都在，只是事後才想到拿來檢查）
 - **tar md5 不可重現**（gzip 內嵌 mtime）：`m67c_make_linux_bundle.py` 會**重跑 `make_submission.stage()`** ⇒ 建 bundle 後 tar 就換一顆 md5。要送哪顆就對哪顆跑 `verify`，身分比對一律用 `op_wrapper.py` 的 md5
 
 ## env 旋鈕
@@ -400,7 +402,12 @@ cd "C:\Users\Nordra\Downloads\ICCAD2026_FloorSet\FloorSet\iccad2026contest"
   選中佈局的 constraint-graph LP 後處理，`ICCAD_SHAPE_LP_ITERS`（**預設 1**）、`ICCAD_SHAPE_LP_B`（預設 8）。
   baseline **label-free** = `ΣA / _LP_UTIL`（`_LP_UTIL=0.968`，掃 [0.85,1.05] 全在 6e-6 內 ⇒ 非擬合旋鈕）。
   `_shape_lp_maybe` **永不拋例外**：旗標關、scipy/shapely 缺、任何例外 → 原封不動回傳。
-  **`ITERS=12` 實測 local 1.18947（+3.175%），是最大的未兌現槓桿，見「下一步 3」**
+  **🏆 L140：`ICCAD_SHAPE_LP_ITERS` 預設 1 → 2**（`_LP_ITERS_DEFAULT`）。
+  OOS 240 案 +1.0667%（226 好 / 0 壞）、投影官方分 **+0.970%**。k=3 +0.296%、k=4 **−3.125%**
+  ⇒ **2 是最佳值，深度軸已探畢、勿再往上掃**
+- **`ICCAD_LP_TIMING`**（offline，預設關）：把 `_shape_lp` 用 `time.process_time()` 包起來，
+  逐案印 `[lptime] n= k= cpu= wall=` 到 stderr。**量 LP 成本一定要用它，不可用整輪 wall 差**
+  ——本機 wall 把 k=2 量得比 k=1 還快（做更多工作），每 pass 錯 2.4 倍
 - **🆕 L110 route A**（`_route_a_default()`，cores-gated ≥40）：per-frame 平行化，frame trial loop
   拆成 process。`route_a_stats()` 出 peak/queue，`l113_ship_gate` 的 G5 檢查 peak ≤ queue
 - **🆕 L137 GORDIAN hint**（`_l137_env()`，cores-gated ≥40，**預設 ON**）：global overlay 形態
