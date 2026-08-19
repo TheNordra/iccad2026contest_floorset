@@ -218,6 +218,27 @@ g=1.05 emits **12** (and R=1.5 at g=1.05 would emit 18). The stronger arm is als
 vs +9.90s). **The row-count knob, not the aspect range, is what a shape
 mechanism costs.** No hedge is needed; R=1.5 / g=1.10 / tol=0.006 is the pick.
 
+## Combined with L137 (measured, not assumed)
+
+All the numbers above were taken on the **L136 base**, because that is what our
+tree carried while the work was done. Re-measured on the teammate's head with
+L137's defaults ON (48c in-set, official eval):
+
+| | total | vs L136 | feasible |
+|---|---|---|---|
+| L136 (uploaded) | 1.228473819832 | — | 100/100 |
+| L137 (teammate) | 1.227176561424 | +0.1056% | 100/100 |
+| L147 on L136 | 1.197768284824 | +2.4995% | 100/100 |
+| **L137 + L147** | **1.196679286011** | **+2.5881%** | 100/100 |
+
+Additive prediction +2.6051%, measured +2.5881% ⇒ the overlap is **0.017pp, i.e.
+99.3% additive**, which is what the mechanisms predict: the hint moves anchors
+during packing, the tangent cut moves shapes in the post-pack LP.
+
+⚠️ The wall figures in that run (312.3 s combined vs 323.1 s for L147 alone) are
+single runs and the control's own spread is 2.8% p50 / 8.9% max — do not read a
+speed-up into them. Only the min-of-3 numbers in §3 are timing evidence.
+
 ## 5. Reproduce
 
 ```bash
