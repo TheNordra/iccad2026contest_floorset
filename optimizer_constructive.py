@@ -2417,9 +2417,19 @@ def _sep_reduction_mask(rows, n, P, unit_of, sv, resh, rho):
 
 
 def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
-                    force_keep=frozenset()):
+                    force_keep=frozenset(), area_R=None, area_g=1.05,
+                    area_tol=None, area_price=0.0):
     """prune_B (L112): displacement bound used to drop HPWL terms that provably
     cannot change sign.  None = off = the shipped formulation, bit-for-bit.
+
+    area_R (L122, ported L147): replaces the two-sided band on the LINEARISED
+    area with tangent cuts of the convex side plus a price on the non-convex
+    one.  None = off = the shipped band, bit-for-bit.  The band is asymmetric in
+    practice -- the lower row binds on 259 of 338 reshapeable units and the
+    upper on 9 -- and the upper row is itself the barrier: an exact-area
+    widening by r has true area p but LINEARISED area p*(r + 1/r - 1), which at
+    r=1.5 reads +16.7% against a +/-0.8% band.  area_tol overrides _LP_AREA_TOL
+    for the tangent arm only, so the shipped band arm stays the control.
 
     Each (edge, axis) contributes `t >= |dC + delta|` as one aux column plus two
     rows -- 80.2% of all rows and ~98% of all columns (L112 S1: 15,572 cols /
@@ -2439,6 +2449,11 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
     units, unit_of, group_units, group_comp0 = decompose(ci, P)
     U = len(units)
     resh = reshapeable(ci, units)
+    if area_R is not None:
+        # rho stops being a trust region under area_R and becomes only what its
+        # two remaining users need -- an upper bound on |dsize| / dim for the
+        # separation reduction mask and the HPWL prune slack.
+        rho = max(rho, area_R - 1.0)
 
     XMIN, XMAX, YMIN, YMAX = 2 * U, 2 * U + 1, 2 * U + 2, 2 * U + 3
     nv = 2 * U + 4
@@ -2649,14 +2664,44 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
     add_ub([(YMAX, 1.0), (YMIN, -1.0)], H0, "bbox")
 
     at = c["at"]
-    for uid, i in resh.items():
-        kw, kh = sv[uid]
-        w, h = P[i][2], P[i][3]
-        p = w * h
-        A = float(at[i]) if float(at[i]) > 0 else p
-        slack = rho * rho * p
-        add_ub([(kw, -h), (kh, -w)], -(A * (1.0 - _LP_AREA_TOL) - p + slack), "area_band")
-        add_ub([(kw, h), (kh, w)], A * (1.0 + _LP_AREA_TOL) - p - slack, "area_band")
+    if area_R is not None:
+        # L122: the area band replaced by TANGENT CUTS of w*h >= A(1-TOL).
+        # The lower row bounds a CONVEX region (h >= A'/w), so tangents
+        # represent it EXACTLY -- no linearisation error and no trust region.
+        # The upper row is the non-convex side; it is dropped and adjudicated
+        # afterwards by hard_ok, which is the same solve-then-verify contract
+        # solve_pruned already uses.
+        #
+        # Tangent at wk:  h >= 2A'/wk - (A'/wk^2)*w.  Points are geometric with
+        # ratio area_g across [w0/R, w0*R]; consecutive tangents cross at
+        # wk*sqrt(g), where the envelope sits (sqrt(g)-1)^2 below the curve. At
+        # g=1.05 that is 0.061%, so with A' = A*(1-tol) the true area cannot
+        # fall below A*(1-0.008)*(1-0.00061) = 0.9914*A -- inside the official
+        # 1% hard limit. area_g is therefore the ROW-COUNT knob: steps scales as
+        # 1/ln(g), and g=1.10 with tol=0.006 cuts the rows 44% while TIGHTENING
+        # the guarantee to 0.99163.
+        _tol = _LP_AREA_TOL if area_tol is None else area_tol
+        steps = max(1, int(math.ceil(2.0 * math.log(area_R) / math.log(area_g))))
+        for uid, i in resh.items():
+            kw, kh = sv[uid]
+            w, h = P[i][2], P[i][3]
+            A = float(at[i]) if float(at[i]) > 0 else w * h
+            Ap = A * (1.0 - _tol)
+            for s in range(steps + 1):
+                wk = (w / area_R) * (area_R * area_R) ** (s / steps)
+                sl = Ap / (wk * wk)
+                # h0 + dh >= 2A'/wk - (A'/wk^2)(w0 + dw)  ->  -sl*dw - dh <= rhs
+                add_ub([(kw, -sl), (kh, -1.0)],
+                       -(2.0 * Ap / wk - sl * w - h), "area_tangent")
+    else:
+        for uid, i in resh.items():
+            kw, kh = sv[uid]
+            w, h = P[i][2], P[i][3]
+            p = w * h
+            A = float(at[i]) if float(at[i]) > 0 else p
+            slack = rho * rho * p
+            add_ub([(kw, -h), (kh, -w)], -(A * (1.0 - _LP_AREA_TOL) - p + slack), "area_band")
+            add_ub([(kw, h), (kh, w)], A * (1.0 + _LP_AREA_TOL) - p - slack, "area_band")
 
     a_base = max(float(c["base"].get("area_baseline", W0 * H0)), 1e-6)
     if W0 * H0 > a_base:
@@ -2665,6 +2710,23 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
         obj[XMAX] += bA * H0
         obj[YMIN] -= bA * W0
         obj[YMAX] += bA * W0
+
+    # Deliberately NOT gated on area_R: the price must be applicable to the
+    # shipped band too, or there is no control arm separating "wider aspect
+    # range" from "shrink every block to its minimum legal area".
+    if area_price:
+        # The dropped upper bound has exactly one failure mode: a block with no
+        # pressure on it runs to the far corner of the shape box, landing at
+        # area A*R^2 (measured 44% / 125% / 300% at R=1.2/1.5/2, i.e. R^2-1 to
+        # the digit). A tiny price on the block's own area removes the incentive
+        # without competing with any real term: {w*h >= A'} is convex, so a
+        # positive linear cost pushes such a block ONTO its boundary, where the
+        # true area is A' exactly.
+        pw = area_price * 0.5 / a_base
+        for uid, i in resh.items():
+            kw, kh = sv[uid]
+            obj[kw] += pw * P[i][3]
+            obj[kh] += pw * P[i][2]
 
     for u in freeze_units:
         add_eq([(u, 1.0)], 0.0, "boundary_eq")
@@ -2686,6 +2748,11 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
     bounds.append((max((P[i][1] + P[i][3] for i in fro), default=ymax0 - D), ymax0 + D))
     for uid in sorted(sv):
         i = resh[uid]
+        if area_R is not None:
+            # a box on the SHAPE, not a trust region on the linearisation
+            bounds.append((P[i][2] / area_R - P[i][2], P[i][2] * area_R - P[i][2]))
+            bounds.append((P[i][3] / area_R - P[i][3], P[i][3] * area_R - P[i][3]))
+            continue
         bounds.append((-rho * P[i][2], rho * P[i][2]))
         bounds.append((-rho * P[i][3], rho * P[i][3]))
     bounds += [(0.0, None)] * (nv - len(bounds))
@@ -2743,7 +2810,7 @@ def apply_all(P, B, x):
 PRUNE_B = None      # L112: module-level so dep_case/mode_ab measure end-to-end
 
 
-def lp_pass(ci, P, rho, sep_trim=False):
+def lp_pass(ci, P, rho, sep_trim=False, **kw):
     c = l3.CASES[ci]
     freeze = set()
     for attempt in range(3):
@@ -2755,9 +2822,9 @@ def lp_pass(ci, P, rho, sep_trim=False):
         # heavy cases), so the combination is the interesting one.
         if PRUNE_B is not None:
             B, _rounds = solve_pruned(ci, P, freeze, rho=rho, prune_B=PRUNE_B,
-                                      sep_trim=sep_trim)
+                                      sep_trim=sep_trim, **kw)
         else:
-            B = build_and_solve(ci, P, freeze, rho=rho, sep_trim=sep_trim)
+            B = build_and_solve(ci, P, freeze, rho=rho, sep_trim=sep_trim, **kw)
         if B["res"].status != 0:
             return None, dict(status=f"lp_status_{B['res'].status}", t=time.perf_counter() - t0,
                               t_build=B["timing"]["t_build"], t_solve=B["timing"]["t_solve"],
@@ -2776,7 +2843,7 @@ def lp_pass(ci, P, rho, sep_trim=False):
 
 
 def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
-                 sep_trim=False):
+                 sep_trim=False, **kw):
     """build_and_solve with HPWL pruning made EXACT by verification.
 
     Dropping `t >= |z|` in favour of `sgn(dC) * z` can only LOWER the objective
@@ -2790,15 +2857,15 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
     """
     if prune_B is None:
         return build_and_solve(ci, P, freeze_units, rho=rho,
-                               sep_trim=sep_trim), 0
+                               sep_trim=sep_trim, **kw), 0
     keep = set()
     for rnd in range(max_rounds):
         d = build_and_solve(ci, P, freeze_units, rho=rho, prune_B=prune_B,
-                            force_keep=keep, sep_trim=sep_trim)
+                            force_keep=keep, sep_trim=sep_trim, **kw)
         res = d["res"]
         if res.status != 0:
             return build_and_solve(ci, P, freeze_units, rho=rho,
-                                   sep_trim=sep_trim), rnd + 1
+                                   sep_trim=sep_trim, **kw), rnd + 1
         x = res.x
         bad = set()
         for tid, lin, dC, _w in d["prune_dropped_terms"]:
@@ -2813,7 +2880,7 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
             return d, rnd + 1
         keep |= bad
     return build_and_solve(ci, P, freeze_units, rho=rho,
-                           sep_trim=sep_trim), max_rounds
+                           sep_trim=sep_trim, **kw), max_rounds
 
 
 _HARD_MASKS = {}
@@ -2903,6 +2970,22 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
         prune = None if pb in ("", "0") else float(pb)
     except ValueError:
         prune = 8.0
+    # L147 (port of L122): tangent cuts on the area's convex side. All OFF by
+    # default -- unset ICCAD_SHAPE_LP_R keeps the shipped band bit-for-bit.
+    lpkw = {}
+    try:
+        _r = os.environ.get("ICCAD_SHAPE_LP_R", "")
+        if _r not in ("", "0"):
+            lpkw["area_R"] = float(_r)
+            lpkw["area_g"] = float(os.environ.get("ICCAD_SHAPE_LP_G", "1.05"))
+            _t = os.environ.get("ICCAD_SHAPE_LP_TOL", "")
+            if _t:
+                lpkw["area_tol"] = float(_t)
+        _p = os.environ.get("ICCAD_SHAPE_LP_PRICE", "")
+        if _p:
+            lpkw["area_price"] = float(_p)
+    except ValueError:
+        lpkw = {}
 
     global PRUNE_B
     P0 = [tuple(float(v) for v in p) for p in pos]
@@ -2942,7 +3025,7 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
             # the heavy cases. Measured over 100 cases, min of 3:
             # weighted tLP 0.2670s -> 0.1947s (1.37x) with the quality
             # identical to every digit (1.236783247, kept 100/100).
-            newP, tele, _B = lp_pass(key, P, 0.06, sep_trim=True)
+            newP, tele, _B = lp_pass(key, P, 0.06, sep_trim=True, **lpkw)
             if tele["lp_obj"] is None:
                 break
             m = _proxy_metrics(newP, *margs)
@@ -2961,7 +3044,19 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
         # SAME key, so a stale entry would hand the next case masks sized
         # for the previous one (numpy broadcast error, 99/100 cases).
         _HARD_MASKS.pop(key, None)
-    return P if P is not P0 else pos
+    kept = P is not P0
+    # L147 diagnostic, off by default: one line per case, appended. The tangent
+    # arm drops the upper area bound and leaves hard_ok to adjudicate, and a
+    # REJECTED case loses the whole shipped LP gain, not just the increment --
+    # so kept-rate is the gate, and it has to be observable.
+    _sp = os.environ.get("ICCAD_SHAPE_LP_STATS", "")
+    if _sp:
+        try:
+            with open(_sp, "a") as fh:
+                fh.write(f"{int(block_count)} {int(kept)}\n")
+        except Exception:
+            pass
+    return P if kept else pos
 
 
 def _shape_lp_on() -> bool:
