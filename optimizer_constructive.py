@@ -883,6 +883,44 @@ def _m71_env() -> Dict[str, str]:
     return dict(_M71_ENV)
 
 
+# L137 (2026-08-19): the GORDIAN hint as the GLOBAL overlay, which is the form
+# that was measured. The TIER form above (_l137_active) stays default-OFF -- it
+# was worse on both axes (commit d64abe0).
+#
+# CORES-GATED at the same >=40 as route A / the shape LP / tier-5 / M80, and for
+# the same reason M76 recorded: the quality (+0.0889% OOS s1 240) and the wall
+# (+0.46%) were BOTH measured at 48c with route A and the LP live, so that is the
+# only shape the number describes. Below the gate the pool is sum-bound, where
+# the hint's extra refine passes are NOT absorbed by a max-setter, and nothing
+# has measured it there. _effective_cores_hi() maps unknown -> 0, so a detection
+# failure falls back to L136 behaviour (fail-CLOSED, the M67-F doctrine).
+#
+# HINT_REFINE=4 is part of the recipe, not a separate knob: it caps the refine
+# loop on hinted runs only, and it is what turns the arm from "quality up, wall
+# up 1.76%" into "quality up, wall up 0.46%".
+_L137_ENV: Dict[str, str] = {"ICCAD_HINT_MODE": "1",
+                             "ICCAD_HINT_REFINE": "4"}
+
+
+def _l137_env() -> Dict[str, str]:
+    """Per-profile env overlay for the L137 GORDIAN hint (global form).
+
+    ICCAD_HINT_MODE=0 forces it off; any other explicit ambient value forces it
+    on and wins over the recipe, so the A/B tools (l137_oos_ab.py,
+    l113_ship_gate.py --env) keep measuring what they ask for."""
+    v = os.environ.get("ICCAD_HINT_MODE", "")
+    if v == "0":
+        return {}
+    if v == "" and _effective_cores_hi() < _L137_CORES_MIN:
+        return {}
+    ov = dict(_L137_ENV)
+    for k in ov:
+        amb = os.environ.get(k, "")
+        if amb != "":
+            ov[k] = amb
+    return ov
+
+
 def _profile_env(i: int, block_count: int) -> Dict[str, str]:
     """The per-profile env overlay _solve_impl applies to pool index `i`, in the
     wrapper's precedence order (profile dict, then band, then M71).
@@ -894,6 +932,7 @@ def _profile_env(i: int, block_count: int) -> Dict[str, str]:
     ov = dict(_band_env(block_count))
     if i not in _M73_IDX:
         ov.update(_m71_env())
+        ov.update(_l137_env())          # L137 GORDIAN hint, cores-gated >= 40
     return ov
 
 
@@ -2008,8 +2047,8 @@ class MyOptimizer(FloorplanOptimizer):
         # Computed when EITHER the tier is live (the deployment shape) or the
         # global knob is set (the A/B shape kept for measurement).
         _hint = None
-        _want = (os.environ.get("ICCAD_HINT_MODE", "0") != "0"
-                 or bool(_l137_active(block_count)))
+        _want = (bool(_l137_env())                     # global form (shipped)
+                 or bool(_l137_active(block_count)))   # tier form (default off)
         if _want:
             try:
                 _hint = _gordian_hint(block_count, area_targets,

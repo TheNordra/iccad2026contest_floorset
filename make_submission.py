@@ -275,6 +275,46 @@ def _tar_filter(ti: tarfile.TarInfo) -> tarfile.TarInfo:
     return ti
 
 
+def _binary_matches_source(stage_dir):
+    """L137 hardening: does the bundled Linux ELF come from THIS constructive.cpp?
+
+    🚨 THE FAILURE THIS CATCHES IS SILENT AND WINDOWS-INVISIBLE. The README run
+    order is (1) bundled bin/constructive_linux, (2) on-site compile. On Windows
+    _ensure_compiled skips the bundle entirely (os.name != "nt") and builds
+    constructive.exe from the packaged source, so every local gate measures the
+    NEW C++ while the grader would run the OLD ELF. L136 §3 recorded exactly this
+    and L124 caught its own near-miss by hand-grepping the ELF for
+    ICCAD_MIB_BUCKET; this makes that check automatic and total.
+
+    It is silent rather than loud because the serialized input is append-only:
+    the gnn_hint block is written unconditionally ("0
+" when absent) and a
+    binary that predates it simply stops reading first -- scanf ignores the tail.
+    So a stale ELF does not crash, it just quietly discards the new mechanism
+    while the Python side still pays for computing it.
+
+    The test: every ICCAD_* knob the source reads via getenv() must appear as a
+    literal in the ELF. Direction is safe -- a binary built from NEWER source
+    than the package would also fail, which is equally a mismatch worth blocking.
+    """
+    src = (stage_dir / "constructive.cpp").read_text(encoding="utf-8",
+                                                     errors="replace")
+    knobs = sorted(set(re.findall(r'getenv\("(ICCAD_[A-Z0-9_]+)"\)', src)))
+    out = []
+    for rel in _BIN_FILES:
+        f = stage_dir / rel
+        if not f.exists():
+            continue
+        blob = f.read_bytes()
+        missing = [k for k in knobs if k.encode() not in blob]
+        if missing:
+            out.append(f"{rel} predates constructive.cpp: {len(missing)} knob(s) "
+                       f"absent from the ELF: {', '.join(missing)} -- REBUILD it on "
+                       f"Linux (g++ -O3 -std=c++17 -static-libstdc++ -static-libgcc "
+                       f"-o {rel} constructive.cpp) or the grader runs the old code")
+    return out
+
+
 def stage() -> bool:
     print("== M67-B stage ==")
     if _STAGE.exists():
@@ -300,6 +340,14 @@ def stage() -> bool:
     if nbin < len(_BIN_FILES):
         print(f"  WARNING: {len(_BIN_FILES) - nbin} bundled Linux binaries missing "
               f"(M67-C pending) -- packaging without them")
+
+    errs = _binary_matches_source(_STAGE)
+    for e in errs:
+        print(f"  BINARY/SOURCE FAIL: {e}")
+    if errs:
+        return False
+    if nbin:
+        print(f"  binary/source: OK ({nbin} bundled ELF matches constructive.cpp)")
 
     errs = _hygiene(_STAGE, expected)
     for e in errs:
