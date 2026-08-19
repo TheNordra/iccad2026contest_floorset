@@ -2883,6 +2883,40 @@ def _lp_build_case(block_count, area_targets, b2b_connectivity,
 
 _LP_UTIL = 0.968      # L95 structural floor; the label achieves 96.6%
 
+# L140 (2026-08-19): the shape LP's DEPTH, raised from 1 to 2.
+#
+# No extra gate is needed -- the LP itself is already cores-gated at >= 40
+# (_shape_lp_on), so below the gate this constant is not reached at all and the
+# low-core lane stays bit-identical to L136.
+#
+# QUALITY, and it is the cleanest result this project has measured:
+#   in-set 100 @48c   1.227176561 -> 1.213896278   +1.0822%   97 better / 0 worse
+#   OOS s1 240 @48c   1.467312    -> 1.451660      +1.0667%   226 better / 0 worse
+#                                                             240/240 feasible
+# Transfer is 99%, and all three size bands are positive. For comparison L137,
+# the previous package, was +0.077% OOS with 31 in-set cases WORSE.
+#
+# WHY 2 AND NOT MORE. Quality keeps climbing (k=3 +1.72%, k=4 +2.21%, same
+# 97/0 shape) but RuntimeFactor does not stay free. Per-case projection with
+# M_i = 3.161*t_i^alpha (M67-E model A, against the real alpha grader runtimes):
+#
+#   k   local(RF=1)   projected official   vs k=1     cases off the RF floor
+#   1   1.227176561      0.859023593         --            0/100
+#   2   1.213896278      0.850692787       +0.970%         5/100
+#   3   1.206016610      0.856479869       +0.296%        42/100
+#   4   1.200028342      0.885863902       -3.125%        77/100
+#
+# k=2 is also the ROBUST choice, which is the real reason it is the default:
+# swept over how much faster the grader is at single-threaded scipy (g) and over
+# our own speed relative to alpha, k=2 is positive in all 10 cells (+0.33% to
+# +1.08%) and best in 8. k=3 turns negative once either knob moves against us.
+#
+# 🚨 THE COST WAS MEASURED IN CPU TIME, NOT WALL, AND THAT MATTERS. Differencing
+# whole-eval wall on this box put the OOS 240 at k=2 FASTER than at k=1 (1507s vs
+# 1601s) for strictly more work, i.e. a negative LP cost. That noise made the
+# per-pass figure wrong by 2.4x (0.186s vs the true 0.4446s). See ICCAD_LP_TIMING.
+_LP_ITERS_DEFAULT = 2
+
 
 def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
               p2b_connectivity, pins_pos, constraints, margs):
@@ -2895,7 +2929,8 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     official evaluator -- same as the shipped selection."""
     key = "live"
     try:
-        iters = int(os.environ.get("ICCAD_SHAPE_LP_ITERS", "1"))
+        iters = int(os.environ.get("ICCAD_SHAPE_LP_ITERS",
+                                   str(_LP_ITERS_DEFAULT)))
     except ValueError:
         iters = 1
     try:
@@ -2982,6 +3017,19 @@ def _shape_lp_on() -> bool:
     return _effective_cores_hi() >= _ROUTE_A_CORES_MIN
 
 
+# OFFLINE INSTRUMENT (never fires unless ICCAD_LP_TIMING is set; the shipped path
+# is bit-identical and pays one os.environ lookup per case).
+#
+# 🚨 WHY CPU TIME AND NOT WALL. Measuring the LP by differencing whole-eval wall
+# times does not work on a dev box: this machine ran the OOS 240 at k=2 in 1507s
+# and at k=1 in 1601s -- k=2 does strictly MORE work and came out 6% faster. The
+# same noise produced a NEGATIVE per-case LP cost, i.e. an impossible number that
+# looked perfectly reasonable in a table. process_time() counts only this
+# process's own CPU, so the 51 portfolio subprocesses and any other load on the
+# box cannot contaminate it, and the LP runs synchronously in the main process.
+_LP_TIMING = os.environ.get("ICCAD_LP_TIMING", "") not in ("", "0")
+
+
 def _shape_lp_maybe(pos, *a):
     """Never raises, never returns anything the guard did not accept.
 
@@ -2990,6 +3038,19 @@ def _shape_lp_maybe(pos, *a):
     post-processing may decline, it may never take the case down with it."""
     if not _shape_lp_on():
         return pos
+    if _LP_TIMING:
+        _c0, _w0 = time.process_time(), time.perf_counter()
+        try:
+            _r = _shape_lp(pos, *a)
+        except Exception as exc:
+            print(f"[constructive] shape LP raised {exc!r}; keeping the selected "
+                  f"layout", file=sys.stderr)
+            _r = pos
+        print(f"[lptime] n={len(pos)} "
+              f"k={os.environ.get('ICCAD_SHAPE_LP_ITERS', _LP_ITERS_DEFAULT)} "
+              f"cpu={time.process_time() - _c0:.6f} wall={time.perf_counter() - _w0:.6f}",
+              file=sys.stderr, flush=True)
+        return _r
     try:
         return _shape_lp(pos, *a)
     except Exception as exc:

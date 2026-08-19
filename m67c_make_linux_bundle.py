@@ -44,7 +44,7 @@ _SOURCES = (
     # L137 ship chain (2026-08-19): the default lane is anchored to the 32-core
     # artefact and the 48-core lane needs BOTH the Windows L137 result (report)
     # and the pre-LP M80 anchor (the invariant it is actually judged on).
-    "results_L136_default.json", "results_L137_48c_cap4.json",
+    "results_L136_default.json", "results_L140_48c_anchor.json",
     "results_M80_48c_anchor.json",
 )
 
@@ -230,7 +230,7 @@ ROOT = Path(__file__).resolve().parent
 # 2026-07-30. Previously results_shipped_m71.json (1.305389893450635) and
 # results_M73_cores48.json (1.295547821428148) = the uploaded Beta package.
 ANCHOR = ROOT / "results_L136_default.json"      # 1.2772224039603648  (32 CORES)
-ANCHOR48 = ROOT / "results_L137_48c_cap4.json"  # 1.227176561424409   (Windows, report only)
+ANCHOR48 = ROOT / "results_L140_48c_anchor.json" # 1.213896277975 (Windows, report only)
 BASE48 = ROOT / "results_M80_48c_anchor.json"   # 1.2666234250706565  (pre-LP, the invariant)
 LOADERS = ("litetestLoader.py", "lite_dataset_test.py", "liteLoader.py",
            "lite_dataset.py", "prime_dataset.py", "cost.py", "utils.py",
@@ -358,7 +358,7 @@ def judge48(new_path: Path) -> bool:
     gain = 100 * (1 - new["total_score"] / base["total_score"])
 
     print(f"   pre-LP anchor (M80)  {base['total_score']!r}")
-    print(f"   windows L137         {win['total_score']!r}")
+    print(f"   windows L140         {win['total_score']!r}")
     print(f"   THIS RUN (linux)     {new['total_score']!r}   {gain:+.4f}% vs pre-LP")
     print(f"   feasible {nfeas}/{len(n)}   "
           f"cases differing >1e-9 vs windows {len(moved)}/{len(w)}")
