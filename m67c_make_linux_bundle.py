@@ -41,7 +41,11 @@ _SOURCES = (
     "make_submission.py", "m48_coldstart_dryrun.py",
     # M76 ship chain: the bundle must carry the anchors ANCHOR/ANCHOR48 now point
     # at, or T3/final48 inside WSL would compare against a file that is not there.
-    "results_M74_default.json", "results_M74_cores48.json",
+    # L137 ship chain (2026-08-19): the default lane is anchored to the 32-core
+    # artefact and the 48-core lane needs BOTH the Windows L137 result (report)
+    # and the pre-LP M80 anchor (the invariant it is actually judged on).
+    "results_L136_default.json", "results_L137_48c_cap4.json",
+    "results_M80_48c_anchor.json",
 )
 
 # ── embedded WSL2 scripts (written with LF endings) ──────────────────────────
@@ -60,11 +64,14 @@ if [ ! -x "$VENV/bin/python" ]; then
   fi
 fi
 "$VENV/bin/pip" install --quiet --upgrade pip
-if ! "$VENV/bin/python" -c "import torch, numpy, shapely, tqdm, requests, matplotlib" 2>/dev/null; then
+if ! "$VENV/bin/python" -c "import torch, numpy, scipy, shapely, tqdm, requests, matplotlib" 2>/dev/null; then
   "$VENV/bin/pip" install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
-  "$VENV/bin/pip" install numpy==2.2.6 shapely==2.1.2 tqdm==4.67.3 requests matplotlib
+  # scipy is REQUIRED from L114 on: the shape LP calls scipy.optimize.linprog.
+  # It is inside a try/except, so WITHOUT it the LP goes silently inert and the
+  # 48-core lane quietly scores the pre-LP number instead of failing.
+  "$VENV/bin/pip" install numpy==2.2.6 scipy shapely==2.1.2 tqdm==4.67.3 requests matplotlib
 fi
-"$VENV/bin/python" -c "import torch, numpy, shapely, tqdm; print('deps OK: torch', torch.__version__, '| numpy', numpy.__version__, '| shapely', shapely.__version__, '| tqdm', tqdm.__version__)"
+"$VENV/bin/python" -c "import torch, numpy, scipy, shapely, tqdm; print('deps OK: torch', torch.__version__, '| numpy', numpy.__version__, '| scipy', scipy.__version__, '| shapely', shapely.__version__, '| tqdm', tqdm.__version__)"
 g++ --version | head -1
 echo "setup_env: OK (venv=$VENV)"
 """
@@ -140,11 +147,18 @@ if [ -z "${1:-}" ] || [ ! -f "$1" ]; then
   echo "usage: bash verify_final_tar.sh <path-to-final-cadc1075.tar.gz>"; exit 2
 fi
 rc=0
+echo "== round 2a: C-binary lane (ICCAD_ADAPTIVE_CORES=32) =="
+echo "   Every cores-gated tier is OFF at 32 (route A / shape LP / tier-5 / M80 /"
+echo "   L137 all gate at >=40, tier-3 at <=16), so this lane is PURE C++ and must"
+echo "   be BIT-EXACT. That is what proves the bundled ELF actually executes."
 "$PY" m67c_tier3.py final   "$1" || rc=1
 echo
-echo "== round 2b: tier-5 path (ICCAD_ADAPTIVE_CORES=48) =="
-echo "   WSL nproc=$(nproc) < 40 -> tier-5 stays OFF by default; this pass forces"
-echo "   the high-core branch so the M42-restore pool is proven to RUN on Linux."
+echo "== round 2b: the GRADED lane (ICCAD_ADAPTIVE_CORES=48) =="
+echo "   nproc here is $(nproc); the grader is 48-core ICELAKE, so this is the only"
+echo "   lane that reflects the real score. Judged on the shipping INVARIANT, not"
+echo "   bit-equality: the shape LP is degenerate and scipy version differences"
+echo "   land on different optima. Must be: 100/100 feasible, no case worse than"
+echo "   the pre-LP M80 anchor, total still ahead of it."
 "$PY" m67c_tier3.py final48 "$1" || rc=1
 echo
 if [ "$rc" = 0 ]; then echo "VERIFY_FINAL_TAR: ALL PASS"; else echo "VERIFY_FINAL_TAR: FAILURES"; fi
@@ -215,8 +229,9 @@ ROOT = Path(__file__).resolve().parent
 # M76 ship chain: both anchors follow the tree, which has been M74 since
 # 2026-07-30. Previously results_shipped_m71.json (1.305389893450635) and
 # results_M73_cores48.json (1.295547821428148) = the uploaded Beta package.
-ANCHOR = ROOT / "results_M74_default.json"     # 1.293461035226291
-ANCHOR48 = ROOT / "results_M74_cores48.json"   # tier-5 fired (ADAPTIVE_CORES=48)
+ANCHOR = ROOT / "results_L136_default.json"      # 1.2772224039603648  (32 CORES)
+ANCHOR48 = ROOT / "results_L137_48c_cap4.json"  # 1.227176561424409   (Windows, report only)
+BASE48 = ROOT / "results_M80_48c_anchor.json"   # 1.2666234250706565  (pre-LP, the invariant)
 LOADERS = ("litetestLoader.py", "lite_dataset_test.py", "liteLoader.py",
            "lite_dataset.py", "prime_dataset.py", "cost.py", "utils.py",
            "visualize.py")
@@ -306,6 +321,44 @@ def compare(new_path: Path, anchor: Path = None) -> bool:
     return True
 
 
+def judge48(new_path: Path) -> bool:
+    """Invariant gate for the 48-core lane (see the call site for why).
+
+    Must hold: every case feasible, NO case worse than the pre-LP M80 anchor,
+    and the total still ahead of it. The bit-diff against the Windows L137
+    result is printed but never fails the run."""
+    new = json.loads(new_path.read_text(encoding="utf-8"))
+    base = json.loads(BASE48.read_text(encoding="utf-8"))
+    win = json.loads(ANCHOR48.read_text(encoding="utf-8"))
+    n = {r["test_id"]: r for r in new["test_results"]}
+    b = {r["test_id"]: r for r in base["test_results"]}
+    w = {r["test_id"]: r for r in win["test_results"]}
+    fails = []
+    infeas = [i for i in n if not n[i]["is_feasible"]]
+    if infeas:
+        fails.append(f"infeasible cases: {infeas[:10]}")
+    reg = [i for i in b if i in n and n[i]["cost"] > b[i]["cost"] + 1e-12]
+    if reg:
+        fails.append(f"{len(reg)} cases worse than the pre-LP anchor: {reg[:10]}")
+    gain = 100 * (1 - new["total_score"] / base["total_score"])
+    if gain <= 0:
+        fails.append(f"total {new['total_score']!r} is not ahead of the pre-LP "
+                     f"anchor {base['total_score']!r}")
+    nmoved = sum(1 for i in w if i in n and abs(n[i]["cost"] - w[i]["cost"]) > 1e-9)
+    print(f"   pre-LP anchor (M80)  {base['total_score']!r}")
+    print(f"   windows L137         {win['total_score']!r}   "
+          f"{100 * (1 - win['total_score'] / base['total_score']):+.4f}%")
+    print(f"   THIS RUN (linux)     {new['total_score']!r}   {gain:+.4f}%")
+    print(f"   feasible {sum(1 for i in n if n[i]['is_feasible'])}/{len(n)}   "
+          f"regressions vs pre-LP {len(reg)}   "
+          f"cases differing >1e-9 vs windows {nmoved}/{len(w)}")
+    for f in fails:
+        print(f"   JUDGE48 FAIL: {f}")
+    if not fails:
+        print("   judge48: OK (feasible, no regression vs pre-LP, total ahead)")
+    return not fails
+
+
 def t3(tar_path: Path, inject: bool, workname: str, cores: int = None) -> bool:
     print(f"-- layout from {tar_path.name} -> {workname}/"
           + (f"  [ICCAD_ADAPTIVE_CORES={cores}]" if cores else ""))
@@ -359,7 +412,15 @@ def t3(tar_path: Path, inject: bool, workname: str, cores: int = None) -> bool:
         ok = False
     else:
         print("   bundled-first: OK (no on-site compile artifact)")
-    ok &= compare(pkg / res_name, ANCHOR48 if cores else ANCHOR)
+    # 🚨 THE 48-CORE LANE IS NOT BIT-REPRODUCIBLE ACROSS PLATFORMS, and that is
+    # measured rather than assumed: the shape LP (L114) is massively degenerate
+    # and scipy's bundled HiGHS lands on a DIFFERENT optimum of the same program
+    # depending on its version (Windows 1.15.3 vs Linux; 92/100 cases agree to
+    # <1e-9, 8 move, positions apart by up to 11.5 -- orders above any ULP band).
+    # So bit-equality is the WRONG gate there. Judge the invariant the LP was
+    # shipped on instead; keep the Windows comparison as reporting only.
+    # Logic mirrors l117_linux_verify.judge48().
+    ok &= (judge48(pkg / res_name) if cores == 48 else compare(pkg / res_name, ANCHOR))
     return ok
 
 
@@ -406,7 +467,12 @@ def main():
     elif mode == "t4":
         ok = t4()
     elif mode == "final" and len(sys.argv) > 2:
-        ok = t3(Path(sys.argv[2]).resolve(), inject=False, workname="t_final")
+        # 32 is not cosmetic: results_L136_default.json was produced on a 32-core
+        # box, and tier-3 gates at _effective_cores() <= 16, so a 16-core host
+        # takes a different branch and the bit-compare fails for a reason that is
+        # not a regression (measured: cases 48/54/70, all in the 60<n<=100 band).
+        ok = t3(Path(sys.argv[2]).resolve(), inject=False, workname="t_final",
+                cores=32)
     elif mode == "final48" and len(sys.argv) > 2:
         ok = t3(Path(sys.argv[2]).resolve(), inject=False,
                 workname="t_final48", cores=48)
