@@ -30,8 +30,15 @@ from collections import defaultdict
 # this one: the first run of this file reported HINT_MODE=0 for BOTH arms and
 # produced two byte-identical 240-case results, i.e. a clean, plausible,
 # completely empty A/B. Read it first, restore it after the imports.
-_KNOBS = {k: os.environ[k] for k in ("ICCAD_HINT_MODE", "ICCAD_HINT_REFINE")
-          if k in os.environ}
+#
+# 🚨 CAPTURE *EVERY* ICCAD_* KNOB, not a hard-coded pair. Capturing only
+# ICCAD_HINT_MODE / ICCAD_HINT_REFINE is a live footgun the moment this file is
+# used for anything but the hint -- the same silent failure in a new costume.
+# For the shape-LP frontier (ICCAD_SHAPE_LP_ITERS) the decisive knob is
+# ICCAD_ADAPTIVE_CORES: the LP is cores-gated at >= 40 (_shape_lp_on ->
+# _effective_cores_hi) and this box reports 16, so without it restored the LP
+# NEVER FIRES and every arm returns identical numbers.
+_KNOBS = {k: v for k, v in os.environ.items() if k.startswith('ICCAD_')}
 _HINT_MODE = _KNOBS.get("ICCAD_HINT_MODE", "0")
 
 import torch
@@ -54,9 +61,19 @@ def main():
     mode = _HINT_MODE
     os.environ.update(_KNOBS)
     import optimizer_constructive as oc
-    print(f"[l137] restored {_KNOBS or '{}'}  "
-          f"(HINT_MODE now {os.environ.get('ICCAD_HINT_MODE', '0')})  "
-          f"binary={oc._BIN.name if oc._BIN else '?'}", flush=True)
+    # requested-vs-actual for the gates that decide whether the mechanism under
+    # test fires at all. They differ whenever a gate declines.
+    print(f'[l137] restored {_KNOBS}', flush=True)
+    print(f'[l137] ACTUAL: cores_hi={oc._effective_cores_hi()} '
+          f'shape_lp_on={oc._shape_lp_on()} '
+          f'lp_iters={os.environ.get("ICCAD_SHAPE_LP_ITERS", "1")} '
+          f'l137_env={oc._l137_env()} '
+          f'binary={oc._BIN.name if oc._BIN else "?"}', flush=True)
+    if os.environ.get('ICCAD_SHAPE_LP_ITERS') and not oc._shape_lp_on():
+        raise SystemExit('[l137] REFUSING TO RUN: ICCAD_SHAPE_LP_ITERS is set '
+                         'but the shape LP is gated OFF (needs >= 40 cores -- '
+                         'pass ICCAD_ADAPTIVE_CORES=48). Every arm would be '
+                         'identical and the A/B would measure nothing.')
     opt = oc.MyOptimizer(verbose=False)
 
     specs = M._specs(a.sample)
@@ -96,7 +113,9 @@ def main():
     def wavg(k):
         return sum(math.exp(r["n"] / 12.0) * r[k] for r in rows) / ws
 
-    print(f"\n=== L137 OOS ({a.sample}), HINT_MODE={mode}, {len(rows)} cases ===")
+    tag = ' '.join(f'{k}={v}' for k, v in sorted(_KNOBS.items())) or 'shipped defaults'
+    print()
+    print(f'=== OOS ({a.sample}), {len(rows)} cases | {tag} ===')
     print(f"  feasible        {sum(1 for r in rows if r['feasible'])}/{len(rows)}")
     for k in ("cost", "hpwl_gap", "area_gap", "vrel", "runtime"):
         print(f"  weighted {k:<12} {wavg(k):.6f}")
