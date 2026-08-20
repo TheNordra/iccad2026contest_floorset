@@ -1,9 +1,10 @@
 # L147 handover — the tangent cut, ready to ship
 
 **One file changed: `optimizer_constructive.py`. No C++, no ELF rebuild.**
-`bin/constructive_linux` md5 `6d43cf2cbfd9e4d578cd692277a7f868` — verified
-unchanged from the first edit to the last measurement. Your
-`_binary_matches_source()` passes untouched.
+`bin/constructive_linux` is untouched by this patch — it stays whatever your
+L137 build put there (`bc9912072cd97b45b47a03adec7170ce` after the fast-forward;
+it was `6d43cf2cbfd9e4d578cd692277a7f868` on the pre-merge tree the work started
+on). Your `_binary_matches_source()` passes untouched either way.
 
 ## What to set
 
