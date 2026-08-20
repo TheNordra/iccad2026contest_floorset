@@ -2984,6 +2984,25 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
         _p = os.environ.get("ICCAD_SHAPE_LP_PRICE", "")
         if _p:
             lpkw["area_price"] = float(_p)
+        # L150: band-dependent ROW COUNT. The tangent arm's RF cost is a tail --
+        # p50 +0.047s but max +1.092s -- and the tail is the big-n cases, which
+        # are also the ones with the least runtime slack. rows/unit is
+        # ceil(2*ln(R)/ln(g)) + 1, so either knob shrinks it on that band alone.
+        # ⚠️ g is bounded by the area guarantee: the tangent envelope sits
+        # (sqrt(g)-1)^2 under the curve, and (1-tol)*(1-(sqrt(g)-1)^2) >= 0.99
+        # must hold, so g=1.15 needs tol <= 0.0046 and g=1.20 is unusable.
+        if lpkw.get("area_R") is not None:
+            _bign = int(os.environ.get("ICCAD_SHAPE_LP_BIG_N", "110"))
+            if int(block_count) > _bign:
+                _rb = os.environ.get("ICCAD_SHAPE_LP_R_BIG", "")
+                _gb = os.environ.get("ICCAD_SHAPE_LP_G_BIG", "")
+                _tb = os.environ.get("ICCAD_SHAPE_LP_TOL_BIG", "")
+                if _rb:
+                    lpkw["area_R"] = float(_rb)
+                if _gb:
+                    lpkw["area_g"] = float(_gb)
+                if _tb:
+                    lpkw["area_tol"] = float(_tb)
     except ValueError:
         lpkw = {}
 

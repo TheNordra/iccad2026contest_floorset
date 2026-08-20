@@ -82,11 +82,55 @@ band-cut (subsumed), the REFINE cap above 4, and LP depth on top of the tangent
 cut. With L147's own closes (R=1.3 dominated, band-gating inert) the
 runtime-gated re-scan is finished.
 
-⚠️ Still unmeasured, and the only remaining LP idea with a mechanism behind it:
-the tangent cut's RF cost is a *tail* (p50 +0.047 s but max +1.092 s) while the
-heavy band's free budget is ~+0.20 s/case. Band-gating `area_g` — coarser
-tangents, i.e. fewer rows, on the biggest cases only — targets exactly that tail
-and is deterministic. Not attempted here.
+## 4.1 L150 — band-gated row count: measured, RED
+
+The one idea §4 left open. `ICCAD_SHAPE_LP_{R,G,TOL}_BIG` + `_BIG_N` (all default
+off, so flag-off is bit-identical) make the tangent row count band-dependent:
+`rows = ceil(2*ln(R)/ln(g)) + 1`.
+
+⚠️ `g` is bounded by the area guarantee — the envelope sits `(sqrt(g)-1)^2` under
+the curve and `(1-tol)*(1-(sqrt(g)-1)^2) >= 0.99` must hold — so the usable
+settings are few:
+
+| n>110 setting | rows | envelope | worst true area |
+|---|---|---|---|
+| R=1.5 g=1.10 tol=0.006 (shipped) | 10 | 0.238% | 0.99163 |
+| g=1.15 tol=0.0046 | **7** | 0.524% | 0.99019 |
+| R=1.3 | 7 | 0.238% | 0.99163 |
+| R=1.2 | 5 | 0.238% | 0.99163 |
+
+**The upper bound was worth chasing**: if the LP were entirely free on n>110 the
+RF cost would go −0.9726% → −0.2008%, i.e. **+0.77pp recoverable**, and the cost
+is concentrated exactly there (n>100 and n>110 give the same bound, 0.790 vs
+0.772pp — it is the ten biggest cases).
+
+Measured, all three arms lose quality (only the 10 heavy cases move):
+
+| n>110 setting | quality |
+|---|---|
+| g=1.15 tol=0.0046 | **−0.1148%** |
+| R=1.3 | −0.3301% |
+| R=1.2 | −0.6692% |
+
+and the best of them buys nothing back. min-of-3 on both sides, applying the
+delta ONLY where the flag is live:
+
+    heavy band (10 cases, flag live)   +0.52 s   i.e. no saving
+    n<=110 (90 cases, flag inert)      -1.27 s   pure timing noise, sd 0.056 s/case
+    RF  -0.9726% -> -0.8805%   saved +0.0921pp
+    quality -0.1148pp   =>   NET -0.0227pp   bar 0.30pp  ->  FAIL
+
+The recovered RF is inside the noise band; the quality cost is a deterministic
+measurement. 🔑 **Cutting tangent rows does not cut LP time, because tangent rows
+are a minority of the matrix** — L112 measured HPWL at ~80% of all rows, so a 30%
+cut to the tangent family moves the solve by almost nothing. Any future attempt
+to make this LP cheaper has to attack the HPWL rows, not the shape rows.
+
+⚠️ Two measurement errors made and caught here, both worth remembering:
+comparing a min-of-3 arm against a single-shot arm (the bias alone produced a
+fake "no saving anywhere"), and applying a band-gated delta to all 100 cases,
+which let 90 cases of pure noise manufacture a +0.13pp saving that does not
+exist.
 
 ## 5. Reproduce
 
