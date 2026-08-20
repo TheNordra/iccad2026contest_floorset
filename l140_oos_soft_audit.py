@@ -63,6 +63,14 @@ def cmd_run(a):
     from proxy_analysis import build_opt_target_pos
     from iccad2026_evaluate import evaluate_solution
 
+    # --bin: m77_oos_probe imports oc with ICCAD_* already stripped, so oc._BIN
+    # is bound to the shipping exe before our restore runs and
+    # ICCAD_CONSTRUCTIVE_BIN would be SILENTLY ignored on the normal path (which
+    # uses the module-level _BIN, not the env). Set it directly.
+    if a.bin:
+        oc._BIN = Path(a.bin if os.path.isabs(a.bin) else str(_DIR / a.bin))
+        print(f"[l140] binary override -> {oc._BIN.name}", flush=True)
+
     print(f"[l140] {len(specs)} cases, sample {a.sample}, "
           f"ADAPTIVE_CORES={os.environ.get('ICCAD_ADAPTIVE_CORES', 'auto')}, "
           f"HINT_MODE={os.environ.get('ICCAD_HINT_MODE', '0')}, "
@@ -300,6 +308,8 @@ def main():
     r.add_argument("--cores", type=int, default=48)
     r.add_argument("--limit", type=int, default=0)
     r.add_argument("--out", default="")
+    r.add_argument("--bin", default="",
+                   help="probe binary to use instead of the shipping exe")
     r.add_argument("--verbose", action="store_true")
     r.set_defaults(fn=cmd_run)
 

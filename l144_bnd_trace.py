@@ -47,7 +47,7 @@ import optimizer_constructive as oc                                 # noqa: E402
 from optimizer_claude import _serialize_input                       # noqa: E402
 from proxy_analysis import build_opt_target_pos                     # noqa: E402
 
-EXE = _DIR / "constructive_l144.exe"
+EXE = _DIR / os.environ.get("L144_EXE", "constructive_l144.exe")
 
 
 def main():
