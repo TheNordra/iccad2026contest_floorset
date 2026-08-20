@@ -97,6 +97,32 @@ during packing, the tangent cut moves shapes in the post-pack LP.
 single runs and the control's own spread is 2.8% p50 / 8.9% max — do not read a
 speed-up into them. Only the min-of-3 numbers in §3 are timing evidence.
 
+### OOS on the combined config (L151) — the caveat above is now closed
+
+The §3 Gate-4 numbers were L147 measured on the **L136** base. Re-run as a clean
+A/B on this tree, i.e. L137 base -> L137+L147, both arms fresh (the old
+`l140_oos_*_c48.json` baselines could not be reused: they predate L137's defaults
+and reusing them would price the two changes together and call it L147):
+
+| | OOS s1 240 | OOS s2 240 (disjoint) |
+|---|---|---|
+| cost | 1.467312 -> 1.434420 **+2.2416%** | 1.469123 -> 1.437675 **+2.1406%** |
+| area_gap | 0.197373 -> **0.155683** | 0.204193 -> **0.164155** |
+| hpwl_gap | 0.271660 -> 0.261014 | 0.267755 -> 0.256745 |
+| vrel | 0.085369 -> 0.084610 | 0.085848 -> 0.085463 |
+| better / worse | 219 / 19 | 225 / 15 |
+| feasible | 240/240 | 240/240 |
+| n>110 subset | +2.3542% | +1.9639% |
+
+**NET with the measured RF cost (-0.9726%): +1.269% (s1) / +1.168% (s2).**
+
+Side observation, worth recording because it is a null: this run's OFF side
+(L137 only) against the earlier L136-base baselines is **-0.019% on s1 and
++0.136% on s2**, mean +0.06%. L137 alone is small enough out of sample to sit
+inside the sample-to-sample spread -- consistent in direction with the +0.089%
+it was shipped on, but not an independent confirmation at this resolution. L147
+is 25x that and the same sign on both samples.
+
 ## If you want to re-verify anything
 
 * flag-off bit-equality (12 min): run the eval with no `ICCAD_SHAPE_LP_*` and
