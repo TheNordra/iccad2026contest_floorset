@@ -7,10 +7,10 @@ submission package are untouched — the beam lives only in `constructive_l125.c
 valid.
 
 **The verdict is not "the beam doesn't work".** It works: its quality ceiling is
-the highest any mechanism has shown on the twin screen, higher than the MIB
-bucketing that shipped yesterday. It dies on price, and it dies on price *at every
-possible beam cost* — including one no beam can achieve. That is what makes the
-finding worth more than the route.
+the highest any mechanism has shown on the twin screen — higher than L124's MIB
+bucketing, which is packaged and waiting on the Drive upload. It dies on price,
+and it dies on price *at every possible beam cost*, including one no beam can
+achieve. That is what makes the finding worth more than the route.
 
 ---
 
