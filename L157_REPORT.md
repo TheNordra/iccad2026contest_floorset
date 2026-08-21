@@ -315,6 +315,41 @@ Python SA fallback, which is the failure mode memory
 `windows-msys-path-silent-sa-fallback` records. The grader's own path is the
 bundled Linux ELF with no compile, and that path is what lanes 1–4 above cover.
 
+## 5f. 🚨 CORRECTION — the RF cost was priced on the wrong baseline
+
+Found while pricing the shipping decision, and it moves the verdict.
+
+`l146_rf_price.price_seconds` adds the mechanism's seconds to `r["t"]`, which
+is the **pre-L147** per-case time. L157's *selection* rule correctly used
+`r["t"] + DT147`, but its *RF pricing* did not — so the second LP pass was
+charged as if L147's own +9.67s were not already sitting in the budget.
+
+| | RF cost of the n-set |
+|---|---|
+| as reported in §3 and §5 (on the pre-L147 base) | −0.0614% |
+| **on top of L147, which is where it actually runs** | **−0.2287%** |
+| understatement | **3.7×** |
+
+**Corrected NET** (OOS quality × the marginal RF):
+
+| | quality | RF | **NET** | vs 0.30% bar |
+|---|---|---|---|---|
+| OOS s1 | +0.4882% | −0.2287% | **+0.2595%** | ❌ below |
+| OOS s2 | +0.5673% | −0.2287% | **+0.3386%** | ✅ above |
+
+So **L157 straddles the bar** rather than clearing it. It is still quality-positive
+with zero regressions on every corpus measured, and still deterministic — but
+"GREEN by 1.43×" in the header above was computed with the understated RF and
+is wrong. The header's k=2 quality figures are unaffected; only the NET is.
+
+⚠️ The degradation table in §5 ("+0.12% at 0.90× medians") carries the same
+error and should be re-derived before it is quoted.
+
+🔑 This is the third time in this project that a wrong pricing BASELINE, not a
+wrong measurement, moved a verdict — see `lp-baseline-is-label-derived` and
+L154's. **The measurement was right every time; the thing it was subtracted
+from was not.**
+
 ### What is still not established
 
 **The grader's per-case ordering.** No single S reproduces it. That the grader
