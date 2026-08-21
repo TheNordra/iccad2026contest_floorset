@@ -2973,18 +2973,36 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
         prune = None if pb in ("", "0") else float(pb)
     except ValueError:
         prune = 8.0
-    # L147 (port of L122): tangent cuts on the area's convex side. All OFF by
-    # default -- unset ICCAD_SHAPE_LP_R keeps the shipped band bit-for-bit.
+    # L147 (port of L122): tangent cuts on the area's convex side.
+    #
+    # SHIPPED BY CODE DEFAULT since L158. It has to be: `make_submission.py
+    # verify`, `l113_ship_gate` and the grader all run the official command
+    # with ICCAD_* STRIPPED (l113_ship_gate.py:140), so a mechanism that can
+    # only be switched on by an environment variable is inert in the package
+    # no matter how green it measures. L137 ships the same way, through
+    # _l137_env(); the tangent cannot use that path because it is read here in
+    # Python rather than by the C++ subprocess, so the default lives in the
+    # getenv fallbacks instead. The values are _L147_*, verbatim the ones every
+    # L147/L154/L157 arm was measured with.
+    #
+    # ICCAD_SHAPE_LP_L147=0 is the kill switch and restores the pre-L147
+    # shipped band bit-for-bit: it puts every default back to what it was, so
+    # `_r` and `_p` come back empty and lpkw ends up {}. A bare
+    # ICCAD_SHAPE_LP_R=0 is NOT that switch -- it drops the tangent rows but
+    # would leave area_price defaulted, which is a third configuration nobody
+    # has measured.
     lpkw = {}
+    _on = os.environ.get("ICCAD_SHAPE_LP_L147", "") != "0"
     try:
-        _r = os.environ.get("ICCAD_SHAPE_LP_R", "")
+        _r = os.environ.get("ICCAD_SHAPE_LP_R", _L147_R if _on else "")
         if _r not in ("", "0"):
             lpkw["area_R"] = float(_r)
-            lpkw["area_g"] = float(os.environ.get("ICCAD_SHAPE_LP_G", "1.05"))
-            _t = os.environ.get("ICCAD_SHAPE_LP_TOL", "")
+            lpkw["area_g"] = float(os.environ.get(
+                "ICCAD_SHAPE_LP_G", _L147_G if _on else "1.05"))
+            _t = os.environ.get("ICCAD_SHAPE_LP_TOL", _L147_TOL if _on else "")
             if _t:
                 lpkw["area_tol"] = float(_t)
-        _p = os.environ.get("ICCAD_SHAPE_LP_PRICE", "")
+        _p = os.environ.get("ICCAD_SHAPE_LP_PRICE", _L147_PRICE if _on else "")
         if _p:
             lpkw["area_price"] = float(_p)
         # L150: band-dependent ROW COUNT. The tangent arm's RF cost is a tail --
@@ -3145,6 +3163,23 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
 # -0.4593%; spent only where the case can absorb it, NET +0.4275%~+0.8289%
 # across both OOS samples and both gate forms, against a 0.30% bar.
 # Full derivation and the chain of custody: L157_REPORT.md.
+# L147 tangent-cut configuration, shipped by code default (see _shape_lp).
+# Verbatim the arm measured at in-set +2.5881%, OOS +2.2416% (L147), Linux
+# verified at L153, and the base every L154/L157 number sits on top of.
+_L147_R, _L147_G, _L147_TOL, _L147_PRICE = "1.5", "1.10", "0.006", "1.0"
+
+# L157 n-set: the 75 block counts whose beta row can absorb a second LP
+# pass and stay under 0.3046*M_hat(n). Derived by l157_selective_depth.py
+# from the published beta medians; the 24 excluded values inside the span
+# are the cases with no slack, not gaps in the corpus.
+_L157_NSET = frozenset((
+    21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+    39, 40, 41, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+    56, 57, 59, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74,
+    75, 76, 77, 79, 81, 82, 84, 86, 87, 89, 90, 96, 97, 100, 102,
+    104, 105, 106, 108, 109, 110, 111, 113, 114, 115, 116, 119,
+))
+
 _M157_A, _M157_B = 0.0196, 1.168   # M_hat(n) = A * n**B, R^2 = 0.907 on beta
 _M157_THR = 0.3046                 # 0.7 ** (1/0.3): where max(0.7, R^0.3) lifts
 _T_CASE = threading.local()        # per-case clock, stamped by solve()
@@ -3199,6 +3234,27 @@ def _depth_affordable(n, dt_next) -> bool:
     No clock -> False, i.e. shipped k=1. A caller that never went through
     solve() (a probe) must not silently buy the ungated k=2, which prices at
     NET -0.4593%. Every failure direction here falls back to what ships."""
+    # DEFAULT: the DETERMINISTIC form. The per-case clock below is a better
+    # mechanism on paper -- it reads this box's real time instead of trusting a
+    # corpus median -- and it cost this project a standing rule to find out why
+    # it cannot ship. CLAUDE.md, twice: "any in-window LP must not keep a HiGHS
+    # time_limit (triggering it makes the LP run-to-run nondeterministic)". A
+    # wall-clock gate reintroduces exactly that, by a different route. Measured:
+    # two runs of identical code and flags decided 5 block counts differently
+    # and moved 4 cases, a weighted delta of -0.0011%. The SCORE impact is
+    # noise; what it breaks is every bit-equality gate the project verifies
+    # with -- make_submission.py verify and l113_ship_gate G4 both compare
+    # positions bit-for-bit against an anchor, and both would start failing
+    # intermittently. A deterministic n-set keeps them working, and it is the
+    # bracket L157_REPORT.md quotes anyway: OOS NET +0.4275% / +0.5066%,
+    # against +0.5477% / +0.8289% for the clock form. Buying 0.12-0.32pp with
+    # the project's whole verification story is not a trade worth making.
+    if os.environ.get("ICCAD_SHAPE_LP_DEPTH_PC", "") != "1":
+        return int(n) in _L157_NSET
+
+    # ICCAD_SHAPE_LP_DEPTH_PC=1: the per-case clock form. Measured and
+    # documented, NOT shipped. Keep it for the day the grader's own timings
+    # are known, or the day invariant gates replace bit-equality ones.
     t0 = getattr(_T_CASE, "t0", 0.0)
     if not t0:
         return False

@@ -163,23 +163,116 @@ gate simply does less — in-set NET +0.12% at 0.90×, +0.06% at 0.80×, never
 strongly negative. That is the opposite of all-or-nothing k=2, which is −0.90%
 at the measured medians.
 
-## 5b. 🚧 What is NOT done
+## 5b. 🔧 Built, and six in-set gates PASS
 
-**The gate is priced, not built.** `optimizer_constructive.py` is untouched.
-Shipping it needs:
+`b6d9522`. ~86 lines in `optimizer_constructive.py`; no C++ change, ELF
+untouched. `_case_clock_start()` stamps a thread-local clock at `solve()` entry
+— the only place that knows when the case began, and stamped before the
+fallbacks so a case that lands on SA carries a valid clock rather than the
+previous case's. `_shape_lp_depth()` returns *(passes allowed, gate them?)*;
+`_depth_affordable()` is the rule from §2. Stats column 4 carries the passes
+actually SPENT — without it a gated run and an ungated one are
+indistinguishable in the telemetry and the gate could be a silent no-op with
+every table above printing exactly the same.
 
-1. `_shape_lp` to see the case's elapsed time. It does not today — `solve()`
-   takes no timestamp. ~4 lines: stamp `perf_counter()` at the top of `solve`,
-   read it in `_shape_lp`.
-2. `M-hat(n)` and the `0.3046` threshold as constants, plus a kill switch, in
-   the same cores-gated block as the rest of the LP lane.
-3. The usual gates: flag-off bit-equality, `l113_ship_gate --cores 48`, and a
-   Linux verify — the LP is the only cross-platform mover (L153 §2), and this
-   changes how much LP runs.
+| gate | result |
+|---|---|
+| G1 kill switch `ICCAD_SHAPE_LP_DEPTH2=0` == `results_L154_catchoff.json` | 100/100 cost **and** positions |
+| G1b same, after the coupling and speed-knob edits | 100/100 cost and positions |
+| G2 ungated `ICCAD_SHAPE_LP_ITERS=2` == `results_L148_lp2.json` | 100/100 cost and positions |
+| G3 tangent OFF spends exactly one pass | 100/100 |
+| G4 at S=7.75: gate discriminates, quality, no regressions, feasibility | 76/100 took the 2nd pass, 63 moved, **0 worse**, 100/100 feasible |
 
-⚠️ Until step 1 exists, only the **n-set** form is implementable, and it is a
-static table fitted to the beta corpus. That is the weaker but sufficient
-version: +0.4275% / +0.5066% NET.
+### 🚨 Round 1 failed two gates. Both are worth recording.
+
+**(1) My anchor was stale — not the code.** G1 read 50/100 against
+`results_L147_r15g.json`. The same arm is 100/100 against
+`results_L154_catchoff.json`, and **the two references differ from each other
+on 50/100**. `catchoff` is what L157's pricing used. Two files that both look
+like "the L147 arm at k=1" are not interchangeable; use the one the pricing
+used.
+
+**(2) The gate fired on 0/100 cases, and that one is real.** It is stated in
+ABSOLUTE seconds against the grader's median — correct on the grader, where
+`R = t/M` is measured on whatever box runs the case, and **unfirable on
+anything slower**. This box runs ~9× slower per case: **490.7s against beta's
+52.07s over the same 100 cases**. Measured `t_case/budget`: min 3.0×, p50
+5.6×, max 20.7×, **0/100 inside**. The formula is right; what was missing was
+any way to exercise it here. Hence `ICCAD_SHAPE_LP_DEPTH_S` (default 1.0 =
+off), a machine-speed scale that makes the mechanism testable. **It is not a
+tuning knob** — shipping any value other than 1.0 would be claiming to know
+the grader's speed.
+
+### ⚠️ A pricing/shipping mismatch found while building
+
+Every L157 number — in set and both OOS samples — was measured with L147's
+tangent rows in play. **Depth 2 on the plain shipped band was never measured**,
+and a package with no `ICCAD_*` set would have run exactly that. The depth
+default is now coupled to `lpkw` being non-empty, i.e. to the tangent rows
+actually being in play — keyed on `lpkw` and **not** on the env var, so it
+still holds the day the tangent is turned on by a code default instead of an
+environment variable.
+
+### 🚨 Do not quote +0.5959% as the shipped gain
+
+G4 reads "100% of the k=2 ceiling on 76% of the cases", and that is an
+artefact. At S=7.75 the skipped cases are exactly the light ones (n=21..61)
+carrying **0.26% of the `exp(n/12)` weight**, because this box's slowdown is
+n-dependent — 20.7× at the light end, 3.0× at the heavy end. **The grader
+orders by slack, not by n.** The shipped estimate remains the OOS-measured NET
+**+0.4275%~+0.8289%**.
+
+## 5c. 🐧 Linux verify — four lanes, all PASS
+
+`l157_wsl_verify.sh`, WSL2 Ubuntu, 32 cores, scipy 1.18.0 / shapely 2.1.2,
+against the packaged tar (`_depth_affordable` confirmed present in `op_src.py`
+inside the tar before anything ran).
+
+| lane | config | result |
+|---|---|---|
+| 1 | 48c, LP off | pre-LP base `1.260246745790688` |
+| 2 | 48c, L147 k=1 (kill switch) | control `1.201017738792057`, **passes 1:100** |
+| 3 | 48c, **ungated k=2** | `1.194451` = **+5.2208%** vs pre-LP, **+0.5467%** vs control, **passes 1:3 / 2:97** |
+| 4 | 48c, gate at S=6.58 | `1.197187` = +5.0037% vs pre-LP, **+0.3189%** vs control, **passes 1:46 / 2:54** |
+
+**100/100 feasible and 0 regressions against the pre-LP base on every lane.**
+
+🔑 **Lane 3 is the one that carries the cross-platform argument, and it needs
+no speed knob at all.** The gate cannot fire on a box slower than the grader,
+so a naive Linux lane would have measured nothing. Lane 3 sidesteps that by
+running the *deepest* LP this change can ever cause — which is also exactly
+where a cross-platform problem would surface first. It passed.
+
+Lane 4 then shows the gate itself discriminating on Linux — 54/100 cases took
+the second pass — at an S derived from **this box's own control lane**, not
+from Windows'. 45/100 cases differ from the Windows arm by >1e-9, which is
+L153's documented LP degeneracy (scipy 1.15.3 vs 1.18.0 landing on different
+optima of the same program), not a defect: `judge48` gates on invariants for
+exactly this reason.
+
+## 5d. 🚨 The tangent had to become a code default first
+
+`make_submission.py verify`, `l113_ship_gate` and the grader all run the
+official command with **`ICCAD_*` stripped** (`l113_ship_gate.py:140`). L147's
+tangent was readable only from the environment, so **it was inert in the
+package no matter how green it measured** — and L157, coupled to it, with it.
+
+L137 ships its flag through `_l137_env()`, but the tangent cannot use that
+path: it is read in Python here, not by the C++ subprocess. So the default now
+lives in the `getenv` fallbacks, `_L147_R/G/TOL/PRICE = 1.5 / 1.10 / 0.006 /
+1.0` — verbatim the values every L147, L154 and L157 arm was measured with.
+`ICCAD_SHAPE_LP_L147=0` is the kill switch and puts every fallback back, so
+`lpkw` collapses to `{}` and the pre-L147 band returns bit-for-bit.
+
+⚠️ **A bare `ICCAD_SHAPE_LP_R=0` is *not* the kill switch.** It drops the
+tangent rows but leaves `area_price` defaulted — a third configuration nobody
+has measured. Documented in the code at the point of the trap.
+
+### What is still not established
+
+**The grader's per-case ordering.** No single S reproduces it. That the grader
+sits inside the budget at all rests on beta's cost-weighted RF = **0.70004**
+(at floor) — inference, not measurement.
 
 ## 6. What survives regardless
 

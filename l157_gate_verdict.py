@@ -69,7 +69,8 @@ def main():
     print("=" * 74)
     ref = load(K1)
     arms = {t: load(f"results_L157_{t}.json")
-            for t in ("depthoff", "k2", "gated", "k1b", "notan", "gateS")}
+            for t in ("depthoff", "k2", "gated", "k1b", "notan", "gateS",
+                      "l147off", "default", "defaultS")}
 
     print("\n--- G1/G2 the two references the implementation must not move ---")
     if arms["depthoff"]:
@@ -111,6 +112,25 @@ def main():
              f"{len(moved)}/{len(ref)} moved, {len(worse)} worse")
         bad = [i for i, r in arms["gateS"].items() if not r.get("is_feasible", True)]
         gate("G4d feasible", not bad, f"{len(arms['gateS'])-len(bad)}/{len(arms['gateS'])}")
+
+    print("\n--- G6 the L147 tangent as a CODE DEFAULT (L158) ---")
+    print("      The grader, make_submission verify and l113_ship_gate all run")
+    print("      the official command with ICCAD_* STRIPPED, so a mechanism")
+    print("      reachable only through an env var is inert in the package no")
+    print("      matter how green it measures. These three say what an")
+    print("      UNCONFIGURED run now does.")
+    if arms["l147off"] and arms["notan"]:
+        gate("G6a kill switch ICCAD_SHAPE_LP_L147=0 == the pre-L147 band",
+             *biteq(arms["l147off"], arms["notan"]))
+    if arms["default"]:
+        gate("G6b unconfigured run == the arm the pricing measured (catchoff)",
+             *biteq(arms["default"], ref))
+    if arms["defaultS"] and arms["gateS"]:
+        gate("G6c code default + S == the same config via explicit flags",
+             *biteq(arms["defaultS"], arms["gateS"]))
+        bad = [i for i, r in arms["defaultS"].items() if not r.get("is_feasible", True)]
+        gate("G6d unconfigured+S feasible", not bad,
+             f"{len(arms['defaultS'])-len(bad)}/{len(arms['defaultS'])}")
 
     print("\n--- G5 what is NOT established here ---")
     print("      The grader's per-case ordering. Our slowdown is n-dependent")
