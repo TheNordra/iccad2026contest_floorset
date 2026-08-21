@@ -3030,6 +3030,7 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     # L157: derive the depth AFTER lpkw, because the gate is coupled to
     # the tangent arm being in play -- see _shape_lp_depth.
     iters, gated = _shape_lp_depth(bool(lpkw))
+    _pass_dt = []
     global PRUNE_B
     P0 = [tuple(float(v) for v in p) for p in pos]
     P = P0
@@ -3088,6 +3089,14 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
             newP, tele, _B = lp_pass(key, P_, 0.06, sep_trim=True, **kw)
             dt_pass = time.perf_counter() - _t_pass
             passes[0] += 1
+            # L159: per-PASS timing, inside one run. Cross-run
+            # differencing cannot measure this: the null control (the 25
+            # n the gate excludes, where two arms do identical work) drifts
+            # -5.03s over 25 cases = 0.20s/case, against a signal of
+            # 0.08s/case. Timing both passes in the SAME process removes
+            # the drift entirely instead of trying to average it away.
+            if _LP_TIMING:
+                _pass_dt.append(dt_pass)
             if tele["lp_obj"] is None:
                 break
             m = _proxy_metrics(newP, *margs)
@@ -3130,6 +3139,8 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
         # SAME key, so a stale entry would hand the next case masks sized
         # for the previous one (numpy broadcast error, 99/100 cases).
         _HARD_MASKS.pop(key, None)
+    global _LAST_PASS_DT
+    _LAST_PASS_DT = list(_pass_dt)
     kept = P is not P0
     # L147 diagnostic, off by default: one line per case, appended. The tangent
     # arm drops the upper area bound and leaves hard_ok to adjudicate, and a
@@ -3292,6 +3303,22 @@ def _shape_lp_on() -> bool:
     return _effective_cores_hi() >= _ROUTE_A_CORES_MIN
 
 
+# OFFLINE INSTRUMENT (ported from the teammate's L140, `l113-route-a`). Never
+# fires unless ICCAD_LP_TIMING is set; the shipped path pays one os.environ
+# lookup per case and is otherwise bit-identical.
+#
+# 🚨 WHY CPU TIME AND NOT WALL -- their finding, and it invalidates how L147,
+# L154 and L157 were all priced. Differencing whole-eval wall on a dev box put
+# their OOS 240 at k=2 FASTER than k=1 (1507s vs 1601s) for strictly more work,
+# i.e. a NEGATIVE LP cost that looked perfectly reasonable in a table. The same
+# noise made their per-pass figure wrong by 2.4x (0.186s against a true
+# 0.4446s). 51 portfolio subprocesses run concurrently with everything else on
+# the box; process_time() counts only this process's own CPU, and the LP runs
+# synchronously in the main process, so it is the right clock.
+_LP_TIMING = os.environ.get("ICCAD_LP_TIMING", "") not in ("", "0")
+_LAST_PASS_DT = []
+
+
 def _shape_lp_maybe(pos, *a):
     """Never raises, never returns anything the guard did not accept.
 
@@ -3300,6 +3327,19 @@ def _shape_lp_maybe(pos, *a):
     post-processing may decline, it may never take the case down with it."""
     if not _shape_lp_on():
         return pos
+    if _LP_TIMING:
+        _c0, _w0 = time.process_time(), time.perf_counter()
+        try:
+            _r = _shape_lp(pos, *a)
+        except Exception as exc:
+            print(f"[constructive] shape LP raised {exc!r}; keeping the selected "
+                  f"layout", file=sys.stderr)
+            _r = pos
+        print(f"[lptime] n={len(pos)} cpu={time.process_time()-_c0:.6f} "
+              f"wall={time.perf_counter()-_w0:.6f} "
+              f"passes={','.join(f'{d:.6f}' for d in _LAST_PASS_DT)}",
+              file=sys.stderr, flush=True)
+        return _r
     try:
         return _shape_lp(pos, *a)
     except Exception as exc:

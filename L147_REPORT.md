@@ -160,14 +160,28 @@ is visible in an `ICCAD_SHAPE_LP=0` run:
       shipped LP      317.01 s     the LP itself costs +17.52 s
       + tangent cut   326.68 s     the extra rows cost  +9.67 s
 
-    grader beta       52.07 s total, WITH the shipped LP already inside it
-      => ~35 s of C++ pool (48 real cores) + ~17 s of LP
+    grader beta       52.07 s total
 
-The pool is C++ across 51 parallel profiles and runs ~8.5x slower on this
-32-core box than on the grader's 48; **the LP is single-threaded Python+scipy and
-runs at the same speed on both.** The added work is entirely LP, so it transfers
-in SECONDS, not as a ratio. Pricing it by ratio would divide the real cost by
-about six.
+🚨 **CORRECTION (2026-08-22). This paragraph used to read "52.07 s total, WITH
+the shipped LP already inside it => ~35 s of C++ pool + ~17 s of LP", and then
+concluded that the LP "runs at the same speed on both". Both halves are wrong.**
+
+The graded beta package is M73, uploaded 2026-07-30, `op_wrapper.py` md5
+`c2e27c9993afd20b5c14934f6ceea8c3`. Its tree (`7f38893`) contains `_shape_lp`
+**0 times**, `scipy` 0, `linprog` 0. `_shape_lp` first enters the shipped file
+at `d0db1fb`, **2026-08-10 — eleven days after the beta upload**. So the beta
+52.07 s is **100% pool and contains no LP at all**.
+
+The "~17 s of LP" was this box's own 17.52 s carried over unchanged, and the
+"~35 s" was 52.07 minus it. That is **f = 1 assumed and then reported as
+measured** — the conclusion was its own premise. f (dev-box LP seconds per
+grader LP second) is *not* bounded by anything in this repo: every grader-vs-local
+ratio available (5.0x, 5.7x, 15.7x) is a whole-case number dominated by the
+~51-way parallel C++ pool, and beta carries no single-threaded scipy at all.
+
+f ≈ 1 may still be a reasonable prior — both machines run modern x86 and the LP
+is single-threaded Python+scipy — but it is a prior, not a measurement, and
+`L157_REPORT.md` §5g prices the decision without needing it.
 
 **Local wall by generation** (48c pool shape, one run each unless noted; the
 control's own run-to-run spread is 2.8% p50 / 8.9% max, so only the L147 row is
@@ -175,7 +189,7 @@ min-of-3 and therefore exact):
 
 | package | local total | per case |
 |---|---|---|
-| L114 (the beta-era submission) | 261.66 s | 2.617 s |
+| L114 (~~the beta-era submission~~ — **mislabelled**, L114 landed 2026-08-10, eleven days AFTER the beta upload) | 261.66 s | 2.617 s |
 | M80 | 132.06 s | 1.321 s |
 | L136 (currently on Drive) | 296.71 s | 2.967 s |
 | L137 (teammate's, not uploaded) | 334.35 s | 3.343 s |

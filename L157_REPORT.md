@@ -1,14 +1,23 @@
 # L157 — selective LP depth: spend k=2 only where the RF floor pays for it
 
-**Verdict: GREEN. OOS NET +0.4275% to +0.8289% across two disjoint samples and
-both gate forms, against a 0.30% bar - the worst bracket clears it by 1.43x.
-202/240 and 209/240 cases move, ALL better, none worse, 480/480 feasible.**
+**Verdict: POSITIVE but not by the margin this report first claimed, and the
+pricing had to be rebuilt twice to find out. Read section 5f and 5g before any
+number above them.**
 
-The in-set estimate below reads +0.231%~+0.411% and called this undecided. It
-was wrong in the pessimistic direction for one reason: **k=2's quality does not
-decay out of sample, it grows** - +0.5967% in set against +0.7518% (s1) and
-+0.9959% (s2), a transfer of 126% and 167%. The 86% discount borrowed from L147
-was the wrong prior.
+Shipped as L158: the L147 tangent by code default plus a DETERMINISTIC n-set
+depth gate. Measured quality, on Linux against the band that ships today:
+**+2.4848%** for the pair, of which L147 is +2.1712% and L157 the rest. Zero
+regressions on every corpus measured (in-set 100, OOS 240 x2, Linux 100).
+
+Against the **worst-case** RF bound -- assuming the runtime floor protects
+nothing at all -- **NET >= +1.0249% for L147 alone and >= +0.6179% for the pair**.
+Under the published per-case medians at f = 1 they read +0.8732% and +0.4993%;
+at f >= 2, +2.01% and +2.37%. Positive under every assumption I could construct.
+
+The headline this report opened with -- "GREEN, clears the 0.30% bar by 1.43x" --
+was computed with an RF cost understated 3.7x (section 5f) on top of a pricer and
+a baseline that were both wrong (section 5g). The quality figures below are
+unaffected; every NET above section 5f is not.
 
 No new evaluation was run. Every input was already committed: the k=2 arm
 (`results_L148_lp2.json`), its min-of-3 timings (`results_L149_t{1,2,3}_*`), the
@@ -349,6 +358,76 @@ error and should be re-derived before it is quoted.
 wrong measurement, moved a verdict — see `lp-baseline-is-label-derived` and
 L154's. **The measurement was right every time; the thing it was subtracted
 from was not.**
+
+## 5g. FINAL PRICING -- three errors found, and the baseline was the worst
+
+Pricing the shipping decision surfaced three errors, in ascending order of size.
+Two were mine, one was inherited.
+
+**(1) Wrong pricer.** I used my own fit `M_hat(n) = 0.0196*n^1.168`. The pricer
+is the contest PUBLISHED per-case medians (`C_median_runtimes_beta_hidden.csv`,
+which `l146_rf_price.py` already reads). Adjudicated by a 53-agent audit with
+adversarial verification:
+
+| denominator | graded total | cost-weighted RF | cases off floor |
+|---|---|---|---|
+| **published medians** | 0.9245185859 | **0.7000402** | **1** (test_id 66) |
+| teammate M67-E model | 0.9246949736 | 0.7001738 | 13 |
+| my `n^1.168` fit | 0.9244654613 | 0.7000000 | 0 |
+
+Official: total 0.9245183670, cwRF 0.7000400599. The published medians reproduce
+both to ~2e-7 and recover the single case that makes 0.70004 exceed 0.70. **My
+fit misses that case entirely; the teammate model misses cwRF by ~800x** -- its
+`kappa = 3.1612` is one leaderboard number divided by one aggregate
+(`m67e_rf48.py:557-558`, its own output conceding *self-consistent, no floor
+clamp*), assuming every case shares one ratio. Its per-case medians span
+**0.217x-1.786x** of the published ones.
+
+**(2) Wrong cost.** Cross-run differencing cannot measure this. The null control
+-- the 25 block counts the gate excludes, where two arms do *identical* work and
+the true delta is exactly zero -- drifts **-5.03s over 25 cases** on wall and
+**-4.97s** on CPU. Switching clocks does not help; the differencing is the
+problem, not the clock. Measuring both passes **inside one run** gives 2nd pass
+**29.85s** (was 23.23s) and, from medians of 3 reps, tangent **13.33s** (was
+9.67s). Both earlier figures were **understated**.
+
+**(3) Wrong baseline, and this one is fatal to closed-form pricing.**
+`r["t"]` is our runtime *on the beta grader*, 52.07s. **The graded beta package
+contains no shape LP at all.** The uploaded M73 tree (`7f38893`, `op_wrapper.py`
+md5 `c2e27c9993afd20b5c14934f6ceea8c3`) has `_shape_lp` **0**, `scipy` 0,
+`linprog` 0; `_shape_lp` lands at `d0db1fb` on **2026-08-10, eleven days after
+the beta upload**. So the claim in `L147_REPORT.md` -- 52.07s "with the LP
+already inside it, so ~35s pool + ~17s LP" -- was **f = 1 assumed and then
+reported as measured**; the conclusion was its own premise, the ~17s being this
+box own 17.52s carried across. Corrected there, in `HANDOFF_2026-08-20.md` and
+in `CLAUDE.md`.
+
+=> **`f` (dev-box LP seconds per grader LP second) cannot be bounded from this
+repo.** Every grader-vs-local ratio available (5.0x, 5.7x, 15.7x) is a
+*whole-case* number dominated by the ~51-way parallel C++ pool, and beta carries
+no single-threaded scipy to compare against.
+
+### The bound that survives without f
+
+Above the floor `RF_new/RF_old = ((t+dt)/t)^0.3`, which needs only `dt/t` on one
+machine -- no grader median, no conversion. Worst case, floor protects nothing:
+
+| | worst-case RF | quality | **NET floor** |
+|---|---|---|---|
+| L147 alone | -1.1463% | +2.1712% | **+1.0249%** |
+| L147 + L157 (s1) | -2.0415% | +2.6594% | **+0.6179%** |
+| L147 + L157 (s2) | -2.0415% | +2.7385% | **+0.6970%** |
+
+Beta measured cwRF = 0.70004, i.e. essentially every case *was* on the floor, so
+the true cost sits far below this bound. Under the published medians at f = 1 the
+same three read +0.8732% / +0.4993% / +0.5784%; at f >= 2, +2.01% / +2.37% /
++2.45%.
+
+**Both configurations are positive under every assumption I could construct.**
+L147 alone has the higher floor; **L157 only adds value above f ~ 1.37**, and
+below that it costs about 0.4pp. Directional caveat: the grader pool is faster
+(48 real cores), so the LP is a *larger* share of its case time than of ours,
+which pushes `dt/t` up and the worst-case bound down.
 
 ### What is still not established
 
