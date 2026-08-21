@@ -1,9 +1,14 @@
 # L157 — selective LP depth: spend k=2 only where the RF floor pays for it
 
-**Verdict: real, deployable, and ON the bar. NET lands in +0.231% to +0.411%
-depending on how much per-case discrimination the gate keeps, against a 0.30%
-bar. Unlike L154 this is not clearly sub-bar — it is genuinely undecided, and
-the OOS transfer of k=2's quality is the one measurement that would settle it.**
+**Verdict: GREEN. OOS NET +0.4275% to +0.8289% across two disjoint samples and
+both gate forms, against a 0.30% bar - the worst bracket clears it by 1.43x.
+202/240 and 209/240 cases move, ALL better, none worse, 480/480 feasible.**
+
+The in-set estimate below reads +0.231%~+0.411% and called this undecided. It
+was wrong in the pessimistic direction for one reason: **k=2's quality does not
+decay out of sample, it grows** - +0.5967% in set against +0.7518% (s1) and
++0.9959% (s2), a transfer of 126% and 167%. The 86% discount borrowed from L147
+was the wrong prior.
 
 No new evaluation was run. Every input was already committed: the k=2 arm
 (`results_L148_lp2.json`), its min-of-3 timings (`results_L149_t{1,2,3}_*`), the
@@ -107,23 +112,74 @@ real property of the deployed path, and it is what puts the heavy band — where
   the noise-fitting mode M76 measured at ~5% transfer and L127 at 15–25%. The
   principled gate is worth less in sample and is the only one worth quoting.
 
-## 5. What would settle it
+## 5. 🏆 The OOS measurement — and it settles it GREEN
 
-The remaining unknown is the **OOS transfer of k=2's quality**. L147 transferred
-at 86% (in-set +2.5881% → OOS +2.2416%). At that rate the brackets become
-**+0.199% / +0.353%**, centre +0.276% — still straddling. So the transfer rate
-does not settle it by assumption either; it has to be measured.
+`l157_oos.sh`, two disjoint 240-case samples, the same `l140_oos_soft_audit.py`
+driver L151/L154 used, one extra arm (`ICCAD_SHAPE_LP_ITERS=2`). Only the k=2
+arms were run: the k=1 side already exists and is **bit-verified** through this
+very driver (L154 §2: `l154_oos_s1_off.json` == `l151_oos_s1_on.json`,
+**240/240 cost and 240/240 positions**), so re-running it would only add timing
+noise to a comparison that is exact.
 
-⇒ **The ~2h OOS run is the deciding measurement**, because nothing else
-distinguishes "ship a second knob" from "record another sub-bar mechanism". It
-is the same `l140_oos_soft_audit.py` driver L151/L154 used, two samples, one
-extra arm (`ICCAD_SHAPE_LP_ITERS=2`), then the same selection applied offline.
+| | k=2 everywhere | n-set gate | **NET** | per-case gate | **NET** |
+|---|---|---|---|---|---|
+| **OOS s1** 240 | +0.7518% | +0.4882% | **+0.4275%** | +0.5678% | **+0.5477%** |
+| **OOS s2** 240 (disjoint) | +0.9959% | +0.5673% | **+0.5066%** | +0.8490% | **+0.8289%** |
+| in-set 100 | +0.5967% | +0.2917% | +0.2310% | +0.4109% | +0.3908% |
 
-The mechanism has one genuinely good property worth recording regardless: it
-**degrades gracefully**. If the final medians come in smaller than beta's, fewer
-cases qualify and the gate simply does less — NET +0.12% at 0.90×, +0.06% at
-0.80×, never strongly negative. That is the opposite of the all-or-nothing k=2,
-which is −0.90% at the measured medians.
+RF is priced on the beta rows as always: −0.0607% for the n-set gate, −0.0201%
+for the per-case gate (which spends closer to the true free set).
+
+**Every bracket on both samples clears the 0.30% bar** — the worst by **1.43×**,
+the best by 2.76×. **202/240 and 209/240 cases moved, every one of them better,
+none worse, 480/480 feasible.**
+
+🔑 **The transfer runs the other way from the prior.** k=2's quality is
+**+0.7518% / +0.9959% OOS against +0.5967% in set — 126% and 167%.** I had
+discounted by L147's 86% and called the result undecided; that prior was wrong.
+The reason is visible in the decomposition: the gain is `area_gap`
+(0.1557→0.1449 on s1, **0.1642→0.1469** on s2), and OOS carries more area
+deficit to recover than the in-set 100 does.
+
+⚠️ **The conservative bracket is the one to quote.** The `n-set gate` needs
+**no runtime information at all** — it is a static per-`n` predicate — and it
+still clears by 1.43×. The per-case bracket ranks OOS cases by
+`runtime / M-hat(n)` measured on *our* 32-core box, and that ranking may not
+match the grader's; nothing in the verdict depends on it.
+
+### Chain of custody
+
+* the two arms' flag strings are **byte-equal** except for `ICCAD_SHAPE_LP_ITERS=2`
+  (`l151_oos.sh` vs `l157_oos.sh`);
+* the shipping file is at `69b9e6a` (L154), and that tree's CATCH-off path is
+  bit-identical to the L151 baseline — re-checked, 240/240 cost and positions;
+* both k=2 runs exited 0 with no `fallback` / `unavailable` / `[constructive]`
+  line in either log.
+
+### It also degrades gracefully
+
+If the final medians come in smaller than beta's, fewer cases qualify and the
+gate simply does less — in-set NET +0.12% at 0.90×, +0.06% at 0.80×, never
+strongly negative. That is the opposite of all-or-nothing k=2, which is −0.90%
+at the measured medians.
+
+## 5b. 🚧 What is NOT done
+
+**The gate is priced, not built.** `optimizer_constructive.py` is untouched.
+Shipping it needs:
+
+1. `_shape_lp` to see the case's elapsed time. It does not today — `solve()`
+   takes no timestamp. ~4 lines: stamp `perf_counter()` at the top of `solve`,
+   read it in `_shape_lp`.
+2. `M-hat(n)` and the `0.3046` threshold as constants, plus a kill switch, in
+   the same cores-gated block as the rest of the LP lane.
+3. The usual gates: flag-off bit-equality, `l113_ship_gate --cores 48`, and a
+   Linux verify — the LP is the only cross-platform mover (L153 §2), and this
+   changes how much LP runs.
+
+⚠️ Until step 1 exists, only the **n-set** form is implementable, and it is a
+static table fitted to the beta corpus. That is the weaker but sufficient
+version: +0.4275% / +0.5066% NET.
 
 ## 6. What survives regardless
 
