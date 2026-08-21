@@ -268,6 +268,53 @@ lives in the `getenv` fallbacks, `_L147_R/G/TOL/PRICE = 1.5 / 1.10 / 0.006 /
 tangent rows but leaves `area_price` defaulted — a third configuration nobody
 has measured. Documented in the code at the point of the trap.
 
+## 5e. 🏁 L158 — the shipped configuration, verified on Linux
+
+`l158_wsl_verify.sh`. **Nothing is set by environment except the core count**,
+because that is the whole point: the grader strips `ICCAD_*`.
+
+| lane | config | result |
+|---|---|---|
+| 1 | 48c, LP off | pre-LP base `1.260246745790688` |
+| 2 | 48c, `ICCAD_SHAPE_LP_L147=0` | pre-L147 band `1.2276727446271392`, **passes 1:100** |
+| 3 | 48c, **the shipped default** | `1.1971670215053347` = **+5.0053%** vs pre-LP, **+2.4848%** vs the pre-L147 band, **passes 1:27 / 2:73** |
+| 4 | 48c, the same run again | **passes 1:27 / 2:73** |
+
+**Determinism on Linux: cost 100/100, positions 100/100.** 100/100 feasible and
+0 regressions against the pre-LP base on every lane.
+
+🔑 **The 73/27 split is bit-identical on Windows and on Linux.** That is the
+payoff of the deterministic form — the n-set does not read a clock, so the same
+73 cases take the second pass on both platforms and on the grader. The clock
+form could not have produced that, and could not have been checked for it.
+
+The `+2.4848%` on lane 3 is the whole shipped stack — L147's tangent plus
+L157's depth — measured on Linux against the band that ships today.
+
+### Gate summary
+
+| gate | result |
+|---|---|
+| in-set kill switch == pre-L147 band | ✅ 100/100 cost + positions |
+| in-set determinism, two runs | ✅ 100/100 cost + positions, identical histograms |
+| in-set quality vs L147 k=1 | ✅ **+0.2917%**, 58 moved, **0 worse**, 100/100 feasible |
+| Linux, four lanes | ✅ all PASS, 0 regressions, determinism 100/100 |
+| `l113_ship_gate --cores 48` | ❌ **cannot run on this box** |
+
+🔑 **`+0.2917%` is exactly the offline n-set prediction in §3, to four
+decimals.** The deployed mechanism is the priced mechanism.
+
+⚠️ **The ship gate could not run**, and the reason is worth recording. Every
+compiler on this box exits 1 with empty stdout *and* stderr — ucrt64 and
+mingw64 alike, and even `-E` preprocess-only on `int main(){return 0;}`.
+`cc1plus.exe` is present (39MB) and `g++ --version` answers, so the driver
+cannot spawn its children: an OS-level block, unrelated to this change.
+**It failed loudly** — `l113_ship_gate` G2 counts fallback lines on stderr, so
+it reported `total=9.9999, 9 fallback lines` instead of silently scoring the
+Python SA fallback, which is the failure mode memory
+`windows-msys-path-silent-sa-fallback` records. The grader's own path is the
+bundled Linux ELF with no compile, and that path is what lanes 1–4 above cover.
+
 ### What is still not established
 
 **The grader's per-case ordering.** No single S reproduces it. That the grader
