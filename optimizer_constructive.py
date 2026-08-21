@@ -2004,6 +2004,12 @@ class MyOptimizer(FloorplanOptimizer):
         # SA and row fallbacks too -- they emit `origin + offset` layouts as well.
         def _snap(p):
             return _snap_group_abutment(p, constraints, block_count)
+        # L157: the case clock. The per-case RF-floor gate needs this
+        # case's OWN elapsed time and solve() is the only place that
+        # knows when the case began. Stamped before the fallbacks too,
+        # so a case that lands on SA carries a valid clock, not a stale
+        # one from the previous case.
+        _case_clock_start()
         try:
             return _snap(self._solve_impl(
                 block_count, area_targets, b2b_connectivity,
@@ -2961,10 +2967,7 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     preplaced unmoved, 1% area band, no overlap). Decision path touches no
     official evaluator -- same as the shipped selection."""
     key = "live"
-    try:
-        iters = int(os.environ.get("ICCAD_SHAPE_LP_ITERS", "1"))
-    except ValueError:
-        iters = 1
+    passes = [0]
     try:
         pb = os.environ.get("ICCAD_SHAPE_LP_B", "8")
         prune = None if pb in ("", "0") else float(pb)
@@ -3006,6 +3009,9 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     except ValueError:
         lpkw = {}
 
+    # L157: derive the depth AFTER lpkw, because the gate is coupled to
+    # the tangent arm being in play -- see _shape_lp_depth.
+    iters, gated = _shape_lp_depth(bool(lpkw))
     global PRUNE_B
     P0 = [tuple(float(v) for v in p) for p in pos]
     P = P0
@@ -3044,7 +3050,14 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
         rule wearing the same name.
         """
         P_, prev_ = P0, prev
-        for _ in range(max(1, iters)):
+        dt_pass = 0.0
+        for _it in range(max(1, iters)):
+            # L157: the first pass is never gated -- it is what ships.
+            # From the second on, spend only if this case can absorb it
+            # and stay on the RF floor. dt_pass is the previous pass
+            # MEASURED, not a fitted cost.
+            if _it and gated and not _depth_affordable(block_count, dt_pass):
+                break
             # sep_trim=True: the separation transitive reduction. Exact
             # (a removed row stays implied by the ones that survive) and
             # independent of the HPWL pruning -- they used to be mutually
@@ -3053,7 +3066,10 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
             # the heavy cases. Measured over 100 cases, min of 3:
             # weighted tLP 0.2670s -> 0.1947s (1.37x) with the quality
             # identical to every digit (1.236783247, kept 100/100).
+            _t_pass = time.perf_counter()
             newP, tele, _B = lp_pass(key, P_, 0.06, sep_trim=True, **kw)
+            dt_pass = time.perf_counter() - _t_pass
+            passes[0] += 1
             if tele["lp_obj"] is None:
                 break
             m = _proxy_metrics(newP, *margs)
@@ -3108,10 +3124,98 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     if _sp:
         try:
             with open(_sp, "a") as fh:
-                fh.write(f"{int(block_count)} {int(kept)} {int(tier)}\n")
+                # L157 4th field: LP passes actually SPENT. Without it a
+                # gated run and an ungated one are indistinguishable in
+                # the telemetry -- the gate could be a silent no-op and
+                # every table above would print the same. l117 indexes
+                # this file by position and tolerates the extra column.
+                fh.write(f"{int(block_count)} {int(kept)} {int(tier)} "
+                         f"{int(passes[0])}\n")
         except Exception:
             pass
     return P if kept else pos
+
+
+# L157: SELECTIVE LP DEPTH. The RF floor -- max(0.7, R^0.3) on the runtime
+# ratio -- is not one global budget. Measured per case against the published
+# beta medians the slack runs 0.96x to 3.91x (p50 1.74x), so a mechanism that
+# is unaffordable "on average" is free on most cases and ruinous on a few.
+# A second LP pass costs p50 0.165s and buys +0.5967% in set, +0.7518% (s1)
+# and +0.9959% (s2) out of sample. Spent on EVERY case it prices at NET
+# -0.4593%; spent only where the case can absorb it, NET +0.4275%~+0.8289%
+# across both OOS samples and both gate forms, against a 0.30% bar.
+# Full derivation and the chain of custody: L157_REPORT.md.
+_M157_A, _M157_B = 0.0196, 1.168   # M_hat(n) = A * n**B, R^2 = 0.907 on beta
+_M157_THR = 0.3046                 # 0.7 ** (1/0.3): where max(0.7, R^0.3) lifts
+_T_CASE = threading.local()        # per-case clock, stamped by solve()
+
+
+def _case_clock_start() -> None:
+    """Stamp the start of THIS case. Thread-local: the profile pool runs in
+    threads but _shape_lp is reached on the same thread that entered solve(),
+    so a plain module global would be correct today and would race the day a
+    caller drives cases concurrently."""
+    _T_CASE.t0 = time.perf_counter()
+
+
+def _shape_lp_depth(tangent_on=False):
+    """(passes allowed, gate the extra ones?) -- L157.
+
+    An explicit ICCAD_SHAPE_LP_ITERS keeps its old meaning and is UNGATED:
+    that is how the k=1 and k=2 arms were measured and they have to stay
+    reproducible bit-for-bit. ICCAD_SHAPE_LP_DEPTH2=0 forces the shipped k=1
+    -- the kill switch, and the control for the bit-equality gate.
+
+    `tangent_on` is the coupling that keeps the DEPLOYED configuration
+    equal to the PRICED one. Every L157 number -- in set and on both OOS
+    samples -- was measured with L147's tangent rows in play; depth 2 on
+    the plain shipped band was never measured at all, and a package with
+    no ICCAD_* set would otherwise run exactly that unmeasured arm.
+    Gated on lpkw and not on the env var, so it still holds the day the
+    tangent is switched on by a code default rather than by the
+    environment."""
+    v = os.environ.get("ICCAD_SHAPE_LP_ITERS", "")
+    if v != "":
+        try:
+            return max(1, int(v)), False
+        except ValueError:
+            return 1, False
+    if not tangent_on:
+        return 1, False
+    if os.environ.get("ICCAD_SHAPE_LP_DEPTH2", "") == "0":
+        return 1, False
+    return 2, True
+
+
+def _depth_affordable(n, dt_next) -> bool:
+    """Can this case absorb dt_next more seconds and stay on the RF floor?
+
+    t_case and dt_next are both OBSERVED -- the case clock, and the pass that
+    just ran (a further pass repeats the same build+solve on a slightly
+    different P, so the last pass is the right estimate for the next one).
+    Only M_hat is estimated; substituting it for the true beta median moves
+    the selection from 71 cases to 75 and costs -0.0201% of RF.
+
+    No clock -> False, i.e. shipped k=1. A caller that never went through
+    solve() (a probe) must not silently buy the ungated k=2, which prices at
+    NET -0.4593%. Every failure direction here falls back to what ships."""
+    t0 = getattr(_T_CASE, "t0", 0.0)
+    if not t0:
+        return False
+    m_hat = _M157_A * (max(1.0, float(n)) ** _M157_B)
+    # ICCAD_SHAPE_LP_DEPTH_S: machine-speed scale, default 1.0 = OFF.
+    # The gate is stated in ABSOLUTE seconds, because R = t/M is measured on
+    # whatever box runs the case and M_hat is the grader's median -- correct
+    # on the grader, and unfirable anywhere slower. This dev box runs ~9x
+    # slower per case (490.7s vs beta's 52.07s over the same 100 cases), so
+    # at S=1 the gate is a no-op HERE and the mechanism cannot be exercised
+    # end to end. S makes it testable. It is NOT a tuning knob: shipping any
+    # value other than 1.0 would be claiming to know the grader's speed.
+    try:
+        s = float(os.environ.get("ICCAD_SHAPE_LP_DEPTH_S", "1") or "1")
+    except ValueError:
+        s = 1.0
+    return (time.perf_counter() - t0) + dt_next <= _M157_THR * m_hat * s
 
 
 def _shape_lp_on() -> bool:
