@@ -3034,7 +3034,16 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     l3.CASES[key] = _lp_build_case(block_count, area_targets, b2b_connectivity,
                                    p2b_connectivity, pins_pos, constraints, base)
     saved, PRUNE_B = PRUNE_B, prune
-    try:
+
+    def _chain(kw):
+        """One accept-guarded LP chain from P0. Returns the layout it kept.
+
+        Factored out of the loop below unchanged so that the L154 band-catch
+        can re-run the SAME guard with different rows -- a second tier must be
+        adjudicated by the same rule as the first or it is a different keep
+        rule wearing the same name.
+        """
+        P_, prev_ = P0, prev
         for _ in range(max(1, iters)):
             # sep_trim=True: the separation transitive reduction. Exact
             # (a removed row stays implied by the ones that survive) and
@@ -3044,18 +3053,42 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
             # the heavy cases. Measured over 100 cases, min of 3:
             # weighted tLP 0.2670s -> 0.1947s (1.37x) with the quality
             # identical to every digit (1.236783247, kept 100/100).
-            newP, tele, _B = lp_pass(key, P, 0.06, sep_trim=True, **lpkw)
+            newP, tele, _B = lp_pass(key, P_, 0.06, sep_trim=True, **kw)
             if tele["lp_obj"] is None:
                 break
             m = _proxy_metrics(newP, *margs)
-            better = (m["hpwl"] < prev["hpwl"] * (1 - 1e-12)
-                      or m["area"] < prev["area"] * (1 - 1e-12))
-            worse = (m["hpwl"] > prev["hpwl"] * (1 + 1e-12)
-                     or m["area"] > prev["area"] * (1 + 1e-12)
-                     or m["vrel"] > prev["vrel"] + 1e-12)
+            better = (m["hpwl"] < prev_["hpwl"] * (1 - 1e-12)
+                      or m["area"] < prev_["area"] * (1 - 1e-12))
+            worse = (m["hpwl"] > prev_["hpwl"] * (1 + 1e-12)
+                     or m["area"] > prev_["area"] * (1 + 1e-12)
+                     or m["vrel"] > prev_["vrel"] + 1e-12)
             if not (better and not worse and hard_ok(P0, newP, key)):
                 break
-            P, prev = newP, m
+            P_, prev_ = newP, m
+        return P_
+
+    # L154 BAND-CATCH (off unless ICCAD_SHAPE_LP_CATCH=1). A tangent-arm case
+    # that hard_ok refuses currently falls all the way back to the pre-LP
+    # layout -- so it loses the whole SHIPPED LP gain, not just the tangent
+    # increment. L153 measured that on the Linux verify: case 96 (n=117) is
+    # rejected there and kept on Windows, and that one case is 107% of the
+    # Windows/Linux spread (the shipped band keeps it at 1.186644; rejection
+    # returns 1.215357). The shipped band's own layout is a legal second tier:
+    # it is what ships today, it is adjudicated by the same guard, and a case
+    # that reaches tier 2 lands on the shipped-band result bit-for-bit.
+    # The mean is small; the point is variance -- it bounds the downside of
+    # every rejection at "no worse than what is already deployed".
+    _catch = os.environ.get("ICCAD_SHAPE_LP_CATCH", "") == "1"
+    tier = 0
+    try:
+        P = _chain(lpkw)
+        if P is not P0:
+            tier = 1
+        elif _catch and lpkw:
+            # only worth a second solve when the first chain ran NON-shipped
+            # rows; with lpkw empty the retry would be the identical program.
+            P = _chain({})
+            tier = 2 if P is not P0 else 0
     finally:
         PRUNE_B = saved
         l3.CASES.pop(key, None)
@@ -3068,11 +3101,14 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     # arm drops the upper area bound and leaves hard_ok to adjudicate, and a
     # REJECTED case loses the whole shipped LP gain, not just the increment --
     # so kept-rate is the gate, and it has to be observable.
+    # L154 added the third field, the TIER that kept it: 0 rejected (pre-LP),
+    # 1 the requested rows, 2 the band-catch. Without it a band-catch run is
+    # indistinguishable from a run where the tangent rows simply got luckier.
     _sp = os.environ.get("ICCAD_SHAPE_LP_STATS", "")
     if _sp:
         try:
             with open(_sp, "a") as fh:
-                fh.write(f"{int(block_count)} {int(kept)}\n")
+                fh.write(f"{int(block_count)} {int(kept)} {int(tier)}\n")
         except Exception:
             pass
     return P if kept else pos
