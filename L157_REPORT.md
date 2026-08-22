@@ -1,23 +1,26 @@
 # L157 — selective LP depth: spend k=2 only where the RF floor pays for it
 
-**Verdict: POSITIVE but not by the margin this report first claimed, and the
-pricing had to be rebuilt twice to find out. Read section 5f and 5g before any
-number above them.**
+**Verdict: SHIP. NET +2.71% (s1) / +2.84% (s2), every threshold cleared with
+at least 2.2x of margin. The pricing had to be rebuilt three times to get here
+-- sections 5f, 5g and 5h -- so treat any NET figure earlier in this file as
+superseded. The quality figures were right throughout.**
 
-Shipped as L158: the L147 tangent by code default plus a DETERMINISTIC n-set
-depth gate. Measured quality, on Linux against the band that ships today:
-**+2.4848%** for the pair, of which L147 is +2.1712% and L157 the rest. Zero
-regressions on every corpus measured (in-set 100, OOS 240 x2, Linux 100).
+What ships (L158 + L160): the L147 tangent **by code default**, plus a
+**deterministic 89-value n-set** depth gate. On Linux, against the band that
+ships today: **+2.5401%**. Zero regressions on every corpus measured -- in-set
+100, OOS 240 x2, and Linux 100 -- and the 87/13 pass split is **bit-identical on
+Windows and Linux**.
 
-Against the **worst-case** RF bound -- assuming the runtime floor protects
-nothing at all -- **NET >= +1.0249% for L147 alone and >= +0.6179% for the pair**.
-Under the published per-case medians at f = 1 they read +0.8732% and +0.4993%;
-at f >= 2, +2.01% and +2.37%. Positive under every assumption I could construct.
+The one unknown that decided everything, **f** (dev-box LP seconds per grader LP
+second), is now **measured at 3.17**, against thresholds of 0.75 / 0.91 / 1.37 /
+1.47. Section 5h has the method and the provenance; the short version is that the
+beta package was rebuilt from git and re-run here, reproducing its recorded
+identity `1.295547821428148` bit-for-bit.
 
-The headline this report opened with -- "GREEN, clears the 0.30% bar by 1.43x" --
-was computed with an RF cost understated 3.7x (section 5f) on top of a pricer and
-a baseline that were both wrong (section 5g). The quality figures below are
-unaffected; every NET above section 5f is not.
+Three corrections this file carries, in the order they were found: the RF cost
+was understated 3.7x (5f); the pricer, the cost measurement and the baseline were
+all wrong, the baseline worst of all (5g); and f was declared unmeasurable when
+it was not (5h). Each is written up where it was found rather than edited away.
 
 No new evaluation was run. Every input was already committed: the k=2 arm
 (`results_L148_lp2.json`), its min-of-3 timings (`results_L149_t{1,2,3}_*`), the
@@ -428,6 +431,89 @@ L147 alone has the higher floor; **L157 only adds value above f ~ 1.37**, and
 below that it costs about 0.4pp. Directional caveat: the grader pool is faster
 (48 real cores), so the LP is a *larger* share of its case time than of ours,
 which pushes `dt/t` up and the worst-case bound down.
+
+## 5h. f IS MEASURED -- 3.17 -- and the gate widens to 89
+
+Section 5g said f could not be bounded from this repo. That was too pessimistic:
+it correctly ruled out measuring the LP directly (the beta package has no LP)
+but missed the indirect route.
+
+**How it is measurable.** `CLAUDE.md` records that at >=24 cores the wall is
+MAX-SETTER bound (`c* = sum dt / max dt`, p50 19.3, max 22.5). The grader has 48
+cores and this WSL has 32, both above 22.5, so on **both** machines the wall is
+the single slowest profile -- a **single-threaded** quantity. The whole-case
+ratio for an *identical* package is therefore approximately the single-thread
+ratio, which is f. The earlier 5.0x / 5.7x / 15.7x figures were useless not
+because of parallelism but because they compared **different packages**.
+
+Two preconditions hold: the beta hidden set and our in-set 100 have the
+**identical n multiset** (21..120, one case each), and the M73 ELF is in git.
+
+**The measurement.** Reconstructed the beta package from `7f38893` and ran it in
+WSL at the 48-core pool shape. **Provenance is exact**: weighted total
+`1.295547821428148`, bit-identical to the M73 @48c value `CLAUDE.md` records for
+the uploaded beta; 100/100 feasible, 0 fallback lines, `_shape_lp` count 0.
+
+    f = 141.07s here / 52.07s on the grader = 2.71x
+    per case  p25 2.33   p50 2.71   p75 3.20   min 1.79
+    by band   3.20 / 2.65 / 2.65 / 2.76  -- flat, so the max-setter premise holds
+
+**And 2.71 was conservative.** That ratio is WSL-vs-grader, but the LP costs
+were measured on **Windows**, where the LP runs **1.17x slower** than on WSL
+(19.46s vs 16.62s over 100 cases; scipy 1.15.3 vs 1.18.0). L153 documented that
+those two scipy versions land on *different optima* of the same degenerate
+program -- but the **timing** differs by only 1.17x, not the 2x that would have
+been needed to overturn anything. So the Windows-second-to-grader-second ratio
+is **1.17 x 2.71 = 3.17**.
+
+| threshold | needs f > | margin at 3.17 |
+|---|---|---|
+| L147 positive | 0.75 | 4.2x |
+| L147+L157 positive | 0.91 | 3.5x |
+| L157 worth adding | 1.37 | 2.3x |
+| 89-set over 75-set | 1.47 | 2.2x |
+
+**Consequence: the n-set was derived with un-converted dev-box seconds**, i.e.
+it overcharged the second pass by f and selected 75 where the affordable set is
+**89**. The old 75 are a strict subset. Worth, computed offline from the
+committed OOS arms with no new runs:
+
+| | OOS s1 | OOS s2 | coverage |
+|---|---|---|---|
+| k=2 everywhere | +0.7518% | +0.9959% | 240/240 |
+| n-set 75 | +0.4882% | +0.5673% | 176/240 |
+| **n-set 89** | **+0.5513%** | **+0.6798%** | 210/240 |
+
+RF is unchanged (−0.0661% → −0.0664%) and **0 of the 14 newly included n got
+worse on either sample**. NET at f=3.17: **+2.7102% (s1) / +2.8387% (s2)**, with
+only **2/100** cases off the RF floor.
+
+⚠️ **Widening is a bet, not a free lunch** -- and I first wrote the opposite,
+wrongly. 89 overtakes 75 only above f = 1.47; at f = 1.00 it **loses** 0.21pp
+(s1) / 0.16pp (s2). The measured 3.17 and the observed per-case minimum 1.79 are
+both above 1.47, and that is the entire case for widening.
+
+🔑 **Even at the measured f, k=2 EVERYWHERE still loses to the gate** (−0.28pp
+s1 / −0.11pp s2; 10 cases off the floor against 2). The cases the gate excludes
+carry disproportionate cost, so the teammate's L140 shape is dominated.
+
+### Gates on the 89-set
+
+| gate | result |
+|---|---|
+| in-set determinism, two unconfigured runs | ✅ 100/100 cost + positions |
+| in-set kill switch == pre-L147 band | ✅ 100/100 cost + positions |
+| in-set quality vs the L147 k=1 anchor | **+0.3929%** (75-set: +0.2917%), 70 moved, **0 worse**, 100/100 feasible |
+| Linux L1 LP off | pre-LP base `1.260246745790688` |
+| Linux L2 kill switch | pre-L147 band `1.2276727446271392`, 0 regressions |
+| **Linux L3 shipped default** | **`1.1964885214171022` = +5.0592% vs pre-LP, +2.5401% vs the band**, 100/100 feasible, 0 regressions |
+| Linux L4 determinism | ✅ 100/100 cost + positions |
+
+🔑 **The 87/13 pass split is bit-identical on Windows and on Linux.** That is
+the deterministic form's signature and the clock form could never have produced
+it. (87 rather than 89 because on n=31 and n=42 the shipped guard rejects the
+first pass, so the chain breaks before a second can run: 89 is how many are
+*allowed* a second pass, 87 how many earn one.)
 
 ### What is still not established
 

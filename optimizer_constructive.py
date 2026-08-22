@@ -3195,8 +3195,17 @@ _L147_R, _L147_G, _L147_TOL, _L147_PRICE = "1.5", "1.10", "0.006", "1.0"
 # +0.6798%, RF unchanged (-0.0661% -> -0.0664%), and 0 of the 14 newly included
 # n got worse on either sample.
 # ⚠️ This is a bet, not a free lunch: 89 overtakes 75 only above f = 1.47, and
-# at f = 1.00 it LOSES 0.21pp. The measured 2.71 and the observed per-case
-# minimum 1.79 are both above 1.47, which is the whole case for widening.
+# at f = 1.00 it LOSES 0.21pp. The measured f and the observed per-case minimum
+# 1.79 are both above 1.47, which is the whole case for widening.
+#
+# f = 3.17, not 2.71, once the last leg is included. 2.71 is (WSL whole-case) /
+# (grader whole-case), but the LP costs this set was derived from were measured
+# on WINDOWS, and the LP runs 1.17x slower there than on WSL (19.46s vs 16.62s
+# over 100 cases, scipy 1.15.3 vs 1.18.0 -- a modest environment effect, not the
+# 2x swing that would have been needed to overturn any of this). So the correct
+# Windows-second-to-grader-second ratio is 1.17 x 2.71 = 3.17, and 2.71 was
+# conservative. Every threshold clears with margin: L147 positive above 0.75,
+# L157 positive above 0.91, L157 worth adding above 1.37, 89 over 75 above 1.47.
 _L157_NSET = frozenset((
     21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
     37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53,
