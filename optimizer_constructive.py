@@ -3179,16 +3179,31 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
 # verified at L153, and the base every L154/L157 number sits on top of.
 _L147_R, _L147_G, _L147_TOL, _L147_PRICE = "1.5", "1.10", "0.006", "1.0"
 
-# L157 n-set: the 75 block counts whose beta row can absorb a second LP
+# L157 n-set: the block counts whose beta row can absorb a second LP
 # pass and stay under 0.3046*M_hat(n). Derived by l157_selective_depth.py
-# from the published beta medians; the 24 excluded values inside the span
-# are the cases with no slack, not gaps in the corpus.
+# from the published beta medians; the excluded values inside the span are the
+# cases with no slack, not gaps in the corpus.
+#
+# L160 WIDENED THIS 75 -> 89. The original derivation charged the second pass in
+# DEV-BOX seconds against a GRADER-second budget -- a units error that overcharged
+# it by f. f is now measured at 2.71 (L160: the beta package M73 re-run from git
+# at 7f38893, weighted total 1.295547821428148, bit-identical to the recorded
+# beta identity; 141.07s here against the grader's 52.07s, per-case p25 2.33 /
+# p50 2.71 / p75 3.20, flat across n so the max-setter premise holds). At f=2.71
+# the affordable set is 89, and the old 75 are a strict subset of it.
+# Worth, from the committed OOS arms: s1 +0.4882% -> +0.5513%, s2 +0.5673% ->
+# +0.6798%, RF unchanged (-0.0661% -> -0.0664%), and 0 of the 14 newly included
+# n got worse on either sample.
+# ⚠️ This is a bet, not a free lunch: 89 overtakes 75 only above f = 1.47, and
+# at f = 1.00 it LOSES 0.21pp. The measured 2.71 and the observed per-case
+# minimum 1.79 are both above 1.47, which is the whole case for widening.
 _L157_NSET = frozenset((
-    21, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
-    39, 40, 41, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
-    56, 57, 59, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 72, 73, 74,
-    75, 76, 77, 79, 81, 82, 84, 86, 87, 89, 90, 96, 97, 100, 102,
-    104, 105, 106, 108, 109, 110, 111, 113, 114, 115, 116, 119,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+    37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+    54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+    70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 86, 87,
+    88, 89, 90, 91, 93, 95, 96, 97, 100, 101, 102, 103, 104, 105,
+    106, 107, 108, 109, 110, 111, 113, 114, 115, 116, 119,
 ))
 
 _M157_A, _M157_B = 0.0196, 1.168   # M_hat(n) = A * n**B, R^2 = 0.907 on beta
