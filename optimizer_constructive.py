@@ -2203,14 +2203,74 @@ class MyOptimizer(FloorplanOptimizer):
 # so the shipped code and the measured code are the same code. `l3` below is a
 # shim carrying exactly the two attributes that were used.
 # ═════════════════════════════════════════════════════════════════════════════
+def _vendor_scipy_path():
+    """L163: the package may carry its own scipy under vendor/. Return that
+    directory if it is there, else None.
+
+    WHY THIS EXISTS. The whole LP lane -- L114's shape LP plus L147's tangent
+    cuts plus L157's depth -- runs on scipy.optimize.linprog, and it is worth
+    5.4171% of score (measured: blocking scipy drops the in-set total from
+    1.191977686767963 to 1.260246745790688, which is exactly the pre-LP lane).
+    Two official documents disagree about whether the grader provides scipy:
+    the Beta submission guidelines S2 list it among the packages the evaluation
+    environment already provides, while the Beta evaluation report S2(a) says
+    "Do not assume any package beyond the Python standard library is available"
+    and names scipy specifically. Our own beta submission cannot settle it --
+    that package (M73) imports scipy zero times.
+
+    Losing that bet is SILENT: with scipy absent the lane goes inert, every
+    case still solves, 100/100 stay feasible, and nothing is printed. So the
+    fallback is here rather than a warning: if the grader has scipy we never
+    touch this, and if it does not we still get the 5.4%.
+
+    Relative to this file, never absolute -- the guidelines forbid absolute
+    paths. Missing directory, wrong ABI, or any import error all land back on
+    the inert lane, which is exactly where we would have been anyway."""
+    try:
+        d = Path(__file__).resolve().parent / "vendor"
+        return str(d) if d.is_dir() else None
+    except Exception:
+        return None
+
+
 try:
     from collections import Counter          # used by the extracted builder
     import numpy as _lp_np
     from scipy import sparse as _lp_sparse
     from scipy.optimize import linprog as _lp_linprog
     _LP_IMPORTS_OK = True
-except Exception:                       # scipy absent -> the knob is inert
+    _LP_SCIPY_SRC = "system"
+except Exception:                       # scipy absent -> try the vendored copy
     _LP_IMPORTS_OK = False
+    _LP_SCIPY_SRC = "absent"
+    _v = _vendor_scipy_path()
+    if _v:
+        try:
+            if _v not in sys.path:
+                sys.path.append(_v)      # append, never prepend: a system
+            from collections import Counter   # scipy always wins
+            import numpy as _lp_np
+            from scipy import sparse as _lp_sparse
+            from scipy.optimize import linprog as _lp_linprog
+            _LP_IMPORTS_OK = True
+            _LP_SCIPY_SRC = "vendored"
+        except Exception:
+            _LP_IMPORTS_OK = False
+
+# One line, once, on EVERY path -- system, vendored or absent. Losing scipy costs
+# 5.4171% of score and used to be completely silent: the lane goes inert, all 100
+# cases still solve, all stay feasible, nothing is printed. The organisers return
+# our stderr (beta_2026-08-16/eval_op_wrapper.log carries the tqdm bar, which is
+# stderr), so this line comes back to us in the Final feedback and settles which
+# path actually ran.
+#
+# NOT tagged [constructive]. L153 made that tag mean DEGRADATION -- every gate
+# treats any line carrying it as a failure (l117_linux_verify.py:355-357 and
+# l113_ship_gate G2 both) -- and this line is informational on two of its
+# three values. Tagging it [constructive] failed all four Linux lanes on a
+# package that was otherwise perfect. It gets its own tag, and l117 now
+# asserts on it positively rather than merely tolerating it.
+print(f"[scipy] source={_LP_SCIPY_SRC}", file=sys.stderr)
 _LP_IMPORTS_OK = _LP_IMPORTS_OK and _SHAPELY
 
 if _LP_IMPORTS_OK:

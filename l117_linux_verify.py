@@ -360,6 +360,24 @@ def t3(tar_path: Path, workname: str, cores=None, overrides=(), stats=False,
         for line in bad[:10]:
             print(f"   ! {line}")
         ok = False
+    # L164: POSITIVE assertion, not another absence check. The LP lane needs
+    # scipy, and losing it costs 5.4171% of score (measured: hide scipy and the
+    # in-set total goes 1.191977686767963 -> 1.260246745790688, exactly the
+    # pre-LP lane) while being COMPLETELY SILENT -- every case still solves,
+    # all 100 stay feasible, nothing is printed. Two official documents
+    # disagree about whether the grader even provides scipy, so the optimizer
+    # now states which one it got and this gate refuses to pass without it.
+    src = [l.split("source=", 1)[1].strip()
+           for l in r.stderr.splitlines() if l.startswith("[scipy] source=")]
+    if not src:
+        print("FAIL: no '[scipy] source=' marker -- cannot confirm the LP lane "
+              "has its dependency")
+        ok = False
+    elif "absent" in src:
+        print("FAIL: scipy absent -- the whole LP lane is inert, worth -5.4171%")
+        ok = False
+    else:
+        print(f"   scipy: {sorted(set(src))[0]}")
     exe = pkg / "constructive.exe"
     if exe.exists():
         print("FAIL: constructive.exe exists -> on-site compile happened "

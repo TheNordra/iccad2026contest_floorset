@@ -237,16 +237,66 @@ def build_op_wrapper_text() -> str:
 
 
 # ── staging + hygiene + tar ──────────────────────────────────────────────────
+def _vendor_check(stage: Path) -> list:
+    """vendor/ must be EXACTLY the official scipy wheel, unpacked. Nothing else.
+
+    The hygiene checks below are relaxed over vendor/ -- they have to be, since
+    scipy ships ~1400 files including a thousand .py -- so this is what replaces
+    them. Relaxing a guard without putting an equivalent one in its place is how
+    a package quietly acquires files nobody reviewed.
+
+    WHY vendor/ EXISTS AT ALL. The whole LP lane is worth 5.4171% of score
+    (measured: hide scipy and the in-set total goes 1.191977686767963 ->
+    1.260246745790688, exactly the pre-LP lane) and two official documents
+    disagree about whether the grader provides scipy -- the Beta guidelines S2
+    list it among the provided packages, the Beta evaluation report S2(a) says
+    to assume nothing beyond the standard library. The wheel is scipy's own
+    manylinux build: its .so files need at most GLIBC_2.17 against the grader's
+    2.41, so unlike anything we could link here (this box is glibc 2.43, the
+    grader 2.41, and glibc is not forward compatible) it actually runs there."""
+    errs = []
+    v = stage / "vendor"
+    if not v.is_dir():
+        return ["vendor/ missing from the stage"]
+    rec = _REPO / "vendor_wheel.sha256"
+    if not rec.exists():
+        return ["vendor_wheel.sha256 missing -- cannot prove vendor/ is the wheel"]
+    lines = rec.read_text().split()
+    sha, name = lines[0], lines[1] if len(lines) > 1 else ""
+    whl = _REPO / "vendor_src" / name
+    if not whl.exists():
+        return [f"vendor_src/{name} missing -- cannot verify vendor/"]
+    import hashlib
+    got = hashlib.sha256(whl.read_bytes()).hexdigest()
+    if got != sha:
+        errs.append(f"vendor wheel sha256 {got} != recorded {sha}")
+    import zipfile
+    z = zipfile.ZipFile(whl)
+    want = {n for n in z.namelist() if not n.endswith("/")}
+    have = {q.relative_to(v).as_posix() for q in v.rglob("*") if q.is_file()}
+    if have != want:
+        errs.append(f"vendor/ is not the wheel: extra={sorted(have - want)[:5]} "
+                    f"missing={sorted(want - have)[:5]}")
+    bad = [f for f in have if f.endswith(".pyc")]
+    if bad:
+        errs.append(f"vendor/ carries {len(bad)} .pyc (a local import polluted it)")
+    return errs
+
+
 def _hygiene(stage: Path, expected: set) -> list:
     errs = []
     found = {p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()}
     if found != expected:
         errs.append(f"file set mismatch: extra={sorted(found - expected)} "
                     f"missing={sorted(expected - found)}")
-    pys = sorted(f for f in found if f.endswith(".py"))
+    # vendor/ is adjudicated by _vendor_check instead: it is ~1400 files of
+    # somebody else's wheel, so the per-file rules below would either reject it
+    # or scan a thousand irrelevant .py for absolute paths.
+    ours = {f for f in found if not f.startswith("vendor/")}
+    pys = sorted(f for f in ours if f.endswith(".py"))
     if pys != ["op_src.py", "op_wrapper.py"]:
         errs.append(f".py files must be exactly op_wrapper.py+op_src.py, got {pys}")
-    for f in found:
+    for f in ours:
         if Path(f).suffix.lower() in _FORBIDDEN_EXT:
             errs.append(f"forbidden file type in package: {f}")
     req = stage / "requirements.txt"
@@ -254,7 +304,7 @@ def _hygiene(stage: Path, expected: set) -> list:
         errs.append(f"requirements.txt must be 0 bytes, is {req.stat().st_size}")
     if (stage / "op_src.py").read_bytes() != (stage / "op_wrapper.py").read_bytes():
         errs.append("op_src.py is not byte-identical to op_wrapper.py")
-    for f in sorted(found):
+    for f in sorted(ours):
         if Path(f).suffix not in _TEXT_EXT:
             continue
         for ln, line in enumerate((stage / f).read_text(encoding="utf-8").splitlines(), 1):
@@ -348,6 +398,24 @@ def stage() -> bool:
         return False
     if nbin:
         print(f"  binary/source: OK ({nbin} bundled ELF matches constructive.cpp)")
+
+    # L163: the vendored scipy. Copied wholesale; _vendor_check proves it is
+    # byte-for-byte the official wheel and nothing more.
+    vsrc = _REPO / "vendor"
+    if vsrc.is_dir():
+        shutil.copytree(vsrc, _STAGE / "vendor")
+        for q in (_STAGE / "vendor").rglob("*"):
+            if q.is_file():
+                expected.add(q.relative_to(_STAGE).as_posix())
+        errs = _vendor_check(_STAGE)
+        for e in errs:
+            print(f"  VENDOR FAIL: {e}")
+        if errs:
+            return False
+        n = sum(1 for q in (_STAGE / "vendor").rglob("*") if q.is_file())
+        print(f"  vendor: OK ({n} files, byte-identical to the official wheel)")
+    else:
+        print("  vendor: absent -- the LP lane will rely on the grader having scipy")
 
     errs = _hygiene(_STAGE, expected)
     for e in errs:
