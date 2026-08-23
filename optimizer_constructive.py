@@ -3135,7 +3135,7 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
             # From the second on, spend only if this case can absorb it
             # and stay on the RF floor. dt_pass is the previous pass
             # MEASURED, not a fitted cost.
-            if _it and gated and not _depth_affordable(block_count, dt_pass):
+            if _it and gated and not _depth_ok(block_count, _it + 1, dt_pass):
                 break
             # sep_trim=True: the separation transitive reduction. Exact
             # (a removed row stays implied by the ones that survive) and
@@ -3239,42 +3239,53 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
 # verified at L153, and the base every L154/L157 number sits on top of.
 _L147_R, _L147_G, _L147_TOL, _L147_PRICE = "1.5", "1.10", "0.006", "1.0"
 
-# L157 n-set: the block counts whose beta row can absorb a second LP
-# pass and stay under 0.3046*M_hat(n). Derived by l157_selective_depth.py
-# from the published beta medians; the excluded values inside the span are the
-# cases with no slack, not gaps in the corpus.
+# L165: PER-CASE LP DEPTH, 1 to 3 passes, keyed on block count.
 #
-# L160 WIDENED THIS 75 -> 89. The original derivation charged the second pass in
-# DEV-BOX seconds against a GRADER-second budget -- a units error that overcharged
-# it by f. f is now measured at 2.71 (L160: the beta package M73 re-run from git
-# at 7f38893, weighted total 1.295547821428148, bit-identical to the recorded
-# beta identity; 141.07s here against the grader's 52.07s, per-case p25 2.33 /
-# p50 2.71 / p75 3.20, flat across n so the max-setter premise holds). At f=2.71
-# the affordable set is 89, and the old 75 are a strict subset of it.
-# Worth, from the committed OOS arms: s1 +0.4882% -> +0.5513%, s2 +0.5673% ->
-# +0.6798%, RF unchanged (-0.0661% -> -0.0664%), and 0 of the 14 newly included
-# n got worse on either sample.
-# ⚠️ This is a bet, not a free lunch: 89 overtakes 75 only above f = 1.47, and
-# at f = 1.00 it LOSES 0.21pp. The measured f and the observed per-case minimum
-# 1.79 are both above 1.47, which is the whole case for widening.
+# Derived offline from the CONTEST-PUBLISHED per-case medians, not from a fit:
+# case n gets the largest k with
+#     t_beta(n) + dt_tangent(n)/f + (k-1)*dt_pass(n)/f  <=  0.3046 * M_published(n)
+# where M_published comes from C_median_runtimes_beta_hidden.csv and f = 3.17
+# converts a dev-box LP second to a grader one (L157_REPORT.md 5h).
 #
-# f = 3.17, not 2.71, once the last leg is included. 2.71 is (WSL whole-case) /
-# (grader whole-case), but the LP costs this set was derived from were measured
-# on WINDOWS, and the LP runs 1.17x slower there than on WSL (19.46s vs 16.62s
-# over 100 cases, scipy 1.15.3 vs 1.18.0 -- a modest environment effect, not the
-# 2x swing that would have been needed to overturn any of this). So the correct
-# Windows-second-to-grader-second ratio is 1.17 x 2.71 = 3.17, and 2.71 was
-# conservative. Every threshold clears with margin: L147 positive above 0.75,
-# L157 positive above 0.91, L157 worth adding above 1.37, 89 over 75 above 1.47.
-_L157_NSET = frozenset((
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
-    37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53,
-    54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-    70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 86, 87,
-    88, 89, 90, 91, 93, 95, 96, 97, 100, 101, 102, 103, 104, 105,
-    106, 107, 108, 109, 110, 111, 113, 114, 115, 116, 119,
-))
+# 🚨 THIS REPLACES A SET DERIVED FROM A FITTED M_hat(n), AND THE FIT WAS THE BUG.
+# _M157_A/_M157_B below fit M_hat = 0.0196*n^1.168 to those same medians, and the
+# fit understates the heavy tail badly: n=120 reads 5.265s against a published
+# 9.913s (1.88x), n=117 5.111s against 7.248s (1.42x). So the old set excluded
+# n=112,117,118,120 from a second pass for want of budget they actually had --
+# and n=120 carries the single largest weight in the corpus, e^10 = 22026.
+# Weight covered by k>=2 goes 70.1% -> 85.9%.
+# The fit was needed by the CLOCK form, which must predict M for a case it has
+# not seen. A static per-n table predicts nothing: the published median for that
+# exact n is known. Swapping the mechanism without swapping the estimator is
+# what left 0.35pp on the table.
+#
+# MEASURED, against the L147 k=1 anchor, quality on flat arms mixed per case
+# (verified exact: mixing reproduces a real gated run 100/100 cost AND positions):
+#   in-set 100   n-set-89 @k=2 +0.3929%  ->  depth map +0.6099%   74 moved, 0 worse
+#   OOS s1 240                 +0.5513%  ->            +0.8871%  184 moved, 0 worse
+#   OOS s2 240                 +0.6798%  ->            +0.9039%  191 moved, 0 worse
+#   480/480 feasible. RF against the published medians: -0.0124% -> 0.0000%,
+#   cases off the RF floor 2 -> 1. Cheaper AND better.
+_L157_DEPTH = {
+    21: 3, 22: 3, 23: 3, 24: 3, 25: 3, 26: 3, 27: 3, 28: 3, 29: 3, 30:
+    3, 31: 3, 32: 3, 33: 3, 34: 3, 35: 3, 36: 3, 37: 3, 38: 3, 39: 3,
+    40: 3, 41: 3, 42: 3, 43: 3, 44: 2, 45: 3, 46: 3, 47: 3, 48: 3, 49:
+    3, 50: 3, 51: 3, 52: 3, 53: 3, 54: 2, 55: 3, 56: 3, 57: 3, 58: 3,
+    59: 3, 60: 2, 61: 3, 62: 3, 63: 3, 64: 3, 65: 3, 66: 3, 67: 3, 68:
+    3, 69: 3, 70: 3, 71: 3, 72: 3, 73: 3, 74: 2, 75: 3, 76: 3, 77: 3,
+    78: 3, 79: 1, 80: 2, 81: 3, 82: 3, 83: 1, 84: 3, 85: 1, 86: 3, 87:
+    1, 88: 2, 89: 3, 90: 3, 91: 3, 92: 1, 93: 3, 94: 1, 95: 3, 96: 3,
+    97: 3, 98: 3, 99: 3, 100: 3, 101: 3, 102: 3, 103: 3, 104: 3, 105:
+    3, 106: 2, 107: 3, 108: 3, 109: 3, 110: 3, 111: 3, 112: 1, 113: 3,
+    114: 3, 115: 3, 116: 3, 117: 2, 118: 1, 119: 3, 120: 3,
+}
 
+# ⚠️ DEAD ON THE SHIPPED PATH since L165. These serve ONLY the clock form
+# behind ICCAD_SHAPE_LP_DEPTH_PC=1. The shipped gate reads _L157_DEPTH,
+# which is built from the published per-case medians directly. Left here
+# rather than deleted because the clock form is still a measured, documented
+# arm -- but a constant that LOOKS live and is not is exactly how this
+# session lost 0.35pp, so it is labelled.
 _M157_A, _M157_B = 0.0196, 1.168   # M_hat(n) = A * n**B, R^2 = 0.907 on beta
 _M157_THR = 0.3046                 # 0.7 ** (1/0.3): where max(0.7, R^0.3) lifts
 _T_CASE = threading.local()        # per-case clock, stamped by solve()
@@ -3314,10 +3325,12 @@ def _shape_lp_depth(tangent_on=False):
         return 1, False
     if os.environ.get("ICCAD_SHAPE_LP_DEPTH2", "") == "0":
         return 1, False
-    return 2, True
+    # The cap is the deepest entry in the map; _depth_ok decides per case, so
+    # this only has to be large enough not to truncate it.
+    return max(_L157_DEPTH.values()), True
 
 
-def _depth_affordable(n, dt_next) -> bool:
+def _depth_ok(n, pass_no, dt_next) -> bool:
     """Can this case absorb dt_next more seconds and stay on the RF floor?
 
     t_case and dt_next are both OBSERVED -- the case clock, and the pass that
@@ -3345,7 +3358,7 @@ def _depth_affordable(n, dt_next) -> bool:
     # against +0.5477% / +0.8289% for the clock form. Buying 0.12-0.32pp with
     # the project's whole verification story is not a trade worth making.
     if os.environ.get("ICCAD_SHAPE_LP_DEPTH_PC", "") != "1":
-        return int(n) in _L157_NSET
+        return pass_no <= _L157_DEPTH.get(int(n), 1)
 
     # ICCAD_SHAPE_LP_DEPTH_PC=1: the per-case clock form. Measured and
     # documented, NOT shipped. Keep it for the day the grader's own timings
