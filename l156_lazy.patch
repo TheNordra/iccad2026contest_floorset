@@ -1,0 +1,213 @@
+diff --git a/optimizer_constructive.py b/optimizer_constructive.py
+index 4288b4e..83fd806 100644
+--- a/optimizer_constructive.py
++++ b/optimizer_constructive.py
+@@ -2416,9 +2416,21 @@ def _sep_reduction_mask(rows, n, P, unit_of, sv, resh, rho):
+     return keep
+ 
+ 
++# L156: lazy CONSTRAINT rows. Distinct from the L112 HPWL prune, which trades a
++# row pair for an objective term; these rows are simply left out. The exactness
++# argument is the standard relaxation one: omitting `<=` rows can only ENLARGE
++# the feasible set, so the reduced program's optimum is a lower bound on the
++# true one. If that optimum satisfies every omitted row, it is feasible for the
++# true program while attaining a value no larger than its minimum -- so it IS
++# the true optimum. solve_pruned checks and forces back whatever was violated.
++_LZ_ENV = "env"
++_LZ_TAN = "tan"
++
++
+ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
+                     force_keep=frozenset(), area_R=None, area_g=1.05,
+-                    area_tol=None, area_price=0.0):
++                    area_tol=None, area_price=0.0,
++                    lazy_env=None, lazy_tan=None, force_lazy=frozenset()):
+     """prune_B (L112): displacement bound used to drop HPWL terms that provably
+     cannot change sign.  None = off = the shipped formulation, bit-for-bit.
+ 
+@@ -2483,6 +2495,18 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
+             req.append(r), ceq.append(col), veq.append(coef)
+         rows_by_origin[origin] += 1
+ 
++    lazy_out = []                             # (lid, terms, rhs) left out
++    lazy_stat = [0, 0]                        # [omitted, emitted]
++
++    def add_ub_lazy(terms, rhs, origin, lid, omit):
++        """add_ub, except `omit` rows are recorded for verification instead."""
++        if omit and lid not in force_lazy:
++            lazy_out.append((lid, tuple(terms), rhs))
++            lazy_stat[0] += 1
++            return
++        lazy_stat[1] += 1
++        add_ub(terms, rhs, origin)
++
+     def new_aux(w):
+         nonlocal nv
+         obj.append(w)
+@@ -2643,23 +2667,43 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
+                     t.append((k, 1.0))
+                 add_eq(t, -ext0, "boundary_eq")
+ 
++    # L156 lazy_env: only blocks ON the bbox frontier can bind XMIN/XMAX/YMIN/
++    # YMAX. NOTE this is a relaxation verified afterwards, not an a priori
++    # bound: L112 removed the |d_u| <= prune_B clamp (position bounds are
++    # +-(W0+H0+1)), so "it cannot move that far" is NOT available as an
++    # argument here and must not be reinstated -- a clamp would turn the LP
++    # into a restriction whose optimum can legitimately differ.
++    _lz = None
++    if lazy_env:
++        _um = [i for i in range(n) if unit_of[i] is not None]
++        if _um:
++            _x0 = min(P[i][0] for i in _um)
++            _x1 = max(P[i][0] + P[i][2] for i in _um)
++            _y0 = min(P[i][1] for i in _um)
++            _y1 = max(P[i][1] + P[i][3] for i in _um)
++            _mx, _my = lazy_env * (_x1 - _x0), lazy_env * (_y1 - _y0)
++            _lz = (_x0 + _mx, _x1 - _mx, _y0 + _my, _y1 - _my)
+     for i in range(n):
+         ui = unit_of[i]
+         if ui is None:
+             continue
+         x, y, w, h = P[i]
+-        add_ub([(XMIN, 1.0), (ui, -1.0)], x, "envelope")
++        far = (False, False, False, False) if _lz is None else (
++            x > _lz[0], x + w < _lz[1], y > _lz[2], y + h < _lz[3])
++        add_ub_lazy([(XMIN, 1.0), (ui, -1.0)], x, "envelope",
++                    (_LZ_ENV, i, 0), far[0])
+         t = [(ui, 1.0), (XMAX, -1.0)]
+         k = dsize(ui, 0)
+         if k is not None:
+             t.append((k, 1.0))
+-        add_ub(t, -(x + w), "envelope")
+-        add_ub([(YMIN, 1.0), (U + ui, -1.0)], y, "envelope")
++        add_ub_lazy(t, -(x + w), "envelope", (_LZ_ENV, i, 1), far[1])
++        add_ub_lazy([(YMIN, 1.0), (U + ui, -1.0)], y, "envelope",
++                    (_LZ_ENV, i, 2), far[2])
+         t = [(U + ui, 1.0), (YMAX, -1.0)]
+         k = dsize(ui, 1)
+         if k is not None:
+             t.append((k, 1.0))
+-        add_ub(t, -(y + h), "envelope")
++        add_ub_lazy(t, -(y + h), "envelope", (_LZ_ENV, i, 3), far[3])
+     add_ub([(XMAX, 1.0), (XMIN, -1.0)], W0, "bbox")
+     add_ub([(YMAX, 1.0), (YMIN, -1.0)], H0, "bbox")
+ 
+@@ -2687,12 +2731,19 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
+             w, h = P[i][2], P[i][3]
+             A = float(at[i]) if float(at[i]) > 0 else w * h
+             Ap = A * (1.0 - _tol)
++            # L156 lazy_tan: the cuts fan around the current width (s = steps/2
++            # is tangent exactly at w) and only the nearest one or two can bind
++            # at the optimum. Classic cutting plane: every tangent is a valid
++            # cut, so omitting some is a relaxation, exact once none is violated.
++            _mid = steps * 0.5
+             for s in range(steps + 1):
+                 wk = (w / area_R) * (area_R * area_R) ** (s / steps)
+                 sl = Ap / (wk * wk)
+                 # h0 + dh >= 2A'/wk - (A'/wk^2)(w0 + dw)  ->  -sl*dw - dh <= rhs
+-                add_ub([(kw, -sl), (kh, -1.0)],
+-                       -(2.0 * Ap / wk - sl * w - h), "area_tangent")
++                add_ub_lazy([(kw, -sl), (kh, -1.0)],
++                            -(2.0 * Ap / wk - sl * w - h), "area_tangent",
++                            (_LZ_TAN, uid, s),
++                            lazy_tan is not None and abs(s - _mid) > lazy_tan)
+     else:
+         for uid, i in resh.items():
+             kw, kh = sv[uid]
+@@ -2775,6 +2826,9 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
+         prune_dropped=prune_stat[0],
+         prune_kept=prune_stat[1],
+         prune_dropped_terms=dropped,
++        lazy_out=lazy_out,
++        lazy_omitted=lazy_stat[0],
++        lazy_emitted=lazy_stat[1],
+         units=units,
+         unit_of=unit_of,
+         U=U,
+@@ -2820,7 +2874,11 @@ def lp_pass(ci, P, rho, sep_trim=False, **kw):
+         # sep_trim. They are independent reductions -- after pruning,
+         # separation is the MAJORITY of the remaining rows (56-73% on the
+         # heavy cases), so the combination is the interesting one.
+-        if PRUNE_B is not None:
++        # L156: the lazy families MUST go through solve_pruned even when the
++        # HPWL prune is off -- build_and_solve alone would leave rows out and
++        # never verify them, which is the one way this could silently stop
++        # being exact.
++        if PRUNE_B is not None or kw.get("lazy_env") or kw.get("lazy_tan") is not None:
+             B, _rounds = solve_pruned(ci, P, freeze, rho=rho, prune_B=PRUNE_B,
+                                       sep_trim=sep_trim, **kw)
+         else:
+@@ -2855,17 +2913,23 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
+     a wrong guess costs a round, never correctness.  Falls back to the unpruned
+     build if it has not converged in `max_rounds`.
+     """
+-    if prune_B is None:
++    # L156: the lazy families repair on the SAME loop. `full` is the unreduced
++    # program both fallbacks land on -- it must drop prune_B AND the lazy flags,
++    # or a fallback would still solve a reduced program while claiming exactness.
++    lazy_on = kw.get("lazy_env") or kw.get("lazy_tan") is not None
++    full = {k: v for k, v in kw.items() if k not in ("lazy_env", "lazy_tan")}
++    if prune_B is None and not lazy_on:
+         return build_and_solve(ci, P, freeze_units, rho=rho,
+-                               sep_trim=sep_trim, **kw), 0
+-    keep = set()
++                               sep_trim=sep_trim, **full), 0
++    keep, lz = set(), set()
+     for rnd in range(max_rounds):
+         d = build_and_solve(ci, P, freeze_units, rho=rho, prune_B=prune_B,
+-                            force_keep=keep, sep_trim=sep_trim, **kw)
++                            force_keep=keep, force_lazy=lz, sep_trim=sep_trim,
++                            **kw)
+         res = d["res"]
+         if res.status != 0:
+             return build_and_solve(ci, P, freeze_units, rho=rho,
+-                                   sep_trim=sep_trim, **kw), rnd + 1
++                                   sep_trim=sep_trim, **full), rnd + 1
+         x = res.x
+         bad = set()
+         for tid, lin, dC, _w in d["prune_dropped_terms"]:
+@@ -2875,12 +2939,24 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
+             # assumed sgn(dC); violated iff the true value took the other branch
+             if (dC + delta) * (1.0 if dC > 0.0 else -1.0) < -1e-12:
+                 bad.add(tid)
+-        if not bad:
++        # An omitted `sum(terms) <= rhs` is violated iff the reduced optimum
++        # breaks it. Tolerance is RELATIVE to the row's own scale: these rhs run
++        # from ~0 to the die dimensions, so a fixed epsilon would be far too
++        # tight on the big rows and meaningless on the small ones.
++        bad_lz = set()
++        for lid, terms, rhs in d["lazy_out"]:
++            v = 0.0
++            for col, coef in terms:
++                v += coef * x[col]
++            if v > rhs + 1e-9 * max(1.0, abs(rhs)):
++                bad_lz.add(lid)
++        if not bad and not bad_lz:
+             d["prune_rounds"] = rnd + 1
+             return d, rnd + 1
+         keep |= bad
++        lz |= bad_lz
+     return build_and_solve(ci, P, freeze_units, rho=rho,
+-                           sep_trim=sep_trim, **kw), max_rounds
++                           sep_trim=sep_trim, **full), max_rounds
+ 
+ 
+ _HARD_MASKS = {}
+@@ -2984,6 +3060,17 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
+         _p = os.environ.get("ICCAD_SHAPE_LP_PRICE", "")
+         if _p:
+             lpkw["area_price"] = float(_p)
++        # L156 lazy rows, both default OFF (unset = the shipped matrix
++        # bit-for-bit). LAZY_ENV is a margin as a fraction of the bbox span;
++        # LAZY_TAN is how many tangents either side of the current width to
++        # emit. Being verified relaxations neither can change the optimum --
++        # only how many rounds it takes to reach it.
++        _le = os.environ.get("ICCAD_SHAPE_LP_LAZY_ENV", "")
++        if _le not in ("", "0"):
++            lpkw["lazy_env"] = float(_le)
++        _lt = os.environ.get("ICCAD_SHAPE_LP_LAZY_TAN", "")
++        if _lt != "":
++            lpkw["lazy_tan"] = float(_lt)
+         # L150: band-dependent ROW COUNT. The tangent arm's RF cost is a tail --
+         # p50 +0.047s but max +1.092s -- and the tail is the big-n cases, which
+         # are also the ones with the least runtime slack. rows/unit is

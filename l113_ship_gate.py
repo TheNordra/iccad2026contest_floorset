@@ -49,12 +49,61 @@ import make_submission as ms
 _REPO = Path(__file__).resolve().parent
 _GATE = _REPO / "build_submission" / "gate_cores"
 _RESULTS_NAME = "results_l113_gate.json"
-_BAD_RE = ("fallback", "unavailable", "all profiles failed")
+# L153: "[constructive]" added. Every print carrying that tag in
+# optimizer_constructive.py is a degradation or a failure notice (compile
+# failed, binary unavailable, profiles failed, SA/row fallback, LP raised) --
+# there is no benign one. Without it G2 saw only the LAST line of a cascade:
+# on 2026-08-20 this gate reported "binary unavailable; falling back to python
+# SA" and swallowed the two `[constructive] <g++> -O3 failed:` lines directly
+# above it that named the cause. The cause was that C:\msys64\ucrt64\bin was
+# not on PATH, so g++ exited 1 with EMPTY stderr; the run then scored
+# 9.999916545892749 with a clean 100/100 feasible table.
+_BAD_RE = ("fallback", "unavailable", "all profiles failed", "[constructive]")
 
 
 def _load(p):
     j = json.loads(Path(p).read_text(encoding="utf-8"))
     return j, {r["test_id"]: r for r in j["test_results"]}
+
+
+_MSYS = Path(r"C:\msys64\ucrt64\bin")
+
+
+def _cxx_preflight(env: dict) -> None:
+    """The package ships NO Windows binary, so this gate has to compile on site.
+
+    L153: it could not, and the way it could not is the point. The msys64 g++
+    is installed and is the first candidate in `_ensure_compiled`, but its
+    directory was not on PATH, so the exe failed to load its own DLLs and
+    exited 1 with COMPLETELY EMPTY stderr. Every case then fell to the pure
+    Python SA and the gate ran to completion printing a normal-looking
+    `feasible=100/100` next to a total of 9.999916545892749.
+
+    Probing here turns a 7-minute mystery into one line before the run. On the
+    grader this branch never executes -- POSIX takes bin/constructive_linux and
+    skips the compile entirely -- so this is purely about keeping the LOCAL
+    gate meaningful.
+    """
+    if os.name != "nt":
+        return
+    def _runs(exe):
+        try:
+            return subprocess.run([exe, "--version"], capture_output=True,
+                                  env=env, timeout=60).returncode == 0
+        except Exception:
+            return False
+    if _runs("g++") or _runs(str(_MSYS / "g++.exe")):
+        print("  c++ preflight: OK (a compiler answers --version)")
+        return
+    if (_MSYS / "g++.exe").exists():
+        env["PATH"] = str(_MSYS) + os.pathsep + env.get("PATH", "")
+        if _runs(str(_MSYS / "g++.exe")):
+            print(f"  c++ preflight: prepended {_MSYS} to PATH (msys64 g++ "
+                  "needs its own bin dir to load its DLLs)")
+            return
+    print("  c++ preflight: WARNING -- no working C++ compiler reachable. "
+          "This gate is about to measure the pure-Python SA fallback, not the "
+          "package. Put a g++ on PATH first.")
 
 
 def run(cores: int, anchor: Path, test_id, keep: bool, extra_env=None) -> bool:
@@ -92,6 +141,7 @@ def run(cores: int, anchor: Path, test_id, keep: bool, extra_env=None) -> bool:
     env["PYTHONIOENCODING"] = "utf-8"
     env["ICCAD_ADAPTIVE_CORES"] = str(cores)
     env["ICCAD_ROUTE_A_STATS"] = str(stats)
+    _cxx_preflight(env)
     # L137: the ambient ICCAD_* strip above is deliberate (profile_audit.py:180)
     # -- the package must be measured on shipped defaults, not on whatever the
     # shell happens to carry. `--env K=V` re-admits ONE knob at a time and prints

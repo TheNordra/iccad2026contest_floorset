@@ -66,6 +66,9 @@
   - `V_rel = (V_bnd + V_grp + V_mib) / N_soft`，`N_soft = boundary blocks + Σ(MIB−1) + Σ(Cluster−1)`
 - **Total** = `Σ Cost[i]·exp(n_i/12) / Σ weight`（n=120 佔 8.0%、n≥110 累計 ~53%；總權重 ≈275418）
 - **RuntimeFactor** = `max(0.7, R^0.3)` 逐案（`evaluate.py:552`），R 分母 = cross-submission median。
+  - 🚨 **RF 的定價器 = 主辦公布的逐案 median**（`C_median_runtimes_beta_hidden.csv`，`l146_rf_price.py` 在讀）。它重現 graded total 到 **2.4e-7**、cwRF 到 1.7e-7，並精確找出**那一個**讓 0.70004 > 0.70 的案（test_id 66, n=87）。
+    ⬇️ 下面的 M67-E 校準**不可用於逐案定價**：`kappa = 3.1612` 是把**一個** 4 位數排行榜數字除以**一個**加總反解出來的（`m67e_rf48.py:557-558`，其自己的輸出就寫著 `self-consistent, no floor clamp`），假設**每一案共用同一比值**；其逐案 median 對公布值的比值散佈 **0.217×–1.786×**，cwRF 差 800 倍、floor 計數差 13 倍。
+  - ⚠️ **beta 的 52.07s 裡沒有 LP**：上傳的 M73 樹（`7f38893`）`_shape_lp` 出現 **0** 次；`_shape_lp` 是 `d0db1fb`（2026-08-10）才進出貨檔的，比 beta 上傳晚十一天。任何把它拆成「35s pool + 17s LP」的說法都是循環論證（拿本機 LP 秒數去減，等於先假設 f=1）。
   - **alpha 校準（M67-E 定版）**：`M_i ≈ 3.161 × t_i^alpha`——錨的是 **alpha 那版（M10 廉價池）的逐案 runtime**（p50 0.673s），不是現行 shipped。48c 投影下我們**貼著 floor 邊緣**（加權 RF ≈0.73、mid band 0/40 觸底）⇒ runtime 在 48c 仍是活的分數項。組員「median ~11s」與 M67-D 的「8.2× 安全邊際」皆**作廢**。
   - 本地 eval **強制 RF=1.0**（`:924-940`）⇒ 所有 local 分數都是 RF=1.0 fiction，RF 增益本地永遠看不到。
   - **🚨 Beta 實測定案（2026-08-18 收到）：cost-weighted RF = `0.7000400598775689` ＝ 貼在 floor。**

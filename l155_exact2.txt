@@ -1,0 +1,27 @@
+[l129] loading dataset ...
+[l155] 11 cases | prune_B 2,8 | reps 3 | kw {'area_R': 1.5, 'area_g': 1.1, 'area_tol': 0.006, 'area_price': 1.0} | layouts results_L153_lpoff_L137.json
+
+ case    n                       B=2.0                     B=8.0
+              rows kept/drop rnd  wall  rows kept/drop rnd  wall
+   89  110    12200 2494/24042  4  0.619  10374 3384/9884   2  0.362
+   90  111     5172  893/7591   2  0.251   3785 1046/3196   1  0.173
+   91  112     8094 2166/17342  2  0.660  14028 5133/14375  2  1.171
+   92  113     5054  663/5857   2  0.296   4112 1124/2136   1  0.198
+   93  114    10752 1728/11688  4  0.697  16086 4395/9021   4  0.928
+   94  115     6228 1169/10315  2  0.296  11346 3728/7756   2  0.369
+   95  116     6966 1649/14259  2  0.430   6534 2350/5604   1  0.350
+   96  117    15996 3956/29716  4  1.191  12454 4206/12630  2  0.870
+   97  118     8042 1998/16430  2  0.611  14070 5012/13416  2  1.041
+   98  119     3030  499/3885   1  0.199   4724 1346/3038   1  0.305
+   99  120    19060 5646/55330  4  1.449  17828 6972/23516  2  1.219
+
+=== totals over 11 cases ===
+  prune_B     rows    hpwl     sep  other   kept   drop  builds  t_build  t_solve     wall  speedup
+      2.0   100594   45722   21034  33838  22861 196455      29     0.15     3.15     6.70    1.00x
+      8.0   115341   77392   14429  23520  38696 104572      20     0.18     4.57     6.99    0.96x
+
+post-prune composition at B=2.0: hpwl 45722 (45.5%), separation 21034 (20.9%), area_tangent 20890 (20.8%), envelope 11960 (11.9%), boundary_eq 930 (0.9%), bbox 58 (0.1%)
+
+=== EXACTNESS GATE ===
+  same objective, different vertex: 10 (case, B) pairs -- degeneracy, not a defect
+  objective MOVED: none. prune_B is a pure speed knob.
