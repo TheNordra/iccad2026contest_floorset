@@ -148,8 +148,13 @@ optimizer load time (outside the scored per-case window):
    accepted only after the same 1-block smoke test;
 3. pure-Python SA fallback (embedded in op_wrapper.py) if no binary runs.
 
-`requirements.txt` is intentionally empty: only torch / shapely / numpy from
-the official environment are used.
+`requirements.txt` is empty: nothing here needs installing.
+
+Required: torch, numpy, shapely -- all from the official environment.
+Optional: scipy. One post-processing step (a shape LP over the selected layout)
+uses `scipy.optimize.linprog`. It is imported inside a try/except and the step
+is skipped entirely if scipy is absent, so the solver runs correctly either way
+-- the result is simply better when scipy is present.
 """
 
 # Loader closure the evaluator needs when it sits inside cadc1075/ (its
