@@ -108,9 +108,21 @@
 
 格式硬規則：entry 必名 `op_wrapper.py`、禁絕對路徑（唯一白名單 = M48 那條 nt-gated msys 編譯器）、
 禁多餘 optimizer .py、禁未使用的大 binary（違反可能 DQ）。
-`requirements.txt` **目前強制 0 bytes**——⚠️ **但出貨包自 L114 起真的依賴 scipy，而官方
-`requirements.txt` 沒有 scipy**。缺了整條 LP 惰性化（不會炸），代價是
-**in-set `1.191978` → `1.260247`，−5.4% 靜默蒸發**。**這是既存風險（L136 也有），值得問主辦。**
+
+🚨 **`requirements.txt` 自 2026-08-23 起不再是 0 bytes**，內容 =
+`torch>=2.0.0 / numpy>=1.24.0 / shapely>=2.0.0 / scipy>=1.6.0`。
+理由是**官方 Beta evaluation report §2(a) 直接點名 scipy**：
+「Several submissions import packages such as torch-geometric, torch-scatter, and **scipy**
+… **this causes runtime failures**」、「**Do not assume any package beyond the Python
+standard library is available**」，§4 checklist 把 COMPLETE requirements.txt 列為硬性項目。
+我們自 L114 起真的 import scipy，而舊的 0-byte 規則是 M67-G 時代的推論（那時包裡沒有 LP，
+`_shape_lp` 比 beta 上傳晚十一天才進出貨檔）。**代價實測：有 scipy `1.191978`、沒有 `1.260247`，
+−5.4% 靜默蒸發，而本機每道閘照樣全綠**（這台有 scipy）。
+前三個版本下限**照抄官方自己的 `requirements.txt`** ⇒ 我們不可能是評分機改動套件的原因；
+scipy 下限 1.6.0 = HiGHS 進 scipy 的版本（程式碼是 `linprog(..., method="highs")` 明示要它）。
+`make_submission._requirements_complete()` 取代舊的 0-byte assert：**從出貨 `op_wrapper.py` 的 AST
+抓每一個非 stdlib import**，未宣告是錯、宣告了卻沒人 import 也是錯（五個已知該失敗的輸入全部正確失敗）。
+同報告的 §2(b) `.so` ABI、§2(d) `getpass`/`torchinductor` **與我們無關**（包裡沒有）。
 
 **🚨 上傳時確認 Drive 麵包屑是 `cadc1075`**——有一顆包曾被傳進 `cadb1036`（別隊，問題 B）。
 主辦每隊發 **Alpha / Beta / Final 三個獨立資料夾** ⇒ Final 是全新上傳、不覆蓋任何東西。
@@ -129,8 +141,8 @@
 1. **boundary-aspect dims**：LEFT/RIGHT-only aspect 2.50、TOP/BOTTOM-only 0.40（拉高 edge capacity 降 vBd；最高 ROI insight）
 2. **MIB 形狀統一**（`apply_safe_mib_dims`）：master 相容→用 master，否則 ≤1% area→`sqrt(avg)` 方形 ⇒ vMb 145→0
 3. **cluster 建構**：純 movable→複合 item（M71 改良的候選/排序）；mixed→anchored（first-pass 貼 preplaced 牆）
-4. **定框 greedy packing**：試 4-5 個 outline frame，每 item boundary-aware 候選評分（`bbox_area + 0.10·anchor + ww·WIRE·wire + BP_W·boundary_miss`，ww base ×2000），`layout_score` 挑最佳 frame
-5. **後處理**：compaction → wire refinement → HPWL push/slide/swap/jump
+3. **定框 greedy packing**：試 4-5 個 outline frame，每 item boundary-aware 候選評分（`bbox_area + 0.10·anchor + ww·WIRE·wire + BP_W·boundary_miss`，ww base ×2000），`layout_score` 挑最佳 frame
+4. **後處理**：compaction → wire refinement → HPWL push/slide/swap/jump
 
 Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free proxy** 選最佳：
 - proxy = `(area/Â + _RH·hpwl/hmin)·exp(2·vrel)`，Â=1.035·ΣblockArea，**_RH=1.4**
@@ -161,38 +173,33 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
    包在 `build_submission/cadc1075.tar.gz`。**身分看 `op_wrapper.py` md5**（tar md5 不可重現）。
    ⚠️ 上傳前確認麵包屑是 **cadc1075**——上一次有一顆包被傳進 `cadb1036`（別隊，問題 B）。
 
-2. **【值得問主辦】評分機環境有沒有 scipy？**
-   官方 `requirements.txt` 只列 torch/numpy/shapely/matplotlib/tqdm/requests。
-   缺 scipy ⇒ shape LP **靜默惰性化**、in-set 從 `1.191978` 掉到 `1.260247`（−5.4%）。
-   這是 L114 以來的既存風險（L136 也有），但沒人問過。
-   若可宣告依賴：寫進 `requirements.txt` 在被忽略時無害、被安裝時值 +5.4%；
-   唯一下檔是評分機離線時 `pip install` 失敗。**未確認前不要自己改**
-   （`make_submission` 的 0-byte assert 會擋，那是刻意的）。
+2. **跟組員要 `beta_2026-08-16/beta_evaluation_results.json`**（逐案 beta runtime + cost）。
+   ✅ `C_median_runtimes_beta_hidden.csv` **已經拿到**（在 `C:/Users/Nordra/Downloads/`）。
+   有 CSV 已經可以獨立驗到：M67-E 逐案比值 **0.217×–1.786×**（與組員回報逐位一致）、
+   `_M157_A/_M157_B=0.0196/1.168` 與 **R²=0.907** 完全重現、
+   我們 beta 的 52.07s = 逐案 floor 預算總和 90.1s 的 **57.8%**。
+   **缺 JSON 就重現不了 graded total（那個 2.4e-7）也算不出逐案 n-set 成員**——
+   兩者都需要我們自己的逐案 beta t_i。
 
-3. **跟組員要兩個檔**：`C_median_runtimes_beta_hidden.csv`
-   （`C:/Users/.01/Downloads/`，**不在 git、不在我們這台**）與
-   `beta_2026-08-16/beta_evaluation_results.json`。沒有它們就無法在本機獨立複算 RF；
-   L161 的品質與可行性我方已獨立驗完，缺的只有 RF 那一半。
-
-4. **重推 drop 常數（`rf`/`m49big`/`m49mid` 三閘仍是紅的）**
+3. **重推 drop 常數（`rf`/`m49big`/`m49mid` 三閘仍是紅的）**
    `cache profile signature != current pool`——快取錨的是 M80 時代的 exe，
    組員動了三次 `constructive.cpp` 都沒重建。**品質風險非可行性風險**，
    M74 同型重推值 **−0.769%**。鏈：`profile_audit.py base` + `ship`（各 8-11 分、**必須序列跑**）
    → `ICCAD_REGEN=1 rf_score_model.py` → m49 三 gate → `m67g` → `m80_tier_gate`。
    ⚠️ 會改出貨常數 ⇒ 整條送件鏈要重走。
 
-5. **用「逐案 RF」這面新鏡子重掃 ledger**（L157 §6 點名的下一個候選 = L125 §4.4）
+4. **用「逐案 RF」這面新鏡子重掃 ledger**（L157 §6 點名的下一個候選 = L125 §4.4）
    `_pool_indices(n)` 本來就是逐案的，當初要求「每一案都負擔得起」的交集限制
    （eligibility 16 vs 逐案 44–47）是因為 L146 之前不知道逐案 slack。
    **純離線重定價、不需新跑**。
 
-6. **`ICCAD_SHAPE_LP_CATCH=1`（L154 band-catch）目前預設 OFF，是可考慮的保險**
+5. **`ICCAD_SHAPE_LP_CATCH=1`（L154 band-catch）目前預設 OFF，是可考慮的保險**
    被 `hard_ok` 拒掉的切線割案子現在會掉回 **pre-LP**（丟掉整個 LP 增益，不只是增量）；
    CATCH 讓它退回**出貨帶**的版圖。Windows +0.0009%、**Linux +0.1498%**、
    OOS s1 +0.0356% / s2 +0.0532%、**680 個 case-run 零退步**，跨平台離散度砍半
    （0.3140pp → 0.1683pp）。**但它沒有跟深度閘一起被 Linux 驗過** ⇒ 不建議在 08-28 前翻。
 
-7. **不要做**：ledger 標 RED 的軸；以 fp_sol 為監督的 ML；pool pruning；
+6. **不要做**：ledger 標 RED 的軸；以 fp_sol 為監督的 ML；pool pruning；
    `ICCAD_ANCHOR_W` 掃參；**更深的 LP（k≥3）**——k=3 只剩 +0.296%、k=4 是 −3.125%，
    而且 L156 已證明「讓 LP 變便宜」整條是 RED（可得 1.06× vs 需要 1.75×）。
 
