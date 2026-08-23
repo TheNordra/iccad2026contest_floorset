@@ -70,7 +70,7 @@
 
 | | L136（**Drive 上現況**） | **L161（待上傳）** |
 |---|---|---|
-| `op_wrapper.py` / `op_src.py` | `2967efb6876f70685a18e1a160644fdd` | **`dec446a32f9b2fba6712758c0d4b227d`** |
+| `op_wrapper.py` / `op_src.py` | `2967efb6876f70685a18e1a160644fdd` | **`af1c100da917fdf61c41b531a4a0607d`** |
 | `constructive.cpp` | `570ee27001df8c04afb07a8da4ecb1f2` | `3acca04c8db7279761c9bb20408c569d` |
 | `bin/constructive_linux` | `6d43cf2cbfd9e4d578cd692277a7f868` | `bc9912072cd97b45b47a03adec7170ce` |
 | **48c LINUX（評分的那個）** | `1.2284538948373953` | **`1.1964885214171022`** |
@@ -106,8 +106,12 @@
 `results_L136_default.json` 是**32 核產物**，tier-3 的閘是 `_effective_cores() <= 16`。
 本機驗預設 lane 一律用 `l113_ship_gate.py --cores 32`（它會強制核數），別用 `verify`。
 
-格式硬規則：entry 必名 `op_wrapper.py`、禁絕對路徑（唯一白名單 = M48 那條 nt-gated msys 編譯器）、
+格式硬規則：entry 必名 `op_wrapper.py`、**禁絕對路徑（2026-08-23 起零白名單）**、
 禁多餘 optimizer .py、禁未使用的大 binary（違反可能 DQ）。
+M48 那條 nt-gated 的 `C:\msys64\...\g++.exe` **已從出貨路徑移除**——官方 §4 checklist
+明列「No absolute paths in code」，而它是包裡唯一一條。它在評分機上本來就到不了
+（`os.name != "nt"`），本機也已多餘（bare `g++` 解到同一顆、`l113_ship_gate` 的 preflight
+會補 PATH）。`make_submission` 的 `_ABS_ALLOW` 一併拿掉 ⇒ **任何絕對路徑現在都是硬錯**。
 
 🚨 **`requirements.txt` 自 2026-08-23 起不再是 0 bytes**，內容 =
 `torch>=2.0.0 / numpy>=1.24.0 / shapely>=2.0.0 / scipy>=1.6.0`。
