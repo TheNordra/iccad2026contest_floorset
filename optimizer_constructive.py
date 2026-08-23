@@ -1122,11 +1122,17 @@ def _ensure_compiled() -> bool:
     # M48 compile chain: the first candidate is the exact command used through
     # M47 (identical local behaviour); the others only matter where it is
     # missing (e.g. a Linux grader). -O2 is retried last in case -O3 fails.
-    # ICCAD_CXX forces a specific compiler to the front of each round. The msys
-    # candidate is Windows-only (M67-A: no doomed absolute-path exec on POSIX).
+    # ICCAD_CXX forces a specific compiler to the front of each round, and is
+    # how you reach one that is not on PATH.
+    #
+    # A hardcoded absolute path to the msys64 ucrt64 g++ used to sit at the
+    # front of this list under an os.name == "nt" guard. Dropped 2026-08-23: the beta
+    # report's final checklist says "No absolute paths in code", and it was the
+    # only one in the package. It could never run on the grader (os.name is not
+    # "nt" there) and locally it is redundant -- a bare g++ resolves to the same
+    # msys binary, and l113_ship_gate's preflight prepends the msys bin dir when
+    # it does not.
     compilers = ["g++", "clang++", "c++"]
-    if os.name == "nt":
-        compilers.insert(0, r"C:\msys64\ucrt64\bin\g++.exe")
     if os.environ.get("ICCAD_CXX"):
         compilers.insert(0, os.environ["ICCAD_CXX"])
     for opt in ("-O3", "-O2"):
