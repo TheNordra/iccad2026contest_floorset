@@ -9,7 +9,7 @@ name is a DQ and re-submission is not accepted):
                               merged at the tail -- no optimizer_claude.py file
                               may exist in the package)
         op_src.py             byte-identical copy of op_wrapper.py (backup)
-        requirements.txt      0 bytes (official env already has torch/shapely)
+        requirements.txt      torch/numpy/shapely/scipy (beta report 2a)
         README.md             short compile-fallback explanation
         constructive.cpp      main placer source (on-site compile fallback)
         bin/constructive_linux   prebuilt Linux binary (M67-C output;
@@ -119,6 +119,33 @@ from iccad2026_evaluate import (calculate_hpwl_b2b, calculate_hpwl_p2b,
 '''
 
 # ── package spec ─────────────────────────────────────────────────────────────
+# Beta evaluation report, 2026-08, section 2(a): "Your requirements.txt must list
+# EVERY package your code imports ... Do not assume any package beyond the Python
+# standard library is available", and section 4's checklist makes a COMPLETE
+# requirements.txt a hard item. It named scipy specifically as a package several
+# teams imported without declaring, causing RUNTIME FAILURES.
+#
+# This file was 0 bytes from M67-G until 2026-08-23 on the reasoning that the
+# official environment already had torch/shapely/numpy. That was true for the beta
+# package, which used no scipy -- the shape LP landed eleven days after the beta
+# upload -- and it stopped being true at L114 without anyone noticing.
+#
+# Version floors are copied from the contest's own requirements.txt so that this
+# file can never be the reason pip changes a package in the grading environment.
+# scipy's floor is the release that added the HiGHS backend the LP asks for by
+# name (`method="highs"`, scipy 1.6.0, 2021).
+_REQUIREMENTS = """torch>=2.0.0
+numpy>=1.24.0
+shapely>=2.0.0
+scipy>=1.6.0
+"""
+
+# import name -> the requirement line that provides it. `iccad2026_evaluate` is the
+# harness itself, not a dependency.
+_IMPORT_PROVIDES = {"torch": "torch", "numpy": "numpy", "shapely": "shapely",
+                    "scipy": "scipy"}
+_IMPORT_EXEMPT = {"iccad2026_evaluate"}
+
 _WHITELIST = ("op_wrapper.py", "op_src.py", "requirements.txt", "README.md",
               "constructive.cpp")
 _BIN_FILES = ("bin/constructive_linux",)
@@ -148,13 +175,16 @@ optimizer load time (outside the scored per-case window):
    accepted only after the same 1-block smoke test;
 3. pure-Python SA fallback (embedded in op_wrapper.py) if no binary runs.
 
-`requirements.txt` is empty: nothing here needs installing.
+`requirements.txt` lists every third-party package `op_wrapper.py` imports:
+torch, numpy, shapely, scipy. Floors match the contest's own
+`requirements.txt` so nothing here can force a version change in the
+evaluation environment; `scipy>=1.6.0` is the release that added the HiGHS
+backend this code asks for by name (`linprog(..., method="highs")`).
 
-Required: torch, numpy, shapely -- all from the official environment.
-Optional: scipy. One post-processing step (a shape LP over the selected layout)
-uses `scipy.optimize.linprog`. It is imported inside a try/except and the step
-is skipped entirely if scipy is absent, so the solver runs correctly either way
--- the result is simply better when scipy is present.
+scipy is used by one post-processing step (a shape LP over the selected
+layout). It is imported inside a try/except and the step is skipped entirely if
+scipy is absent, so the solver still produces valid, feasible layouts without
+it -- but the results are meaningfully better with it.
 """
 
 # Loader closure the evaluator needs when it sits inside cadc1075/ (its
@@ -242,6 +272,51 @@ def build_op_wrapper_text() -> str:
 
 
 # ── staging + hygiene + tar ──────────────────────────────────────────────────
+def _requirements_complete(stage: Path) -> list:
+    """Every third-party module op_wrapper.py imports must be declared.
+
+    The beta report's section 2(a) is the reason this exists: teams lost whole
+    runs to an undeclared scipy, and a human reading a checklist is exactly the
+    wrong instrument for "did anyone add an import since the last package". So
+    the import list is derived from the AST of the file we are actually
+    shipping, not from a comment.
+
+    Direction is deliberately one-sided. An UNDECLARED import is a hard error --
+    that is the failure the report describes. A declared-but-unimported package
+    is also an error, because the only way one appears is that an import went
+    away and nobody trimmed the file, and a requirements.txt that installs more
+    than we use is a version-conflict surface for no benefit.
+    """
+    errs = []
+    src = (stage / "op_wrapper.py").read_text(encoding="utf-8")
+    mods = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Import):
+            mods |= {a.name.split(".")[0] for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+            mods.add(n.module.split(".")[0])
+    third = {m for m in mods
+             if m not in sys.stdlib_module_names and m not in _IMPORT_EXEMPT}
+    req = (stage / "requirements.txt").read_text(encoding="utf-8")
+    declared = {re.split(r"[<>=!~\[]", ln, 1)[0].strip().lower()
+                for ln in req.splitlines()
+                if ln.strip() and not ln.lstrip().startswith("#")}
+    for m in sorted(third):
+        want = _IMPORT_PROVIDES.get(m)
+        if want is None:
+            errs.append(f"op_wrapper.py imports {m!r}, which maps to no known "
+                        f"requirement -- add it to _IMPORT_PROVIDES and to "
+                        f"_REQUIREMENTS (beta report 2a: an undeclared import is "
+                        f"a runtime failure on the grader)")
+        elif want.lower() not in declared:
+            errs.append(f"op_wrapper.py imports {m!r} but requirements.txt does "
+                        f"not declare {want!r}")
+    for d in sorted(declared):
+        if d not in {v.lower() for v in _IMPORT_PROVIDES.values()}:
+            errs.append(f"requirements.txt declares {d!r}, which nothing imports")
+    return errs
+
+
 def _hygiene(stage: Path, expected: set) -> list:
     errs = []
     found = {p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()}
@@ -254,9 +329,7 @@ def _hygiene(stage: Path, expected: set) -> list:
     for f in found:
         if Path(f).suffix.lower() in _FORBIDDEN_EXT:
             errs.append(f"forbidden file type in package: {f}")
-    req = stage / "requirements.txt"
-    if req.stat().st_size != 0:
-        errs.append(f"requirements.txt must be 0 bytes, is {req.stat().st_size}")
+    errs += _requirements_complete(stage)
     if (stage / "op_src.py").read_bytes() != (stage / "op_wrapper.py").read_bytes():
         errs.append("op_src.py is not byte-identical to op_wrapper.py")
     for f in sorted(found):
@@ -329,7 +402,8 @@ def stage() -> bool:
     text = build_op_wrapper_text()
     (_STAGE / "op_wrapper.py").write_text(text, encoding="utf-8", newline="\n")
     shutil.copyfile(_STAGE / "op_wrapper.py", _STAGE / "op_src.py")
-    (_STAGE / "requirements.txt").write_bytes(b"")
+    (_STAGE / "requirements.txt").write_text(_REQUIREMENTS, encoding="utf-8",
+                                             newline="\n")
     (_STAGE / "README.md").write_text(_README, encoding="utf-8", newline="\n")
     shutil.copyfile(_REPO / "constructive.cpp", _STAGE / "constructive.cpp")
 
