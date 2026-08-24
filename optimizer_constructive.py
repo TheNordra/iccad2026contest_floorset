@@ -607,6 +607,362 @@ def _l137_active(block_count: int) -> FrozenSet[int]:
     return _L137_IDX
 
 
+# L167 PROBE TIER (offline; default OFF, so the shipped path is bit-identical
+# unless ICCAD_LENSD_POOL=1). 32 UNIFORMLY RANDOM knob-cloud vectors --
+# random, not greedy, so there is no in-sample fitting in the pick, which is
+# the property M79-B'/M80 relied on and the one M76 measured at ~5% transfer
+# when it is absent. Measured in-set on the current tree, after the L147
+# tangent and the L165 depth map: control 1.1893802976444576 reproduces
+# results_L165_det1.json bit-for-bit, arm 1.1840055494807595 = +0.4519%,
+# 100/100 feasible, 53 moved / 18 worse, all three bands positive.
+# 🚨 RED, and the kill is the reusable part. OOS against the CORRECT control
+# (the depth map without the tier, reconstructed by exact arm-mixing) it is
+# +0.3383% (s1) / +0.5501% (s2), transfer 75% / 122%, 240/240 feasible --
+# the quality is real. It dies on TIME, and not where I first looked: I
+# priced the C++ pool wall (c* max 9.0, far under 32 or 48 cores, so the
+# pool is max-setter bound and free) and still measured +2.0-2.4s per case.
+# The cost is the SERIAL PROXY. M47 records the post-pool _proxy_metrics
+# tail at 2.9s for 41 profiles on n=120, i.e. ~71 ms per profile on the
+# main thread; 32 more profiles predicts +2.26s and we measured +2.14/+2.38s.
+# More cores cannot help -- M47 also records that running the proxies
+# concurrently in worker threads was 4x WORSE (GIL thrash). At f=3.17 that
+# is 63-75 grader-seconds against 19.79s of remaining budget: over by 3.2x.
+#
+# 🔑 THE RULE THIS GIVES US, cheap enough to apply before running anything:
+#     every added profile costs ~71 ms of SERIAL proxy, so N profiles cost
+#     at least N * 0.071 / f grader-seconds no matter how many cores exist.
+# "Adding profiles is nearly free" stopped being true at M47. It also says
+# M80s K=8 was not an arbitrary cut: 8 profiles is ~0.57s, which the budget
+# carries; 32 is 2.3s, which it does not.
+# Kept default-OFF and labelled rather than deleted -- see _M157_A above for
+# why an unlabelled dead knob is the expensive kind.
+_LENSD_EXTRA = [
+ {
+  "ICCAD_ANCHOR_W": "0.1632",
+  "ICCAD_FRAME_SCALES": "1.00,1.02,1.05,1.10",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.5,0.6667,1.0,1.5,2.0",
+  "ICCAD_MIB_ASPECT": "5.073",
+  "ICCAD_SOFT_ASPECT": "1.577",
+  "ICCAD_WIRE_MULT": "3.217",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.0329875",
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.5,0.6667,1.0,1.5,2.0",
+  "ICCAD_LR_ASPECT": "4.08896",
+  "ICCAD_MIB_ASPECT": "2.29473",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "3.66093",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.04",
+  "ICCAD_LR_ASPECT": "2.02272",
+  "ICCAD_MIB_ASPECT": "0.269868",
+  "ICCAD_TB_ASPECT": "0.286"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_BP_WEIGHT": "63806",
+  "ICCAD_CLUSTER_ASPECT": "3.04888",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ANCHORED_BND": "1",
+  "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_SOFT_ASPECT": "2",
+  "ICCAD_TB_ASPECT": "0.244264",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ANCHORED": "1",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_LR_ASPECT": "4.50602",
+  "ICCAD_SOFT_ASPECT": "0.725868",
+  "ICCAD_TB_ASPECT": "0.373701",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.33755",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_CLUSTER_ASPECT": "0.923163",
+  "ICCAD_WIRE_MULT": "0.477782"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.05375",
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "1.557",
+  "ICCAD_FRAME_ASPECTS": "1.0,0.75,1.35,2.2",
+  "ICCAD_FRAME_SCALES": "1.00,1.10,1.25,1.45",
+  "ICCAD_FREE_ANCHORED": "1",
+  "ICCAD_FREE_ANCHORED_BND": "1",
+  "ICCAD_FREE_ANCHORED_RATIOS": "0.5,0.6667,1.0,1.5,2.0",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_LR_ASPECT": "1.943",
+  "ICCAD_SOFT_ASPECT": "1.881",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "0.8909",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "0.4",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_MIB_ASPECT": "8.51783",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.0109077",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.0170511",
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "0.6",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_GUIDE_MED": "1",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.04",
+  "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33",
+  "ICCAD_LR_ASPECT": "7.0",
+  "ICCAD_TB_ASPECT": "0.14"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "1.25",
+  "ICCAD_TB_ASPECT": "0.194045"
+ },
+ {
+  "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33",
+  "ICCAD_FRAME_SCALES": "1.00,1.02,1.05,1.10",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_GUIDE_MED": "1",
+  "ICCAD_SOFT_ASPECT": "0.6777",
+  "ICCAD_WIRE_MULT": "0.7013",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.069824",
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_BP_WEIGHT": "63806",
+  "ICCAD_CLUSTER_ASPECT": "3.04888",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ANCHORED": "1",
+  "ICCAD_FREE_ANCHORED_BND": "1",
+  "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_LR_ASPECT": "4.67827",
+  "ICCAD_SOFT_ASPECT": "1.32324",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.13614",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_TB_ASPECT": "0.660663"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_FRAME_ASPECTS": "1.0,0.75,1.35,2.2",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.5,0.6667,1.0,1.5,2.0",
+  "ICCAD_SOFT_ASPECT": "1.08607",
+  "ICCAD_WIRE_MULT": "2.0"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.2,0.5,1.0,2.0,5.0",
+  "ICCAD_MIB_ASPECT": "0.2065",
+  "ICCAD_TB_ASPECT": "0.1875",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "0.9223"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "0.3247",
+  "ICCAD_FREE_ANCHORED": "1",
+  "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.2,0.5,1.0,2.0,5.0",
+  "ICCAD_LR_ASPECT": "1.723",
+  "ICCAD_WIRE_MULT": "2.791",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.0423164",
+  "ICCAD_LR_ASPECT": "3.5",
+  "ICCAD_TB_ASPECT": "0.286",
+  "ICCAD_WIRE_MULT": "1.21629"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "1.38144",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ANCHORED": "1",
+  "ICCAD_FREE_ANCHORED_BND": "1",
+  "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_MIB_ASPECT": "5.0",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "1.5892",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.5,0.6667,1.0,1.5,2.0",
+  "ICCAD_LR_ASPECT": "2.45791",
+  "ICCAD_SOFT_ASPECT": "1.15478",
+  "ICCAD_WIRE_MULT": "2.0"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ANCHORED": "1",
+  "ICCAD_FREE_ANCHORED_BND": "1",
+  "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_GUIDE_MED": "1",
+  "ICCAD_MIB_ASPECT": "5.0",
+  "ICCAD_SOFT_ASPECT": "0.742103",
+  "ICCAD_TB_ASPECT": "0.229421",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "3.14767",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "2.0",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_MIB_ASPECT": "2.10845",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.5,0.6667,1.0,1.5,2.0",
+  "ICCAD_LR_ASPECT": "4.5"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.0264965",
+  "ICCAD_WIRE_MULT": "2.0"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.1868",
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_BP_WEIGHT": "45892.4",
+  "ICCAD_CLUSTER_ASPECT": "3.004",
+  "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_GUIDE_MED": "1",
+  "ICCAD_WIRE_MULT": "0.7031",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.0159945",
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "2.0",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ANCHORED_BND": "1",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_WIRE_MULT": "2.0",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_ANCHOR_W": "0.0248875",
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_BP_WEIGHT": "66359.9",
+  "ICCAD_CLUSTER_ASPECT": "1.262",
+  "ICCAD_FRAME_ASPECTS": "0.67,0.5,0.4,0.33",
+  "ICCAD_FRAME_SCALES": "1.00,1.10,1.25,1.45",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.25,0.4,0.6667,1.0,1.5,2.5,4.0",
+  "ICCAD_MIB_ASPECT": "2.8877",
+  "ICCAD_TB_ASPECT": "0.3585",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "0.9473"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_FRAME_SCALES": "1.00,1.05,1.10,1.20",
+  "ICCAD_FREE_ANCHORED": "1",
+  "ICCAD_FREE_ANCHORED_BND": "1",
+  "ICCAD_FREE_ANCHORED_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_FREE_CLUSTER": "1",
+  "ICCAD_FREE_CLUSTER_RATIOS": "0.333,0.5,0.6667,1.0,1.5,2.0,3.0,4.0",
+  "ICCAD_MIB_ASPECT": "5.0",
+  "ICCAD_SOFT_ASPECT": "1.88763",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "3.14767",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ },
+ {
+  "ICCAD_BFS_PIN": "1",
+  "ICCAD_CLUSTER_ASPECT": "0.718176",
+  "ICCAD_FREE_ASPECT": "1",
+  "ICCAD_GUIDE_MED": "1",
+  "ICCAD_WIRE_BFS": "1",
+  "ICCAD_WIRE_MULT": "2.0",
+  "ICCAD_WIRE_TIEBREAK": "1"
+ }
+]
+_LENSD_BASE = len(_PROFILES)
+_LENSD_IDX = frozenset(range(_LENSD_BASE, _LENSD_BASE + len(_LENSD_EXTRA)))
+_PROFILES.extend(_LENSD_EXTRA)
+
+
+def _lensd_active(block_count: int) -> FrozenSet[int]:
+    """Probe tier, OFF unless ICCAD_LENSD_POOL=1. Read at CALL time."""
+    if os.environ.get("ICCAD_LENSD_POOL", "0") != "1":
+        return frozenset()
+    return _LENSD_IDX
+
+
 def _m124_active(block_count: int) -> FrozenSet[int]:
     """Tier indices this call should add. Read at CALL time, never at import, so
     a probe that sets the env after importing this module actually flips it.
@@ -1004,6 +1360,7 @@ def _pool_indices(block_count: int) -> List[int]:
     # to SHIP and the gate is the mechanism, not a measurement switch.
     extra = ((_M55_IDX if m55 else frozenset()) | esc
              | _m80_active(block_count) | _m124_active(block_count)
+             | _lensd_active(block_count)
              | _l137_active(block_count))          # L137 GORDIAN-hint tier
     full = [i for i in range(len(_PROFILES))
             if i < _M55_BASE_LEN or i in extra]
