@@ -1,0 +1,42 @@
+=== L246 Linux lanes on the NO-VENDOR package  2026-08-25T16:55:56Z ===
+L246_WSL_RC=0
+   tar md5:        c7be7452f0c67961e6f48c8055aebf55
+   op_wrapper md5: 1c326784de7cd9246cd1f380e2842668
+   _L157_DEPTH hits: 4   _L196_LPGATE hits: 3   _LP_HB_K hits: 2
+   requirements.txt: 104 bytes, scipy listed: 1
+   vendor files:     0 (must be 0 for D)
+   staged dir md5: 1c326784de7cd9246cd1f380e2842668   (tar must equal the staged tree, not a constant)
+   REFINE heavy band: "2" hits 1, stale "4" hits 0
+   REFINE mid band: "2" hits 1, stale "6" hits 0
+   L235 rewrite: np.triu_indices hits 2, stale separation assignment hits 0
+   depth map in the tar: {1: 100}  OK
+   LP gate  in the tar: {0: 29, 1: 71}  OK
+########## LANE 1 -- 48c, LP off: the Linux pre-LP base ##########
+L117 LINUX-VERIFY [final48/t_lpoff]: PASS
+LANE1_RC=0
+########## LANE 2 -- 48c, kill switch: the pre-L147 band ##########
+   LP liveness: 71/100 cases entered the LP; the shipped gate selects 71 of 100
+   LP gate: OK -- ran on exactly the 71 selected block counts, skipped 29
+L117 LINUX-VERIFY [final48/t_off]: PASS
+LANE2_RC=0
+########## LANE 3 -- 48c, THE SHIPPED DEFAULT, nothing set ##########
+   LP liveness: 71/100 cases entered the LP; the shipped gate selects 71 of 100
+   LP gate: OK -- ran on exactly the 71 selected block counts, skipped 29
+L117 LINUX-VERIFY [final48/t_ship]: PASS
+LANE3_RC=0
+########## LANE 4 -- DETERMINISM: the same run again ##########
+   LP liveness: 71/100 cases entered the LP; the shipped gate selects 71 of 100
+   LP gate: OK -- ran on exactly the 71 selected block counts, skipped 29
+L117 LINUX-VERIFY [final48/t_ship2]: PASS
+LANE4_RC=0
+   DETERMINISM on Linux: cost 100/100  positions 100/100  PASS
+########## LANE 5 -- THE GATE IS LIVE ON LINUX ##########
+   env override: ICCAD_LP_GATE=0
+   LP liveness: 100/100 cases entered the LP, kept 99/100
+L117 LINUX-VERIFY [final48/t_gateoff]: PASS
+LANE5_RC=0
+   LP executions: default 71   ICCAD_LP_GATE=0 100   (expect 71 / 100)
+   GATE LIVENESS on Linux: PASS
+   gate SET on Linux: default=={table 1s} True   gateoff==all True   PASS
+LANE5_SET_RC=0
+L246_DONE_ALL 2026-08-25T17:08:07Z

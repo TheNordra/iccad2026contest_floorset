@@ -1,18 +1,31 @@
 #!/bin/sh
-# L245 -- the NO-VENDOR standby package.
+# L245 -- build the NO-VENDOR package (the one we ship).
+#
+#   <sh> l245_novendor.sh [outdir]      default outdir: build_submission.D
+#
+# make_submission.py CANNOT produce this shape: _vendor_check() hard-requires
+# vendor/ in the stage and returns "vendor/ missing from the stage". So the
+# chain after ANY change is BOTH steps, in order:
+#     <python> make_submission.py stage     -> build_submission/   (vendor)
+#     <sh> l245_novendor.sh                 -> build_submission.D/ (shipped)
+# Running only the first silently leaves the wrong artefact as the newest one.
 #
 # Built by REPACKING the shipped stage without vendor/, never by re-staging, so
 # the six graded files stay byte-identical to the verified package by
 # construction rather than by re-running a gate on them.
 #
-# 🚨 DO NOT UPLOAD THIS unless the organizers answer that vendor/ violates the
+# 🚨 SUPERSEDED NOTE (kept for the record): this WAS the standby. Since
+# 2026-08-26 it is the SHIPPED shape -- guidelines Section 2 Case B means the
+# grader installs scipy from requirements.txt, so vendor/ is never loaded and
+# matches "allowed only if ACTIVELY USED". The old note read: do not upload
+# unless the organizers answer that vendor/ violates the
 # "unused large binary" rule. Measured cost if scipy is absent on the grader:
 # NET +5.224% -> +2.875%, graded 0.87819 -> 0.89995, rank 2 -> rank 4. If scipy
 # IS present the two packages are bit-identical, so this is not a quality
 # trade-off, it is a two-rank bet on the environment.
 set -u
 R=/c/ICCAD_ml/ship_final
-D=$R/build_submission.NOVENDOR
+D=${1:-$R/build_submission.D}
 cd "$R" || exit 1
 rm -rf "$D"; mkdir -p "$D"
 cp -r build_submission/cadc1075 "$D/cadc1075"

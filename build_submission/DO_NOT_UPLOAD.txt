@@ -1,0 +1,50 @@
+DO NOT UPLOAD THE TAR IN THIS DIRECTORY.
+=========================================
+
+This is the VENDOR package (cadc1075.tar.gz, ~33.9 MB, 1544 tar members).
+It carries a bundled scipy under cadc1075/vendor/.
+
+The package to upload is one directory over:
+
+    ../build_submission.D/cadc1075.tar.gz     408,795 B, 8 tar members, no vendor/
+
+Both have the SAME six graded files (op_wrapper.py md5
+1c326784de7cd9246cd1f380e2842668) and score identically when the grader has
+scipy. The difference is compliance, not score.
+
+WHY. beta_submission_guidelines_problemC.txt Section 2, Case B: a NON-EMPTY
+requirements.txt makes the grader build a fresh venv from that file alone
+(`python3 -m venv .venv_eval` / `pip install -r requirements.txt`). Section 4(a)
+records Alpha failures where that pip "resolved incompatible versions" -- i.e.
+pip runs and fetches. Ours is non-empty and complete, so scipy arrives from pip
+and vendor/ is never loaded. Section 1 then applies literally:
+
+    Large binary files (model weights, etc.) are allowed only if they are
+    ACTIVELY USED by your optimizer. Remove any unused assets.
+
+and lines 19-21: "Any violation ... will result in DISQUALIFICATION."
+
+vendor/ also never hedged the fatal case: op_wrapper.py:43 is a bare
+`import torch` outside any try, so if pip cannot install, the submission dies
+before scipy is ever reached.
+
+REGENERATING D. `make_submission.py stage` CANNOT produce it -- _vendor_check()
+hard-requires vendor/ in the stage and returns "vendor/ missing from the stage".
+D is made by REPACKING a completed stage:
+
+    <python> make_submission.py stage        # writes THIS directory
+    sh l245_novendor.sh                      # repacks it into build_submission.D/
+
+Run BOTH after any change. The repack is what makes the six graded files
+byte-identical by construction rather than by re-running a gate on them.
+
+VERIFYING D ON LINUX. Use l246_wsl_D.sh, NOT l238/l207/l200/l187 -- all four of
+those assert `VEND > 1000` as a hard precondition and abort on D with
+"vendor/ missing", which reads like a defect and is not one. l246 inverts that
+one line and keeps everything else.
+
+Only re-upload the vendor package if the organizers answer BOTH that vendor/ is
+permitted AND that scipy is not pre-installed. That is the one combination that
+flips the decision back.
+
+Recorded 2026-08-26. Full reasoning: HANDOFF_2026-08-27.md, the addendum.
