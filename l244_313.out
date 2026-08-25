@@ -1,0 +1,11 @@
+interpreter: Python 3.13.5
+numpy for the test: 2.5.2
+--- 1. scipy absent from this interpreter to begin with? ---
+ModuleNotFoundError: No module named 'scipy'
+--- 2. does the VENDORED wheel import and solve a real LP? ---
+   scipy 1.16.3 loaded from vendor: True
+   numpy 2.5.2
+   linprog status=0 fun=-8.000000
+   sparse ok, nnz = 2
+   *** VENDORED SCIPY WORKS ON cp313 ***
+L244_DONE

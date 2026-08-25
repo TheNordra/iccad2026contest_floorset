@@ -19,3 +19,9 @@ build_submission.L131FIX/** -text
 # L136 fix package (built + verified 2026-08-16, NOT uploaded). Same reasoning
 # as build_submission/ above; the pattern there does NOT cover this path.
 build_submission.L136FIX/** -text
+
+# L245 no-vendor STANDBY package (built 2026-08-26, NOT uploaded). Same
+# reasoning as build_submission/ above: its six graded files must stay
+# byte-identical to the shipped package and a CRLF rewrite on checkout would
+# hash differently while looking correct.
+build_submission.NOVENDOR/** -text
