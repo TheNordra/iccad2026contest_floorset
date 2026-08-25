@@ -1,0 +1,32 @@
+[scipy] source=system
+[l129] loading dataset ...
+[l239] 12 cases n>=100  prune_B=8.0  reps=3
+
+ case     n                 highs              highs-ds             highs-ipm
+                  wall        obj       wall        obj       wall        obj
+-----------------------------------------------------------------------------
+   79   100      0.076    0.0e+00      0.075    0.0e+00      0.105    0.0e+00
+   80   101      0.466    0.0e+00      0.466    0.0e+00      0.532    0.0e+00
+   81   102      0.228    0.0e+00      0.230    0.0e+00      0.217    5.9e-13
+   82   103      0.672    0.0e+00      0.673    0.0e+00      0.686    0.0e+00
+   83   104      0.269    0.0e+00      0.268    0.0e+00      0.333    1.4e-16
+   84   105      0.358    0.0e+00      0.357    0.0e+00      0.390    0.0e+00
+   85   106      0.495    0.0e+00      0.495    0.0e+00      0.521    2.8e-16
+   86   107      0.585    0.0e+00      0.583    0.0e+00      0.551    0.0e+00
+   87   108      0.561    0.0e+00      0.562    0.0e+00      0.442    4.2e-16
+   88   109      0.154    0.0e+00      0.152    0.0e+00      0.176    4.2e-13
+   89   110      0.326    0.0e+00      0.325    0.0e+00      0.434    2.3e-13
+   90   111      0.154    0.0e+00      0.153    0.0e+00      0.193    5.1e-13
+-----------------------------------------------------------------------------
+      TOTAL      4.345                 4.340                 4.580           
+
+  highs      whole-LP 4.345s  solve 2.948s  vs highs +1.000x  layouts moved 0/12
+  highs-ds   whole-LP 4.340s  solve 2.948s  vs highs +1.001x  layouts moved 0/12
+  highs-ipm  whole-LP 4.580s  solve 3.172s  vs highs +0.949x  layouts moved 11/12
+
+objective agrees to <1e-9 relative on every case and method.
+
+A faster method is only a candidate: the layouts DO move (that is the
+degeneracy), so it needs the judge48() invariants and an OOS pass,
+not the equality gate L235 used.
+L239_DONE

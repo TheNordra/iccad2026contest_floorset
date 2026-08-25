@@ -1,0 +1,28 @@
+=== L237 anchor run (L234 tree)  2026-08-25T13:44:26Z ===
+  anchor exit=0  LPran=71  SAfallback=0
+
+=== L237 applying the L235 rewrite IN PLACE ===
+   ok  _sep_reduction_mask: array signature
+   ok  _sep_reduction_mask: axis selection on the array
+   ok  _sep_reduction_mask: adjacency on the array
+   ok  _sep_reduction_mask: drop the unreachable empty-terms pass
+   ok  add_ub: hoisted appends, no tuple allocation
+   ok  dsize: per-axis dicts + precomputed hpwl slack
+   ok  add_hpwl_rows: unrolled, dsize/slack precomputed
+   ok  add_hpwl_rows: emit triplets directly
+   ok  separation: numpy enumeration, terms built only for survivors
+   ok  telemetry: sep_rows_total off the array
+   ok  add_hpwl_rows: lin as one tuple allocation
+   ok  add_hpwl_rows: hoist the prune_B-is-not-None test
+   ok  add_hpwl_rows: hoist wsc*sgn, drop the tuple() copy
+   ok  b2l loop: hoist the repeated products
+   ok  p2l loop: hoist the repeated products and the pin table
+wrote optimizer_constructive.py (230821 bytes)  [IN PLACE]
+
+=== L237 gate 1: whole-portfolio bit identity ===
+  post exit=0  LPran=71  SAfallback=0
+Traceback (most recent call last):
+  File "<stdin>", line 7, in <module>
+  File "<stdin>", line 7, in <genexpr>
+KeyError: 'feasible'
+!! reverting optimizer_constructive.py

@@ -1,0 +1,14 @@
+=== L232 pool-restore pricing  2026-08-25T12:12:08Z ===
+  arm=base rep1 exit=0 records=5100 SAfallback=0
+  arm=full rep1 exit=0 records=5700 SAfallback=0
+  arm=hint rep1 exit=0 records=5500 SAfallback=0
+  arm=lensd rep1 exit=0 records=8300 SAfallback=0
+  arm=base rep2 exit=0 records=5100 SAfallback=0
+  arm=full rep2 exit=0 records=5700 SAfallback=0
+  arm=hint rep2 exit=0 records=5500 SAfallback=0
+  arm=lensd rep2 exit=0 records=8300 SAfallback=0
+  arm=base rep3 exit=0 records=5100 SAfallback=0
+  arm=full rep3 exit=0 records=5700 SAfallback=0
+  arm=hint rep3 exit=0 records=5500 SAfallback=0
+  arm=lensd rep3 exit=0 records=8300 SAfallback=0
+L232_POOL_DONE 2026-08-25T12:57:15Z

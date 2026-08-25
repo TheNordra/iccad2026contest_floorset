@@ -1,0 +1,17 @@
+[scipy] source=system
+[l129] loading dataset ...
+[l240] 12 cases n>=100  prune_B=8.0  reps=3
+
+config              wall     solve    speed   layouts obj moved
+---------------------------------------------------------------
+shipped            4.265     2.944   1.000x         0         0
+dantzig            4.840     3.503   0.881x         9         0
+devex              3.934     2.595   1.084x        10         0
+steepest           4.502     3.146   0.947x         4         0
+steep-devex        4.309     2.961   0.990x         0         0
+no-presolve        5.720     4.111   0.746x        12         3
+---------------------------------------------------------------
+'layouts' counts cases whose layout hash differs from the shipped
+config -- expected and harmless on a degenerate LP as long as
+'obj moved' is 0. A moved OBJECTIVE is a tolerance story and is out.
+L240_DONE

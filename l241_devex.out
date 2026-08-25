@@ -1,0 +1,13 @@
+[scipy] source=system
+[l129] loading dataset ...
+[l241] 100 cases, shipped vs devex, min-of-3
+
+cases 100   whole-LP shipped 20.54s  devex 19.16s  speed 1.072x
+             solve   shipped 13.48s  devex 12.04s  speed 1.120x
+    21-60   shipped   2.41s  devex   2.23s  1.079x  (40 cases)
+    61-100  shipped   8.14s  devex   7.48s  1.089x  (40 cases)
+   101-121  shipped   9.99s  devex   9.44s  1.057x  (20 cases)
+
+layout hash moved on 66/100   objective moved (>1e-9) on 4   hard_ok kept 100 -> 100
+   objective movers: [10, 32, 70, 93]
+L241_DONE

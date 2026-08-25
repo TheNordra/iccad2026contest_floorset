@@ -1,0 +1,48 @@
+=== L238 in-set gates  2026-08-25T13:54:13Z ===
+det1 exit=0  LPran=71  SAfallback=0  scipy=1
+det2 exit=0  LPran=71  SAfallback=0  scipy=1
+gateoff exit=0  LPran=100  SAfallback=0  scipy=1
+k1 exit=0  LPran=71  SAfallback=0  scipy=1
+l147off exit=0  LPran=71  SAfallback=0  scipy=1
+hboff exit=0  LPran=71  SAfallback=0  scipy=1
+l238_gates.sh: line 30: ../l238_lpoff_stats.txt: No such file or directory
+lpoff exit=0  LPran=0  SAfallback=0  scipy=1
+refine4 exit=0  LPran=71  SAfallback=0  scipy=1
+refinemid6 exit=0  LPran=71  SAfallback=0  scipy=1
+pooldropon exit=0  LPran=71  SAfallback=0  scipy=1
+L238_GATES_DONE
+
+=== L238 verdict ===
+========================================================================
+L238 -- in-set gates, L234 (mid REFINE 2, gate 71 on) + L235 (LP)
+========================================================================
+G1  determinism      cost 100/100  positions 100/100   PASS
+G0  chain of custody vs results_L237_post.json  cost 100/100  positions 100/100   PASS
+G13 L235 rewrite INVISIBLE (pre vs post, same tree otherwise)  cost 100/100  positions 100/100   PASS
+G3  gate fired       default 71 == table 1-set True   LP_GATE=0 100 == all True   SHAPE_LP=0 0 == 0 True   PASS
+     gate is on for 12 block counts above n=100 of 20
+G4  depth map flat   k1 vs det1 cost 100/100 positions 100/100   PASS
+G5  feasibility      100/100 in all 10 arms   PASS
+G7  LP value         +2.5933%   70 moved (70 better / 0 worse)   PASS
+G11 REFINE heavy     kill switch moves 2 case(s), all above n=100: True   PASS
+G12 REFINE mid       kill switch moves 8 case(s), all in 60<n<=100: True   PASS
+G10 pool drop        OFF by default; ICCAD_L211_POOLDROP=1 still moves 10 case(s)   PASS
+------------------------------------------------------------------------
+in-set weighted cost: 1.226325126   (LP off 1.258974453)
+VERDICT: ALL PASS
+
+=== L238 Linux lanes  2026-08-25T14:20:39Z ===
+L238_WSL_RC=1
+== L238 Linux verify -- L234+L235 package  2026-08-25T14:20:48Z  nproc=32
+   tar md5:        8e1857500ab787d3dd63f5e6da9dea1f
+   op_wrapper md5: 1c326784de7cd9246cd1f380e2842668
+   _L157_DEPTH hits: 4   _L196_LPGATE hits: 3   _LP_HB_K hits: 2
+   staged dir md5: 1c326784de7cd9246cd1f380e2842668   (tar must equal the staged tree, not a constant)
+   _L211_POOLDROP hits in the tar: 5 (the L211/L213 pool drop)
+   REFINE heavy band: "2" hits 1, stale "4" hits 0
+   REFINE mid band: "2" hits 1, stale "6" hits 0
+   L235 rewrite: np.triu_indices hits 2, stale max(cands,key=) hits 1
+   !! the pre-L235 separation loop is still present
+   LP gate  in the tar: {0: 29, 1: 71}  OK
+L238 ABORT: the tar is not the package we think it is.
+L238_CHAIN_DONE 2026-08-25T14:21:13Z

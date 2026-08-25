@@ -1,0 +1,8 @@
+[scipy] source=system
+[l129] loading dataset ...
+the four objective movers, in full
+  case  10 n= 31  shipped 1.738529503838  devex 1.796942381712  rel 3.36e-02  rounds shipped/devex builds 4/4  hard_ok True/True
+  case  32 n= 53  shipped 1.703733384309  devex 1.632365123577  rel 4.19e-02  rounds shipped/devex builds 2/1  hard_ok True/True
+  case  70 n= 91  shipped 1.716532057217  devex 1.714650543408  rel 1.10e-03  rounds shipped/devex builds 2/1  hard_ok True/True
+  case  93 n=114  shipped 1.640178283420  devex 1.689724023009  rel 3.02e-02  rounds shipped/devex builds 4/6  hard_ok True/True
+L242_DONE

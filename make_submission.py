@@ -9,7 +9,9 @@ name is a DQ and re-submission is not accepted):
                               merged at the tail -- no optimizer_claude.py file
                               may exist in the package)
         op_src.py             byte-identical copy of op_wrapper.py (backup)
-        requirements.txt      0 bytes (official env already has torch/shapely)
+        requirements.txt      the contest's own list + scipy (L172; it was
+                              0 bytes until the 2026-08-23 report required
+                              every imported package to be listed)
         README.md             short compile-fallback explanation
         constructive.cpp      main placer source (on-site compile fallback)
         bin/constructive_linux   prebuilt Linux binary (M67-C output;
@@ -123,6 +125,21 @@ _WHITELIST = ("op_wrapper.py", "op_src.py", "requirements.txt", "README.md",
               "constructive.cpp")
 _BIN_FILES = ("bin/constructive_linux",)
 _TEXT_EXT = {".py", ".md", ".txt", ".cpp"}
+
+# L172 (2026-08-24): the contest's OWN iccad2026contest/requirements.txt,
+# verbatim, plus scipy (which we import for the shape LP and it does not), and
+# torch raised to the >= 2.5.0 the 2026-08-23 evaluation report requires for
+# Python 3.13. No pins: the report's failure mode (b) is a pinned old torch.
+# See the note in _gate() for why this stopped being a 0-byte file.
+_REQUIREMENTS = (
+    "torch>=2.5.0\n"
+    "numpy>=1.24.0\n"
+    "shapely>=2.0.0\n"
+    "matplotlib>=3.7.0\n"
+    "tqdm>=4.60.0\n"
+    "requests>=2.28.0\n"
+    "scipy>=1.11.0\n"
+)
 _FORBIDDEN_EXT = {".pkl", ".json", ".log", ".exe", ".pyc"}
 # Absolute-path scan: the m48 phase-4 pattern family (a broader [A-Za-z]:
 # drive class false-positives on ":\n" escape sequences in f-strings).
@@ -148,8 +165,11 @@ optimizer load time (outside the scored per-case window):
    accepted only after the same 1-block smoke test;
 3. pure-Python SA fallback (embedded in op_wrapper.py) if no binary runs.
 
-`requirements.txt` is intentionally empty: only torch / shapely / numpy from
-the official environment are used.
+`requirements.txt` is the contest's own dependency list plus `scipy`, which the
+shape-legalisation LP uses (`scipy.optimize.linprog`). Every entry is a `>=`
+constraint, none are pinned. A copy of scipy is also vendored under `vendor/`
+and is appended to `sys.path` ONLY if `import scipy` fails, so a system scipy
+always wins and the LP never depends on the vendored copy being reachable.
 """
 
 # Loader closure the evaluator needs when it sits inside cadc1075/ (its
@@ -299,9 +319,24 @@ def _hygiene(stage: Path, expected: set) -> list:
     for f in ours:
         if Path(f).suffix.lower() in _FORBIDDEN_EXT:
             errs.append(f"forbidden file type in package: {f}")
+    # L172: this used to assert 0 bytes. The beta guidelines said an empty file
+    # meant "use the prebuilt env" and a non-empty one meant "build a venv from
+    # THIS FILE ALONE", and the alpha failure mode was a file that listed only
+    # the new packages and so lost torch/numpy. The 2026-08-23 evaluation
+    # report reverses the instruction: "requirements.txt must list EVERY
+    # package your code imports ... Do not assume any package beyond the Python
+    # standard library is available", naming scipy. The safe form under BOTH
+    # documents is the contest's own requirements.txt plus scipy, all with >=
+    # constraints -- complete, so the venv path works, and a superset of what
+    # the prebuilt env has, so that path is unchanged.
     req = stage / "requirements.txt"
-    if req.stat().st_size != 0:
-        errs.append(f"requirements.txt must be 0 bytes, is {req.stat().st_size}")
+    got = req.read_text(encoding="utf-8")
+    if got != _REQUIREMENTS:
+        errs.append("requirements.txt is not the complete pinned-free set "
+                    f"(got {len(got)} bytes)")
+    for pkg in ("torch", "numpy", "shapely", "scipy"):
+        if not any(l.startswith(pkg) for l in got.splitlines()):
+            errs.append(f"requirements.txt is missing {pkg}, which we import")
     if (stage / "op_src.py").read_bytes() != (stage / "op_wrapper.py").read_bytes():
         errs.append("op_src.py is not byte-identical to op_wrapper.py")
     for f in sorted(ours):
@@ -374,7 +409,8 @@ def stage() -> bool:
     text = build_op_wrapper_text()
     (_STAGE / "op_wrapper.py").write_text(text, encoding="utf-8", newline="\n")
     shutil.copyfile(_STAGE / "op_wrapper.py", _STAGE / "op_src.py")
-    (_STAGE / "requirements.txt").write_bytes(b"")
+    (_STAGE / "requirements.txt").write_text(_REQUIREMENTS,
+                                             encoding="utf-8", newline="\n")
     (_STAGE / "README.md").write_text(_README, encoding="utf-8", newline="\n")
     shutil.copyfile(_REPO / "constructive.cpp", _STAGE / "constructive.cpp")
 

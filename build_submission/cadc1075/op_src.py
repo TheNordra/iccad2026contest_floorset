@@ -1197,7 +1197,24 @@ _M67F_CORES_MIN = 40
 #
 # Kill switch ICCAD_L223_REFINE_HEAVY=<n> restores any value; =4 is pre-L223.
 _M49_REFINE_BAND: Tuple[Tuple[int, int, str], ...] = (
-    (60, 100, "6"),                              # M50 universal tier (M74: 8 -> 6)
+    # L231 (2026-08-25): the MID band goes 6 -> 2, for the same reason the heavy
+    # band went 4 -> 2 at L223 and on the same evidence shape. M50 set 8 and M74
+    # took it to 6 by a STRICTLY SELECTION-PRESERVING argument -- the free half,
+    # and then it stopped. After L223, 67.3% of the REMAINING RF deficit sat in
+    # this band with 25 of its 40 cases still ABOVE the floor.
+    #   wall     the mid-band profile phase drops 21.2% (min-of-3 on both sides,
+    #            against control bands reading -4.7% at n<=60 and -0.1% at
+    #            n>100, i.e. the estimator's own bias -- and the bias points the
+    #            conservative way, so 21.2% is a floor on the cut). 6 -> 4 buys
+    #            NOTHING (+0.9%, inside the noise) and 6 -> 3 buys 9.7%: the
+    #            refine loop early-breaks around 4.
+    #   quality  in set +0.0003%, i.e. free -- which is exactly what the heavy
+    #            band read before OOS turned it into -0.1788%. The OOS arms are
+    #            l233_{s1,s2}_mid2.json against l223_{s1,s2}_r2.json.
+    #   joint    with the eight added LP-gate block counts, NET +5.05% vs beta
+    #            against +4.27% shipped, and still +4.75% at a -0.30% OOS cost.
+    # Kill switch ICCAD_L231_REFINE_MID=<n> restores any value; =6 is pre-L231.
+    (60, 100, "2"),                              # M50 -> M74 "6" -> L231 "2"
     (100, 10**9, "2"),                           # M49 -> L223 (was "4")
 )
 # M50 low-core tier: replaces the universal band value when _effective_cores()
@@ -1227,6 +1244,10 @@ def _band_env(block_count: int) -> Dict[str, str]:
             _kv = os.environ.get("ICCAD_L223_REFINE_HEAVY", "")
             if _kv and block_count > 100:
                 return {"ICCAD_REFINE_ITERS": _kv}
+            # L231 kill switch, mid band only, same contract as L223's.
+            _km = os.environ.get("ICCAD_L231_REFINE_MID", "")
+            if _km and block_count <= 100:
+                return {"ICCAD_REFINE_ITERS": _km}
             return {"ICCAD_REFINE_ITERS": iters}
     return {}
 
@@ -2994,7 +3015,8 @@ def _aggregate_pairwise_edges(c, unit_of):
     return b2l, p2l
 
 
-def _sep_reduction_mask(rows, n, P, unit_of, sv, resh, rho):
+def _sep_reduction_mask(ax_l, bi_l, bj_l, rhs_l, n, P, unit_of, sv, resh,
+                        rho):
     """Transitive reduction of the same-axis separation rows. EXACT.
 
     A row for the ordered block pair (a, c) on the x axis reads
@@ -3027,9 +3049,9 @@ def _sep_reduction_mask(rows, n, P, unit_of, sv, resh, rho):
     would yield a longer path.  So every removed row stays implied by rows that
     survive.
     """
-    keep = [True] * len(rows)
+    keep = [True] * len(ax_l)
     for axis in (0, 1):
-        idxs = [k for k, r in enumerate(rows) if r["axis"] == axis]
+        idxs = [k for k, a in enumerate(ax_l) if a == axis]
         if len(idxs) <= 1:
             continue
         size = [P[b][2 + axis] for b in range(n)]
@@ -3042,8 +3064,8 @@ def _sep_reduction_mask(rows, n, P, unit_of, sv, resh, rho):
         # chain only through non-negative gaps, which is what makes it a DAG
         adj = [0] * n
         for k in idxs:
-            if rows[k]["rhs"] >= 0.0:
-                adj[rows[k]["bi"]] |= 1 << rows[k]["bj"]
+            if rhs_l[k] >= 0.0:
+                adj[bi_l[k]] |= 1 << bj_l[k]
 
         # reverse topological order: an edge a -> b has x_a < x_b on this axis
         via = [0] * n          # reachable from a by a path of length >= 2
@@ -3059,12 +3081,13 @@ def _sep_reduction_mask(rows, n, P, unit_of, sv, resh, rho):
             via[a], thru[a] = v, adj[a] | v
 
         for k in idxs:
-            if via[rows[k]["bi"]] >> rows[k]["bj"] & 1:
+            if via[bi_l[k]] >> bj_l[k] & 1:
                 keep[k] = False
 
-    for k, r in enumerate(rows):
-        if not r["terms"] and r["rhs"] >= 0.0:
-            keep[k] = False        # `0 <= nonneg`, true without the row
+    # The original ended with `if not r["terms"] and r["rhs"] >= 0.0`. That
+    # branch is unreachable and always was: a row exists only for a pair whose
+    # two units DIFFER, so at most one of (ul, ur) is None and `terms` is never
+    # empty. Dropping it removes a full pass over every candidate pair.
     return keep
 
 
@@ -3121,11 +3144,21 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
 
     bub = []
 
+    # L235: bound methods hoisted, and the throwaway 3-tuple that
+    # `a.append(x), b.append(y), c.append(z)` allocates on EVERY triplet is
+    # gone. Same appends, same order.
+    _rub_a = rub.append
+    _cub_a = cub.append
+    _vub_a = vub.append
+    _bub_a = bub.append
+
     def add_ub(terms, rhs, origin):
         r = len(bub)
-        bub.append(rhs)
+        _bub_a(rhs)
         for col, coef in terms:
-            rub.append(r), cub.append(col), vub.append(coef)
+            _rub_a(r)
+            _cub_a(col)
+            _vub_a(coef)
         rows_by_origin[origin] += 1
 
     def add_eq(terms, rhs, origin):
@@ -3146,27 +3179,67 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
             return None
         return sv[u][axis]
 
+    # L235: dsize() was called 141k times per census run purely to index a
+    # 2-tuple. Split it once per axis; `.get()` returns None exactly where
+    # dsize() did, because u is never None on the paths that use these.
+    _svax = ({_u: _v[0] for _u, _v in sv.items()},
+             {_u: _v[1] for _u, _v in sv.items()})
+    # 0.5 * rho * P[resh[u]][2 + axis], which add_hpwl_rows recomputed for
+    # every reshapeable unit of every hpwl term.
+    _hslack = ({_u: 0.5 * rho * P[resh[_u]][2] for _u in sv},
+               {_u: 0.5 * rho * P[resh[_u]][3] for _u in sv})
+
     prune_const = 0.0
     prune_stat = [0, 0]                       # [dropped, kept]
     dropped = []                              # (term_id, lin, dC, wsc)
     term_id = [0]
 
+    _pb0 = prune_B or 0.0
+    _pbon = prune_B is not None
+
     def add_hpwl_rows(wsc, ui, uj, off, dC, axis):
-        nonlocal prune_const
+        nonlocal prune_const, nv
         tid = term_id[0]
         term_id[0] += 1
-        lin = []
-        slack = 0.0
-        for u, s in ((ui, 1.0), (uj, -1.0)):
-            if u is None:
-                continue
-            lin.append((off + u, s))
-            slack += prune_B or 0.0
-            k = dsize(u, axis)
-            if k is not None:
-                lin.append((k, 0.5 * s))
-                slack += 0.5 * rho * P[resh[u]][2 + axis]
-        if prune_B is not None and abs(dC) > slack and tid not in force_keep:
+        _svk = _svax[axis]
+        _hsk = _hslack[axis]
+        # L235: `lin` built as a tuple in ONE allocation, in the order the
+        # original loop produced (ui term, its size term, uj term, its size
+        # term), so both the emission order and the float sums are unchanged.
+        if ui is None:
+            kj = _svk.get(uj)
+            if kj is None:
+                lin = ((off + uj, -1.0),)
+                slack = _pb0
+            else:
+                lin = ((off + uj, -1.0), (kj, -0.5))
+                slack = _pb0 + _hsk[uj]
+        elif uj is None:
+            ki = _svk.get(ui)
+            if ki is None:
+                lin = ((off + ui, 1.0),)
+                slack = _pb0
+            else:
+                lin = ((off + ui, 1.0), (ki, 0.5))
+                slack = _pb0 + _hsk[ui]
+        else:
+            ki = _svk.get(ui)
+            kj = _svk.get(uj)
+            if ki is None:
+                if kj is None:
+                    lin = ((off + ui, 1.0), (off + uj, -1.0))
+                    slack = _pb0 + _pb0
+                else:
+                    lin = ((off + ui, 1.0), (off + uj, -1.0), (kj, -0.5))
+                    slack = _pb0 + _pb0 + _hsk[uj]
+            elif kj is None:
+                lin = ((off + ui, 1.0), (ki, 0.5), (off + uj, -1.0))
+                slack = _pb0 + _hsk[ui] + _pb0
+            else:
+                lin = ((off + ui, 1.0), (ki, 0.5), (off + uj, -1.0),
+                       (kj, -0.5))
+                slack = _pb0 + _hsk[ui] + _pb0 + _hsk[uj]
+        if _pbon and abs(dC) > slack and tid not in force_keep:
             # Assume sign(dC + delta) == sign(dC) and fold the term in linearly.
             # |z| >= s*z for either s, so the pruned objective is a LOWER BOUND
             # on the true one everywhere.  Hence if the pruned optimum happens to
@@ -3175,18 +3248,39 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
             # HEURISTIC for which terms to try dropping.  solve_pruned() below
             # does that check and regenerates any term whose sign came out wrong.
             sgn = 1.0 if dC > 0.0 else -1.0
+            wss = wsc * sgn          # (wsc*sgn)*coef == wsc*sgn*coef
             for col, coef in lin:
-                obj[col] += wsc * sgn * coef
-            prune_const += wsc * sgn * dC
+                obj[col] += wss * coef
+            prune_const += wss * dC
             prune_stat[0] += 1
-            dropped.append((tid, tuple(lin), dC, wsc))
+            dropped.append((tid, lin, dC, wsc))   # lin is already a tuple
             return
         prune_stat[1] += 1
-        t = new_aux(wsc)
-        t1 = [(t, -1.0)] + lin
-        t2 = [(t, -1.0)] + [(col, -coef) for col, coef in lin]
-        add_ub(t1, -dC, "hpwl")
-        add_ub(t2, dC, "hpwl")
+        # L235: new_aux + two add_ub calls inlined. Identical emission order:
+        # row -dC first with (t,-1) then lin, row +dC second with (t,-1) then
+        # the negated lin -- exactly what add_ub(t1)/add_ub(t2) produced.
+        obj.append(wsc)
+        nv += 1
+        t = nv - 1
+        r1 = len(bub)
+        _bub_a(-dC)
+        _rub_a(r1)
+        _cub_a(t)
+        _vub_a(-1.0)
+        for col, coef in lin:
+            _rub_a(r1)
+            _cub_a(col)
+            _vub_a(coef)
+        r2 = len(bub)
+        _bub_a(dC)
+        _rub_a(r2)
+        _cub_a(t)
+        _vub_a(-1.0)
+        for col, coef in lin:
+            _rub_a(r2)
+            _cub_a(col)
+            _vub_a(-coef)
+        rows_by_origin["hpwl"] += 2
 
     h_base = max(float(c["base"].get("hpwl_baseline", 1.0)), 1e-6)
     hw_scale = 0.5 / h_base
@@ -3197,59 +3291,106 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
 
     b2l_items, p2l_items = _aggregate_pairwise_edges(c, unit_of)
     for i, j, w in b2l_items:
-        ui, uj = unit_of[i], unit_of[j]
-        dCx, dCy = cx[i] - cx[j], cy[i] - cy[j]
+        ui = unit_of[i]
+        uj = unit_of[j]
+        dCx = cx[i] - cx[j]
+        dCy = cy[i] - cy[j]
+        _d = w * (abs(dCx) + abs(dCy))
         if w <= 0.0 or ui == uj:
-            const_h += w * (abs(dCx) + abs(dCy))
+            const_h += _d
             continue
-        add_hpwl_rows(w * hw_scale, ui, uj, 0, dCx, 0)
-        add_hpwl_rows(w * hw_scale, ui, uj, U, dCy, 1)
-        obj0 += w * (abs(dCx) + abs(dCy))
+        _ws = w * hw_scale
+        add_hpwl_rows(_ws, ui, uj, 0, dCx, 0)
+        add_hpwl_rows(_ws, ui, uj, U, dCy, 1)
+        obj0 += _d
 
+    _pin = c["pin"]
     for p, i, w in p2l_items:
         ui = unit_of[i]
-        px, py = c["pin"][p]
-        dCx, dCy = cx[i] - px, cy[i] - py
+        px, py = _pin[p]
+        dCx = cx[i] - px
+        dCy = cy[i] - py
+        _d = w * (abs(dCx) + abs(dCy))
         if w <= 0.0 or ui is None:
-            const_h += w * (abs(dCx) + abs(dCy))
+            const_h += _d
             continue
-        add_hpwl_rows(w * hw_scale, ui, None, 0, dCx, 0)
-        add_hpwl_rows(w * hw_scale, ui, None, U, dCy, 1)
-        obj0 += w * (abs(dCx) + abs(dCy))
+        _ws = w * hw_scale
+        add_hpwl_rows(_ws, ui, None, 0, dCx, 0)
+        add_hpwl_rows(_ws, ui, None, U, dCy, 1)
+        obj0 += _d
 
-    sep_rows = []
-    for i in range(n):
-        xi, yi, wi, hi = P[i]
-        for j in range(i + 1, n):
-            ui, uj = unit_of[i], unit_of[j]
-            if ui == uj:
-                continue
-            xj, yj, wj, hj = P[j]
-            cands = (
-                (xj - (xi + wi), ui, uj, 0, 0, i, j),
-                (xi - (xj + wj), uj, ui, 0, 0, j, i),
-                (yj - (yi + hi), ui, uj, U, 1, i, j),
-                (yi - (yj + hj), uj, ui, U, 1, j, i),
-            )
-            # key is t[0] only, so the extra block ids cannot change the pick
-            gap, ul, ur, off, axis, bl, br = max(cands, key=lambda t: t[0])
-            terms = []
-            if ul is not None:
-                terms.append((off + ul, 1.0))
-                k = dsize(ul, axis)
-                if k is not None:
-                    terms.append((k, 1.0))
-            if ur is not None:
-                terms.append((off + ur, -1.0))
-            sep_rows.append({"axis": axis, "bi": bl, "bj": br,
-                             "terms": terms, "rhs": gap})
+    # L235: the pair enumeration, the four gaps and the argmax move to numpy;
+    # only the rows the reduction KEEPS are ever turned into coefficients.
+    # Measured: 25,568 rows survive out of ~233k candidate pairs (11%), and the
+    # original built a dict and a terms list for all of them.
+    #
+    # Exactness, three points:
+    #   * np.triu_indices(n, 1) enumerates (0,1),(0,2)...(1,2)... i.e. exactly
+    #     the order the double loop produced, which the mask indexes into;
+    #   * np.argmax returns the FIRST maximum, which is what
+    #     `max(cands, key=lambda t: t[0])` did on ties;
+    #   * every arithmetic op is the same IEEE double subtraction on the same
+    #     operands -- `_Rx = _Px + _Pw` is `xi + wi`, not a re-association.
+    # unit ids are non-negative, so mapping None -> -1 keeps None == None (the
+    # pair the original skipped) and cannot collide with a real unit.
+    # pick 0,2 keep (i, j); pick 1,3 swap to (j, i); axis is pick >> 1.
+    _uoa = np.fromiter(((-1 if _u is None else _u) for _u in unit_of),
+                       dtype=np.int64, count=n)
+    _Px = np.fromiter((P[_k][0] for _k in range(n)), dtype=np.float64, count=n)
+    _Py = np.fromiter((P[_k][1] for _k in range(n)), dtype=np.float64, count=n)
+    _Pw = np.fromiter((P[_k][2] for _k in range(n)), dtype=np.float64, count=n)
+    _Ph = np.fromiter((P[_k][3] for _k in range(n)), dtype=np.float64, count=n)
+    _Rx = _Px + _Pw
+    _Ty = _Py + _Ph
+    _I, _J = np.triu_indices(n, 1)
+    _kp = _uoa[_I] != _uoa[_J]
+    _I = _I[_kp]
+    _J = _J[_kp]
+    if _I.size:
+        _g = np.empty((4, _I.size), dtype=np.float64)
+        _g[0] = _Px[_J] - _Rx[_I]
+        _g[1] = _Px[_I] - _Rx[_J]
+        _g[2] = _Py[_J] - _Ty[_I]
+        _g[3] = _Py[_I] - _Ty[_J]
+        _pick = _g.argmax(axis=0)
+        _sep_rhs = _g[_pick, np.arange(_I.size)].tolist()
+        _even = (_pick & 1) == 0
+        _sep_ax = (_pick >> 1).tolist()
+        _sep_bi = np.where(_even, _I, _J).tolist()
+        _sep_bj = np.where(_even, _J, _I).tolist()
+    else:
+        _sep_rhs, _sep_ax, _sep_bi, _sep_bj = [], [], [], []
 
-    keep_mask = (_sep_reduction_mask(sep_rows, n, P, unit_of, sv, resh, rho)
-                 if sep_rows else [])
+    keep_mask = (_sep_reduction_mask(_sep_ax, _sep_bi, _sep_bj, _sep_rhs,
+                                     n, P, unit_of, sv, resh, rho)
+                 if _sep_rhs else [])
     sep_kept = sum(1 for x in keep_mask if x)
-    for row, kf in zip(sep_rows, keep_mask if sep_trim else [True] * len(keep_mask)):
-        if kf:
-            add_ub(row["terms"], row["rhs"], "separation")
+    _emit = ([_k for _k in range(len(keep_mask)) if keep_mask[_k]] if sep_trim
+             else range(len(keep_mask)))
+    _nsep = 0
+    for _k in _emit:
+        axis = _sep_ax[_k]
+        off = 0 if axis == 0 else U
+        ul = unit_of[_sep_bi[_k]]
+        ur = unit_of[_sep_bj[_k]]
+        r = len(bub)
+        _bub_a(_sep_rhs[_k])
+        if ul is not None:
+            _rub_a(r)
+            _cub_a(off + ul)
+            _vub_a(1.0)
+            _kk = _svax[axis].get(ul)
+            if _kk is not None:
+                _rub_a(r)
+                _cub_a(_kk)
+                _vub_a(1.0)
+        if ur is not None:
+            _rub_a(r)
+            _cub_a(off + ur)
+            _vub_a(-1.0)
+        _nsep += 1
+    if _nsep:
+        rows_by_origin["separation"] += _nsep
 
     xmin0 = min(P[i][0] for i in range(n))
     xmax0 = max(P[i][0] + P[i][2] for i in range(n))
@@ -3439,7 +3580,7 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
         rows_eq=len(beq),
         nnz=len(vub) + len(veq),
         rows_by_origin=dict(rows_by_origin),
-        sep_rows_total=len(sep_rows),
+        sep_rows_total=len(_sep_rhs),
         sep_rows_kept=sep_kept,
         timing=dict(t_build=t_build, t_solve=t_solve),
     )
@@ -4133,13 +4274,12 @@ _L196_LPGATE = {
     31: 1, 32: 1, 33: 1, 34: 1, 35: 1, 36: 1, 37: 1, 38: 0, 39: 0, 40: 0,
     41: 1, 42: 1, 43: 1, 44: 1, 45: 1, 46: 1, 47: 0, 48: 1, 49: 0, 50: 1,
     51: 1, 52: 0, 53: 1, 54: 1, 55: 1, 56: 0, 57: 1, 58: 1, 59: 1, 60: 0,
-    61: 1, 62: 0, 63: 1, 64: 1, 65: 1, 66: 1, 67: 1, 68: 1, 69: 0, 70: 1,
-    71: 1, 72: 0, 73: 1, 74: 0, 75: 1, 76: 0, 77: 1, 78: 0, 79: 0, 80: 0,
-    81: 0, 82: 1, 83: 0, 84: 1, 85: 0, 86: 1, 87: 0, 88: 1, 89: 1, 90: 0,
+    61: 1, 62: 1, 63: 1, 64: 1, 65: 1, 66: 1, 67: 1, 68: 1, 69: 0, 70: 1,
+    71: 1, 72: 1, 73: 1, 74: 1, 75: 1, 76: 0, 77: 1, 78: 0, 79: 0, 80: 0,
+    81: 0, 82: 1, 83: 0, 84: 1, 85: 0, 86: 1, 87: 0, 88: 1, 89: 1, 90: 1,
     91: 1, 92: 0, 93: 1, 94: 0, 95: 0, 96: 1, 97: 1, 98: 1, 99: 0, 100: 1,
-    101: 0, 102: 0, 103: 0, 104: 1, 105: 1, 106: 0, 107: 0, 108: 0, 109: 1,
-    110: 1, 111: 1, 112: 0, 113: 1, 114: 0, 115: 1, 116: 1, 117: 0, 118: 0,
-    119: 0, 120: 0,
+    101: 0, 102: 1, 103: 1, 104: 1, 105: 1, 106: 1, 107: 0, 108: 0, 109: 1, 110: 1,
+    111: 1, 112: 0, 113: 1, 114: 0, 115: 1, 116: 1, 117: 0, 118: 0, 119: 1, 120: 0,
 }
 
 

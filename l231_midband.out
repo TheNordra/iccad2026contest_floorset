@@ -1,0 +1,17 @@
+=== L231 mid-band sweep  2026-08-25T11:34:20Z ===
+  arm=6 rep1 exit=0 records=5100 table=1
+  arm=4 rep1 exit=0 records=5100 table=1
+  arm=3 rep1 exit=0 records=5100 table=1
+  arm=2 rep1 exit=0 records=5100 table=1
+  arm=pc rep1 exit=0 records=5100 table=1
+  arm=6 rep2 exit=0 records=5100 table=1
+  arm=4 rep2 exit=0 records=5100 table=1
+  arm=3 rep2 exit=0 records=5100 table=1
+  arm=2 rep2 exit=0 records=5100 table=1
+  arm=pc rep2 exit=0 records=5100 table=1
+  arm=6 rep3 exit=0 records=5100 table=1
+  arm=4 rep3 exit=0 records=5100 table=1
+  arm=3 rep3 exit=0 records=5100 table=1
+  arm=2 rep3 exit=0 records=5100 table=1
+  arm=pc rep3 exit=0 records=5100 table=1
+L231_SWEEP_DONE 2026-08-25T12:11:45Z

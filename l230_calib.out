@@ -1,0 +1,17 @@
+=== L230 calibration batch  2026-08-25T10:59:38Z  nproc=32 ===
+-- rep 1  10:59:38Z
+  A1 exit=0  SAfallback=0
+  B1 exit=0  SAfallback=0
+  C1 exit=0  SAfallback=0
+  D1 exit=0  SAfallback=0
+-- rep 2  11:11:46Z
+  A2 exit=0  SAfallback=0
+  B2 exit=0  SAfallback=0
+  C2 exit=0  SAfallback=0
+  D2 exit=0  SAfallback=0
+-- rep 3  11:23:21Z
+  A3 exit=0  SAfallback=0
+  B3 exit=0  SAfallback=0
+  C3 exit=0  SAfallback=0
+  D3 exit=0  SAfallback=0
+L230_CALIB_DONE 2026-08-25T11:34:05Z

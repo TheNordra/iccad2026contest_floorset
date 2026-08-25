@@ -1,0 +1,4 @@
+=== L233 mid-band OOS  2026-08-25T12:57:30Z ===
+s1/mid2 exit=0 probe_module=1 refine_table=1 SAfallback=0
+s2/mid2 exit=0 probe_module=1 refine_table=1 SAfallback=0
+L233_OOS_DONE 2026-08-25T13:10:58Z
