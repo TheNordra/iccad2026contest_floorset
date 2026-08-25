@@ -85,7 +85,15 @@ echo "   staged dir md5: $STG   (tar must equal the staged tree, not a constant)
 RA=$(tar xzOf $TAR cadc1075/op_src.py | grep -c "OFF since L205")
 PD=$(tar xzOf $TAR cadc1075/op_src.py | grep -c "_L211_POOLDROP")
 echo "   _L211_POOLDROP hits in the tar: $PD (the L211/L213 pool drop)"
-[ "$PD" -ge 3 ] || { echo "   !! the pool drop is not in the package"; FAIL=1; }
+[ "$PD" -ge 3 ] || { echo "   !! the pool drop table is gone from the package"; FAIL=1; }
+PDOFF=$(tar xzOf $TAR cadc1075/op_src.py | grep -c 'ICCAD_L211_POOLDROP", "") != "1"')
+echo "   pool drop default-OFF guard: $PDOFF (expect 1; it came off at L224)"
+[ "$PDOFF" -eq 1 ] || { echo "   !! the pool drop is not default-off -- L224 said it is NET -0.096pp on top of REFINE=2"; FAIL=1; }
+RB=$(tar xzOf $TAR cadc1075/op_src.py | grep -c '(100, 10\*\*9, "2")')
+RB4=$(tar xzOf $TAR cadc1075/op_src.py | grep -c '(100, 10\*\*9, "4")')
+echo "   REFINE heavy band: \"2\" hits $RB, stale \"4\" hits $RB4"
+[ "$RB" -ge 1 ] || { echo "   !! the L223 REFINE band is not in the package"; FAIL=1; }
+[ "$RB4" -eq 0 ] || { echo "   !! the pre-L223 band value is still present"; FAIL=1; }
 PROF=$(tar xzOf $TAR cadc1075/op_src.py | grep -c "_PROF_TIMING")
 echo "   route A off marker: $RA   _PROF_TIMING (must be 0): $PROF"
 [ "$RA" -ge 1 ] || { echo "   !! route A is still on -- this tar predates the L205 decision"; FAIL=1; }
@@ -142,7 +150,7 @@ echo "   budget = $B"
 
 echo; echo "########## LANE 3 -- 48c, THE SHIPPED DEFAULT, nothing set ##########"
 "$V" l117_linux_verify.py final48 "$TAR" --tag t_ship --stats \
-     --base "$BASE" --ctrl "$CTRL" --win results_L214_det1.json \
+     --base "$BASE" --ctrl "$CTRL" --win results_L227_det1.json \
      --budget "${B:-0}" --live-min 0.40
 echo "LANE3_RC=$?"
 

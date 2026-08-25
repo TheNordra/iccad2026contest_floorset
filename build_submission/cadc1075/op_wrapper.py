@@ -1173,9 +1173,32 @@ _M67F_CORES_MIN = 40
 #     (-31.0% vs -25.0% @12c). Worst cell +0.02%, inside the +0.03% M50 bar.
 #     K=4 ungated still fails the mid bar (+0.049% local, worst cell +0.05%) and
 #     so stays the low-core tier below.
+# L219/L223 (2026-08-25): the heavy band goes 4 -> 2. M49 derived 4 STRICTLY
+# SELECTION-PRESERVING -- it took the part that costs no quality and stopped --
+# and the ledger then recorded "do not stack more wall cuts, the floor is
+# saturated". That premise is false in the current package: 45 of 100 cases sit
+# ABOVE the RF floor and 10 of them carry 86% of the deficit, so cutting REFINE
+# there collects real RF. M49's own number was also measured on a tree that has
+# since taken L131, L136, L147 and L124.
+#
+# MEASURED, not assumed:
+#   wall     the n>100 profile phase drops 21.5% (single pair) / 27.2% (min-of-3
+#            against a +4.1% control band that must read 0, i.e. the estimator's
+#            own bias). 81% of the 1020 heavy-band profiles get faster, median
+#            ratio 0.801, while the untouched n<=100 control sits at 1.021.
+#   quality  IN SET it is +0.0400%, a GAIN, with 2 of 100 cases moving. OUT OF
+#            SAMPLE it FLIPS SIGN: -0.0941% (s1) and -0.2635% (s2), mean
+#            -0.1788%, both samples the same sign, 0 infeasible in either.
+#            Going below a selection-preserving bound changes selections BY
+#            CONSTRUCTION, so the in-set null was never going to survive -- but
+#            -0.18% against a ~2.3pp RF gain is a trade worth taking.
+#   joint    with the L211 pool drop the OOS cost is -0.4996% (both samples) for
+#            NET +4.33..+4.53% vs beta, against +1.260% without either.
+#
+# Kill switch ICCAD_L223_REFINE_HEAVY=<n> restores any value; =4 is pre-L223.
 _M49_REFINE_BAND: Tuple[Tuple[int, int, str], ...] = (
     (60, 100, "6"),                              # M50 universal tier (M74: 8 -> 6)
-    (100, 10**9, "4"),                           # M49
+    (100, 10**9, "2"),                           # M49 -> L223 (was "4")
 )
 # M50 low-core tier: replaces the universal band value when _effective_cores()
 # <= _M45_CORES_MAX; mis-detection direction (unknown -> 9999) falls back to
@@ -1199,6 +1222,11 @@ def _band_env(block_count: int) -> Dict[str, str]:
                 return {"ICCAD_REFINE_ITERS": iters}
     for lo, hi, iters in _M49_REFINE_BAND:
         if lo < block_count <= hi:
+            # L223 kill switch: an explicit value replaces the heavy band, so
+            # ICCAD_L223_REFINE_HEAVY=4 reproduces the pre-L223 package exactly.
+            _kv = os.environ.get("ICCAD_L223_REFINE_HEAVY", "")
+            if _kv and block_count > 100:
+                return {"ICCAD_REFINE_ITERS": _kv}
             return {"ICCAD_REFINE_ITERS": iters}
     return {}
 
@@ -1476,10 +1504,25 @@ _L211_POOLDROP = {
 
 
 def _pooldrop_for(n) -> frozenset:
-    """Profiles dropped at this block count, or empty. Unknown n -> empty,
-    which is the pre-L211 pool: an unseen size must not lose profiles on the
-    strength of a table that never saw it."""
-    if os.environ.get("ICCAD_L211_POOLDROP", "") == "0":
+    """OFF by default since L224. The table above stays as the record of a
+    measurement, and ICCAD_L211_POOLDROP=1 re-enables it.
+
+    Why it came off, and it is not because it was wrong: standalone the drop is
+    worth +1.074pp of wall against -0.2989pp of measured OOS quality, i.e. NET
+    +0.775pp, and it shipped on that. But L223 then took REFINE 4 -> 2 on the
+    heavy band, and BOTH knobs shorten the SAME max-setter. Stacked, the drop's
+    remaining wall value collapses to +0.203pp while its quality cost is
+    unchanged -- NET -0.096pp. It is a mechanism that was worth having until
+    something better took the same wall.
+
+    🚨 The contended measurement disagrees, and it is the one to distrust: on
+    this 32-logical-core box, dropping 8 of 51 profiles ALSO relieves scheduler
+    contention (51 -> 43 runnable), which speeds up the profiles that remain.
+    The grader runs 51 on 48 and then 43 on 48 -- barely oversubscribed either
+    way -- so that relief does not exist there. Uncontended durations
+    (ICCAD_PROF_SEQ=1) measure the drop's real effect and are what the numbers
+    above come from. Same box, same trap, same fix as route A's."""
+    if os.environ.get("ICCAD_L211_POOLDROP", "") != "1":
         return frozenset()
     if _effective_cores_hi() < _ROUTE_A_CORES_MIN:
         return frozenset()

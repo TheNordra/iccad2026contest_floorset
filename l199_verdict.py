@@ -117,7 +117,8 @@ def main():
     want_on = {n for n, v in GATE.items() if v}
 
     arms = {t: load(t) for t in ("det1", "det2", "gateoff", "k1",
-                                 "l147off", "hboff", "lpoff", "pooldropoff")}
+                                 "l147off", "hboff", "lpoff", "pooldropon",
+                                 "refine4")}
     fails = []
 
     def need(*tags):
@@ -303,46 +304,77 @@ def main():
         fails.append("G8(not run)")
         print("G8 hb predictor  NOT RUN")
 
-    # ---- G10: the L211/L213 pool drop actually fired -----------------------
-    # Two halves, and the second is the one that catches a table that silently
-    # kept its old values: the KILL SWITCH arm must reproduce the pre-drop
-    # anchor bit-for-bit, and the default must differ from it on exactly the
-    # cases the drop was measured to move. A table that never loaded would pass
-    # the first half and fail the second; a table that dropped everything would
-    # pass the second and fail the first.
-    POOLDROP_ANCHOR = "results_L209_det1.json"
-    POOLDROP_MOVED = 12                      # measured in set at k=8
-    ref2 = DIR / POOLDROP_ANCHOR
-    if arms.get("pooldropoff") and arms.get("det1") and ref2.exists():
-        R2 = {r["test_id"]: r for r in json.load(open(ref2))["test_results"]}
-        off2 = arms["pooldropoff"]
-        ids = sorted(set(off2) & set(R2))
-        same = sum(1 for i in ids if off2[i]["cost"] == R2[i]["cost"]
-                   and off2[i].get("positions") == R2[i].get("positions"))
-        ok_a = len(ids) > 0 and same == len(ids)
-        d1 = arms["det1"]
-        ids2 = sorted(set(d1) & set(R2))
-        mv = sum(1 for i in ids2 if d1[i]["cost"] != R2[i]["cost"])
-        ok_b = mv == POOLDROP_MOVED
-        try:
-            src2 = src
-            tbl = eval(re.search(r"^_L211_POOLDROP = \{.*?^\}", src2, re.S | re.M)
-                       .group(0).split("=", 1)[1])
-            ok_c = len(tbl) == 100 and all(len(v) == 8 for v in tbl.values())
-        except Exception:
-            tbl, ok_c = {}, False
-        ok = ok_a and ok_b and ok_c
+    # ---- G10: the L211 pool drop is OFF by default and still reachable -----
+    # It shipped, then came off at L224: stacked on the L223 REFINE band its
+    # remaining wall value is +0.203pp against an unchanged -0.2989pp of
+    # measured OOS quality cost, i.e. NET -0.096pp. The table stays in the
+    # source as the record of a measurement, so the gate now asserts the two
+    # things that can go wrong with a disabled mechanism: that it is really
+    # disabled (covered by G11's kill-switch arm reproducing an anchor that
+    # predates it) and that it has not ROTTED -- a table nobody exercises is a
+    # table that silently stops working.
+    if arms.get("pooldropon") and arms.get("det1"):
+        on, d1 = arms["pooldropon"], arms["det1"]
+        ids = sorted(set(on) & set(d1))
+        mv = sum(1 for i in ids if on[i]["cost"] != d1[i]["cost"])
+        ok = mv > 0
         fails += [] if ok else ["G10"]
-        print("G10 pool drop    kill switch {}/{} identical to {}   {}"
-              .format(same, len(ids), POOLDROP_ANCHOR, "PASS" if ok_a else "FAIL"))
-        print("                 default moves {} cases vs it (measured {})   {}"
-              .format(mv, POOLDROP_MOVED, "PASS" if ok_b else "FAIL"))
-        print("                 table: {} block counts x {} profiles   {}"
-              .format(len(tbl), len(next(iter(tbl.values()))) if tbl else 0,
-                      "PASS" if ok_c else "FAIL"))
+        print("G10 pool drop    OFF by default; ICCAD_L211_POOLDROP=1 still "
+              "moves {} case(s)   {}".format(mv, "PASS" if ok else "FAIL"))
+        if not ok:
+            print("                 !! the table is unreachable -- it has "
+                  "rotted, not merely been disabled")
     else:
         fails.append("G10(not run)")
         print("G10 pool drop    NOT RUN")
+
+    # ---- G11: the L223 REFINE band actually changed ------------------------
+    # Same paired shape as G10, and it needs to be paired for the same reason:
+    # the kill-switch arm must reproduce the pre-L223 package bit-for-bit
+    # (catches a band that moved further than intended) AND the default must
+    # differ from it on exactly the measured movers (catches a band that never
+    # moved at all). Plus a structural check the pair cannot give: every mover
+    # must lie ABOVE n=100, because that is the only band L223 touches -- a
+    # leak into the mid band would show up here and nowhere else.
+    # L209_det1 is route A off, no pool drop, REFINE=4 -- so the kill-switch
+    # arm reproducing it proves TWO things at once: REFINE is the only change,
+    # AND the L211 pool drop really is off (if it were live the arm would
+    # differ). Verified equal to results_L219_r4.json on 0/100, so the two
+    # anchors agree.
+    REFINE_ANCHOR = "results_L209_det1.json"
+    REFINE_MOVED = 2                       # measured in set: n=113 and n=115
+    ref3 = DIR / REFINE_ANCHOR
+    if arms.get("refine4") and arms.get("det1") and ref3.exists():
+        R3 = {r["test_id"]: r for r in json.load(open(ref3))["test_results"]}
+        r4 = arms["refine4"]
+        ids = sorted(set(r4) & set(R3))
+        same = sum(1 for i in ids if r4[i]["cost"] == R3[i]["cost"]
+                   and r4[i].get("positions") == R3[i].get("positions"))
+        ok_a = len(ids) > 0 and same == len(ids)
+        d1 = arms["det1"]
+        ids2 = sorted(set(d1) & set(R3))
+        mvs = [i for i in ids2 if d1[i]["cost"] != R3[i]["cost"]]
+        ok_b = len(mvs) == REFINE_MOVED
+        ok_c = all(d1[i]["block_count"] > 100 for i in mvs)
+        # a plain substring check: the band is a literal in the source, and a
+        # regex that has to survive two layers of escaping is one more thing
+        # that can silently match nothing and report PASS.
+        ok_d = ('(100, 10**9, "2")' in src
+                and '(60, 100, "6")' in src)
+        ok = ok_a and ok_b and ok_c and ok_d
+        fails += [] if ok else ["G11"]
+        print("G11 REFINE band  kill switch {}/{} identical to {}   {}"
+              .format(same, len(ids), REFINE_ANCHOR, "PASS" if ok_a else "FAIL"))
+        print("                 default moves {} case(s) vs it (measured {})   {}"
+              .format(len(mvs), REFINE_MOVED, "PASS" if ok_b else "FAIL"))
+        print("                 every mover above n=100: {}   {}"
+              .format(sorted(d1[i]["block_count"] for i in mvs),
+                      "PASS" if ok_c else "FAIL"))
+        print("                 band is (60,100,\"6\") + (100,inf,\"2\")   {}"
+              .format("PASS" if ok_d else "FAIL"))
+    else:
+        fails.append("G11(not run)")
+        print("G11 REFINE band  NOT RUN")
 
     # ---- G9: every arm must reproduce the anchor prefix bit-for-bit --------
     # Used when the change under test is supposed to move WALL and nothing else

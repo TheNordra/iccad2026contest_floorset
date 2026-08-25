@@ -1186,6 +1186,9 @@ _M50_REFINE_LOWCORE: Tuple[Tuple[int, int, str], ...] = (
 )
 
 
+_L219_REFINE = None
+
+
 def _band_env(block_count: int) -> Dict[str, str]:
     """M49/M50: per-case env overlay for every profile subprocess (band-gated
     REFINE truncation; M50 adds the cores-gated mid tier). Empty dict =
@@ -1198,6 +1201,29 @@ def _band_env(block_count: int) -> Dict[str, str]:
         for lo, hi, iters in _M50_REFINE_LOWCORE:
             if lo < block_count <= hi:
                 return {"ICCAD_REFINE_ITERS": iters}
+    # L219 PROBE ONLY: per-block-count REFINE override, for pricing the OTHER
+    # runtime knob. The 48-core wall is max-setter bound and the profile phase
+    # owns 88% of it (measured; M47's 0.71 was its own pre-fix number), so
+    # besides DROPPING the slowest profiles one can make them CHEAPER. M49 took
+    # the selection-preserving part of this and stopped; the ledger's "do not
+    # stack more wall cuts, the floor is saturated" rests on a premise that no
+    # longer holds -- 45 of 100 cases sit ABOVE the floor, where cutting REFINE
+    # does collect RF.
+    _rt = os.environ.get("L219_REFINE_TABLE", "")
+    if _rt:
+        global _L219_REFINE
+        if _L219_REFINE is None:
+            import json as _j
+            with open(_rt) as _fh:
+                _L219_REFINE = {int(a): str(b) for a, b in _j.load(_fh).items()}
+            print(f"[l219] refine table loaded: {len(_L219_REFINE)} block counts",
+                  file=sys.stderr, flush=True)
+        v = _L219_REFINE.get(int(block_count))
+        if v is not None:
+            return {"ICCAD_REFINE_ITERS": v}
+    _rh = os.environ.get("L219_REFINE_HEAVY", "")
+    if _rh and block_count > 100:
+        return {"ICCAD_REFINE_ITERS": _rh}
     for lo, hi, iters in _M49_REFINE_BAND:
         if lo < block_count <= hi:
             return {"ICCAD_REFINE_ITERS": iters}
