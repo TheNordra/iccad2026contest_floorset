@@ -15,5 +15,8 @@ optimizer load time (outside the scored per-case window):
    accepted only after the same 1-block smoke test;
 3. pure-Python SA fallback (embedded in op_wrapper.py) if no binary runs.
 
-`requirements.txt` is intentionally empty: only torch / shapely / numpy from
-the official environment are used.
+`requirements.txt` is the contest's own dependency list plus `scipy`, which the
+shape-legalisation LP uses (`scipy.optimize.linprog`). Every entry is a `>=`
+constraint, none are pinned. A copy of scipy is also vendored under `vendor/`
+and is appended to `sys.path` ONLY if `import scipy` fails, so a system scipy
+always wins and the LP never depends on the vendored copy being reachable.

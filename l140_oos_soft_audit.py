@@ -59,7 +59,17 @@ def cmd_run(a):
     if a.cores:
         os.environ["ICCAD_ADAPTIVE_CORES"] = str(a.cores)
     import m67_oos_probe as m67
-    import optimizer_constructive as oc
+    # ICCAD_OOS_OPT: run a PROBE COPY instead of the shipped module. The shipped
+    # tree is a verified artefact (op_wrapper md5 pinned by the gates and the
+    # Linux lanes) and must not grow a hook just so a measurement can reach it;
+    # the probe copy differs from it only by the thing being measured. Default
+    # is unchanged, so every historical invocation still measures the shipped
+    # module.
+    _oname = os.environ.get("ICCAD_OOS_OPT", "optimizer_constructive")
+    import importlib
+    oc = importlib.import_module(_oname)
+    if _oname != "optimizer_constructive":
+        print(f"[l140] optimizer module -> {_oname}", flush=True)
     from proxy_analysis import build_opt_target_pos
     from iccad2026_evaluate import evaluate_solution
 

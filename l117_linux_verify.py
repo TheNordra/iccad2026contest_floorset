@@ -81,11 +81,13 @@ dataset symlink there is not reliable. It defaults to this directory.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import time
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -193,14 +195,46 @@ def compare(new_path: Path, anchor: Path) -> bool:
     return True
 
 
-def _lp_liveness(stats: Path, ncases: int) -> bool:
-    """Positive evidence that the shape LP actually ran.
+def _lp_gate_table(pkg: Path):
+    """_L196_LPGATE as shipped INSIDE this package, or None if it predates L196.
+
+    Read from the package, never from the tree: the tree is what we edit, the
+    package is what the grader runs, and the whole point of a liveness gate is
+    to catch the two drifting apart."""
+    for name in ("op_src.py", "op_wrapper.py"):
+        f = pkg / name
+        if not f.exists():
+            continue
+        m = re.search(r"^_L196_LPGATE = \{.*?^\}", f.read_text(encoding="utf-8"),
+                      re.S | re.M)
+        if m:
+            try:
+                return {int(k): int(v) for k, v in
+                        eval(m.group(0).split("=", 1)[1]).items()}
+            except Exception:
+                return None
+    return None
+
+
+def _lp_liveness(stats: Path, ncases: int, gate=None, blocks=None) -> bool:
+    """Positive evidence that the shape LP ran on EXACTLY the cases it should.
 
     `_shape_lp_on()` returns False when scipy/shapely are missing, and
     `_shape_lp` swallows ValueError on a malformed flag and drops the whole
     tangent dict -- both silent, both leaving a run that looks normal. One
     `<block_count> <kept>` line per case is the only thing that distinguishes
     "the LP ran and declined" from "the LP was never reachable".
+
+    L199: since L196 the LP is DELIBERATELY skipped on 37 of 100 block counts,
+    so "one line per case" is no longer the right assertion -- it would fail a
+    correct package. The gate is repointed rather than relaxed: the multiset of
+    block counts in the stats file must equal exactly the block counts the
+    shipped `_L196_LPGATE` selects out of the ones this run actually solved.
+    That is strictly STRONGER than the old count check (it catches a table that
+    fires on the wrong 63 as well as one that fires on too few), and it is the
+    only form that can tell a live gate from a table that silently kept its old
+    values -- which passes determinism and the kill switch while changing
+    nothing. `gate=None` (a pre-L196 package) keeps the old one-per-case rule.
     """
     if not stats.exists():
         print("   FAIL LP liveness: no stats file -- the LP lane never ran "
@@ -208,13 +242,30 @@ def _lp_liveness(stats: Path, ncases: int) -> bool:
         return False
     lines = [l.split() for l in stats.read_text().splitlines() if l.strip()]
     kept = sum(1 for l in lines if len(l) > 1 and l[1] == "1")
-    print(f"   LP liveness: {len(lines)}/{ncases} cases entered the LP, "
-          f"kept {kept}/{len(lines)}")
     ok = True
-    if len(lines) < ncases:
-        print(f"   FAIL LP liveness: {ncases - len(lines)} case(s) never "
-              "reached the LP")
-        ok = False
+
+    if gate and blocks:
+        want = sorted(n for n in blocks if gate.get(int(n), 1))
+        got = sorted(int(l[0]) for l in lines if l and l[0].lstrip("-").isdigit())
+        print(f"   LP liveness: {len(lines)}/{ncases} cases entered the LP; "
+              f"the shipped gate selects {len(want)} of {len(blocks)}")
+        if got != want:
+            extra = sorted((Counter(got) - Counter(want)).elements())
+            miss = sorted((Counter(want) - Counter(got)).elements())
+            print(f"   FAIL LP liveness: the LP did not run on the gate's set. "
+                  f"ran-but-must-not={extra[:12]} must-but-did-not={miss[:12]}")
+            ok = False
+        else:
+            print(f"   LP gate: OK -- ran on exactly the {len(want)} selected "
+                  f"block counts, skipped {len(blocks) - len(want)}")
+    else:
+        print(f"   LP liveness: {len(lines)}/{ncases} cases entered the LP, "
+              f"kept {kept}/{len(lines)}")
+        if len(lines) < ncases:
+            print(f"   FAIL LP liveness: {ncases - len(lines)} case(s) never "
+                  "reached the LP")
+            ok = False
+
     if kept < 0.90 * max(1, len(lines)):
         print("   FAIL LP kept-rate below 90% -- a rejected case loses the "
               "whole shipped LP gain, not just the increment")
@@ -386,9 +437,16 @@ def t3(tar_path: Path, workname: str, cores=None, overrides=(), stats=False,
     else:
         print("   bundled-first: OK (no on-site compile artifact)")
     out = pkg / res_name
-    ncases = len(json.loads(out.read_text(encoding="utf-8"))["test_results"])
+    _rows = json.loads(out.read_text(encoding="utf-8"))["test_results"]
+    ncases = len(_rows)
     if stats:
-        ok &= _lp_liveness(stats_path, ncases)
+        # The kill-switch lane runs the LP everywhere ON PURPOSE, so it is
+        # judged by the old one-line-per-case rule; every other lane is judged
+        # against the gate table the package actually carries.
+        _killed = any(o.replace(" ", "") == "ICCAD_LP_GATE=0" for o in overrides)
+        _gate = None if _killed else _lp_gate_table(pkg)
+        ok &= _lp_liveness(stats_path, ncases, _gate,
+                           [c["block_count"] for c in _rows])
     if cores:
         if judge:
             ok &= judge48(out, base, win, budget, ctrl, live_min)
