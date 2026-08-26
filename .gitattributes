@@ -25,3 +25,10 @@ build_submission.L136FIX/** -text
 # byte-identical to the shipped package and a CRLF rewrite on checkout would
 # hash differently while looking correct.
 build_submission.NOVENDOR/** -text
+
+# D variant (the artefact actually uploaded on 2026-08-26, vendor/ removed).
+# Same reasoning as build_submission/ above: its identity is op_wrapper.py's
+# md5 (1c326784de7cd9246cd1f380e2842668) and core.autocrlf=true would rewrite it
+# to CRLF on checkout, changing the hash while the package still looks correct.
+# The patterns above do NOT cover this path.
+build_submission.D/** -text
