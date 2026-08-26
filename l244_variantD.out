@@ -1,0 +1,26 @@
+=== L244 build variant D  2026-08-25T16:31:11Z ===
+  D tar: 408795 bytes
+  A tar: 35513422 bytes
+
+=== G1: every remaining file byte-identical to the shipped package ===
+  OK   op_wrapper.py            1c326784de7cd9246cd1f380e2842668
+  OK   op_src.py                1c326784de7cd9246cd1f380e2842668
+  OK   requirements.txt         6c59feb458f1f48247373d8b69f401c2
+  OK   README.md                8167121dbb2a0bcb05851226a6f6a4e3
+  OK   constructive.cpp         e2c7b2f418ef2b70b6bff99f7adfbd37
+  OK   bin/constructive_linux   bc9912072cd97b45b47a03adec7170ce
+  vendor entries in D: 0 (must be 0)   total entries: 8 (must be 8)
+  G1 PASS
+
+=== G2: scipy AVAILABLE -- D must reproduce the shipped results ===
+l244_variantD.sh: line 66: ../l244_D_scipy_stats.txt: No such file or directory
+  exit=0  LPran=0  scipy=scipy] source=system
+
+=== G3: scipy BLOCKED -- the rank-4 floor, measured not assumed ===
+l244_variantD.sh: line 79: ../l244_D_noscipy_stats.txt: No such file or directory
+  exit=0  LPran=0 (must be 0)
+  SAfallback=0  scipy=scipy] source=absent
+  G2  D(with scipy) vs shipped: cost 0/100  positions 0/100   FAIL
+  G3  D(no scipy): feasible 100/100, weighted cost 9.999903835   (with scipy 9.999910337)
+      the LP is worth -0.0001% of quality; losing it is the rank-4 floor, and the package does NOT crash
+  !! a gate failed

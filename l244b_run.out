@@ -1,0 +1,19 @@
+L244B_WSL_RC=0
+   D tar:          c7be7452f0c67961e6f48c8055aebf55  408795 bytes
+   D op_wrapper:   1c326784de7cd9246cd1f380e2842668
+   vendor entries: 0  (must be 0)
+   WSL scipy:      1.18.0
+-- official cmd (cwd=cadc1075): -u iccad2026_evaluate.py --evaluate op_wrapper.py -o results_l117_d_ship.json
+   LP liveness: 71/100 cases entered the LP; the shipped gate selects 71 of 100
+   no-judge: total=1.2264069637381392 feasible=100/100
+L117 LINUX-VERIFY [final48/d_ship]: PASS
+D1_RC=0
+-- official cmd (cwd=cadc1075): -u iccad2026_evaluate.py --evaluate op_wrapper.py -o results_l117_d_noscipy.json
+FAIL: scipy absent -- the whole LP lane is inert, worth -5.4171%
+   no-judge: total=1.2589744529416786 feasible=100/100
+L117 LINUX-VERIFY [final48/d_noscipy]: FAIL
+D2_RC=1
+   D1 (scipy on)  weighted cost 1.2516753182   feasible 100/100
+   D2 (scipy off) weighted cost 1.2983620561   feasible 100/100
+   the LP is worth +3.5958% here
+L244B_RUN_DONE
