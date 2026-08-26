@@ -1,0 +1,30 @@
+[scipy] source=system
+[index] scanning 900 files in worker_0..9 (one-time, cached) ...
+[index]   200/900 (1s)
+[index]   400/900 (2s)
+[index]   600/900 (3s)
+[index]   800/900 (5s)
+[l251] 40 cases, 40 to capture
+
+======================================================================
+GENERATION gap by term, 40 cases n>=101 (sample s1)
+======================================================================
+  our best-in-pool, recomputed from terms  1.511619
+  the label, recomputed from terms         1.245233
+  gap                                      +17.6226%
+
+  term                                ours       label       worth
+  ----------------------------------------------------------------
+  hpwl_gap -> label's               0.2766      0.0000    11.5708%
+  area_gap -> label's               0.2256      0.0000     9.1807%
+  vrel     -> label's               0.0857      0.1061    -3.8753%
+  all three -> label's                   -           -    17.6226%
+  ----------------------------------------------------------------
+
+  we already beat the label on vrel in 31/40 cases
+  feasible: ours 40/40   label 40/40
+
+  'worth' is what the weighted total gains if THAT term alone is set
+  to the label's value. The terms multiply, so they do not sum to the
+  total -- a negative means we are already ahead on that term.
+L251_DONE

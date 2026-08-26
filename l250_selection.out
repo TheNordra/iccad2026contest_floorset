@@ -1,0 +1,28 @@
+[scipy] source=system
+[l250] pool at n=120: 51 profiles
+[index] scanning 900 files in worker_0..9 (one-time, cached) ...
+[index]   200/900 (1s)
+[index]   400/900 (2s)
+[index]   600/900 (3s)
+[index]   800/900 (4s)
+[l250] sample s1  40 cases n>=101  @48c  _RH=1.4
+   10/40 captured
+   20/40 captured
+   30/40 captured
+   40/40 captured
+
+====================================================================
+weighted true cost over 40 cases (n>=101, sample s1)
+====================================================================
+  proxy pick (what we ship)   1.511619
+  oracle over the same pool   1.511432   SELECTION loss +0.0124%
+  the LABEL itself            1.245233   GENERATION loss +17.6124%
+  total deficit vs label                       +17.6226%
+
+  proxy picked the true best on 39/40 cases (98%)
+  when it did not, its pick ranked (0 = best): median 0, p90 0, worst 3 of ~51 candidates
+
+  If SELECTION loss is large the fix is free -- a better proxy, no
+  new search. If it is ~0 then CLAUDE.md:488 holds and the whole
+  deficit is GENERATION: the pool does not contain the layouts.
+L250_DONE
