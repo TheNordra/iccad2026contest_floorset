@@ -1,0 +1,14 @@
+=== L249  2026-08-26T02:32:56Z ===
+  probe binary: 8fd6768aaf27c275206a948cc2c46b5f
+  offpath exit=0  SAfallback=0  allfail=0
+  abut exit=0  SAfallback=0  allfail=0
+G0 off-path  cost 100/100  positions 100/100   PASS
+OVERLAY on the portfolio: +0.0039%   moved 2/100  worse 0  feasible 100/100
+    21-60  contributes +0.0000%   moved 1/40
+    61-100 contributes +0.0039%   moved 1/40
+   101-121 contributes +0.0000%   moved 0/20
+
+L144 measured this SOLO at +0.379%/+0.503% on 240 cases. If the portfolio
+absorbs it, this reads near 0 and the axis closes. If it survives, it is
+the only quality gain in the ledger that costs no wall.
+L249_DONE 2026-08-26T02:41:22Z

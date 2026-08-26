@@ -1,0 +1,22 @@
+[scipy] source=system
+[l129] loading dataset ...
+[scipy] source=system
+[l247] 100 cases, prune_B=8 (shipped)
+   solve_pruned invocations captured: 130
+   rounds per case: mean 1.35  1-round 85  2 45  3+ 0   of 130
+   total builds 175; repair builds 45 (25.7% of all builds/solves)
+
+=== is the FORCED set predictable from the pre-solve margin? ===
+for each round-1 that needed a repair: where do the forced tids rank when
+all dropped terms are sorted by margin = |dC| - slack, ASCENDING
+   cases needing a repair: 45
+   forced terms per such case: median 3 of 1923 dropped (0.16%)
+   DEEPEST forced term's percentile in the margin order:
+      p10 1.7%   p50 8.0%   p90 24.8%   max 57.5%
+      force-keeping the smallest-margin  1% would pre-empt 2/45 repairs (4%)
+      force-keeping the smallest-margin  2% would pre-empt 6/45 repairs (13%)
+      force-keeping the smallest-margin  5% would pre-empt 10/45 repairs (22%)
+      force-keeping the smallest-margin 10% would pre-empt 29/45 repairs (64%)
+      force-keeping the smallest-margin 20% would pre-empt 39/45 repairs (87%)
+      force-keeping the smallest-margin 50% would pre-empt 44/45 repairs (98%)
+L247_DONE
