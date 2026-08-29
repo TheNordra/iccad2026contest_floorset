@@ -1,0 +1,5 @@
+s1/full exit=0  SAfallback=0   feasible 240/240  weighted cost 1.435462 
+s1/thin exit=0  SAfallback=0   feasible 240/240  weighted cost 1.475100 
+s2/full exit=0  SAfallback=0   feasible 240/240  weighted cost 1.436705 
+s2/thin exit=0  SAfallback=0   feasible 240/240  weighted cost 1.473432 
+L192_THIN_OOS_DONE

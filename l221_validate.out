@@ -1,0 +1,10 @@
+=== L221 timing repeat  2026-08-25T07:51:02Z ===
+repeat REFINE=4 exit=0  records=5100
+repeat REFINE=2 exit=0  records=5100
+
+=== L221 OOS quality, REFINE=2 on n>100  2026-08-25T07:56:41Z ===
+Terminated                 env ICCAD_ROUTE_A=0 ICCAD_OOS_OPT=optimizer_l205probe L219_REFINE_HEAVY=2 "$PY" -u l140_oos_soft_audit.py run --sample "$S" --cores 48 --out "l221_${S}_r2.json" > "l221_${S}_r2.log" 2>&1
+s1/R2 exit=143  probe_module=1  SAfallback=0
+s2/R2 exit=0  probe_module=1  SAfallback=0
+C:\Users\.01\anaconda3\envs\floorset\python.exe: can't open file 'C:\\ICCAD_ml\\ship_final\\l221_score.py': [Errno 2] No such file or directory
+L221_DONE

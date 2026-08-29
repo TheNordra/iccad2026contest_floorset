@@ -1,0 +1,12 @@
+== L346 scan: 9000 shards ==
+   1000/9000 shards  21s  22624 heavy layouts so far
+   2000/9000 shards  42s  46032 heavy layouts so far
+   3000/9000 shards  63s  71008 heavy layouts so far
+   4000/9000 shards  84s  93520 heavy layouts so far
+   5000/9000 shards  105s  114912 heavy layouts so far
+   6000/9000 shards  126s  136528 heavy layouts so far
+   7000/9000 shards  146s  157136 heavy layouts so far
+   8000/9000 shards  167s  180320 heavy layouts so far
+   9000/9000 shards  188s  201264 heavy layouts so far
+   done in 188s -> l346_index.pkl   201264 layouts with n >= 101
+   total layouts scanned: 1008000   n range 21..120

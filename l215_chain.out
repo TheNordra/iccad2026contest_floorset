@@ -1,0 +1,83 @@
+=== L214 in-set gates, pool drop ON  2026-08-25T03:59:03Z ===
+det1 exit=0  LPran=63  SAfallback=0  scipy=1
+det2 exit=0  LPran=63  SAfallback=0  scipy=1
+gateoff exit=0  LPran=100  SAfallback=0  scipy=1
+k1 exit=0  LPran=63  SAfallback=0  scipy=1
+l147off exit=0  LPran=63  SAfallback=0  scipy=1
+hboff exit=0  LPran=63  SAfallback=0  scipy=1
+l214_gates.sh: line 64: ../l214_lpoff_stats.txt: No such file or directory
+lpoff exit=0  LPran=0  SAfallback=0  scipy=1
+l147off_gateoff exit=0  LPran=100  SAfallback=0  scipy=1
+pooldropoff exit=0  LPran=63  SAfallback=0  scipy=1
+L214_GATES_DONE
+
+=== L214 verdict ===
+========================================================================
+L199 -- in-set gates, L196 tree (depth {1: 100}, LP gate 63 on / 37 off)
+========================================================================
+G1 determinism    cost 100/100  positions 100/100   PASS
+G2a L147 hatch   58/63 identical to results_L165_l147off.json on the block counts the gate KEEPS   FAIL
+G2b skipped==no-LP 37/37 identical to the lpoff arm on the block counts the gate DROPS   PASS
+G2c L147+gateoff 88/100 identical to results_L165_l147off.json   FAIL
+G3 gate fired    default   LP ran on  63 block counts   set == table: YES
+                 LP_GATE=0  LP ran on 100 block counts   == all 100: YES
+                 SHAPE_LP=0 LP ran on   0 block counts   == none:    YES
+                 PASS
+                 n>100 with the LP on: 8 (s=1.0 keeps only 2)
+G4 map is flat    cost 100/100  positions 100/100   PASS
+                 passes spent {1: 63}   (all-1s map => must be {1: N})   PASS
+                 DEPTH2=0 is a no-op here BY CONSTRUCTION -- that is the assertion, not a null result.
+G5 feasibility   100/100 in all 7 arms   PASS
+G6 gate cost       -3.3630%   37 moved (0 better / 37 worse) of 100
+                 vs the ungated LP. Negative is EXPECTED: the gate trades quality for wall.
+G7 LP value        +1.6583%   62 moved (61 better / 1 worse) of 100
+                 the whole gated LP, vs no LP at all. Must be > 0.
+G8 hb predictor    +0.0314%   57 moved (44 better / 13 worse) of 100
+                 L171 on THIS configuration. It read -0.0512% on L172's map.
+G10 pool drop    kill switch 100/100 identical to results_L209_det1.json   PASS
+                 default moves 12 cases vs it (measured 12)   PASS
+                 table: 100 block counts x 8 profiles   PASS
+------------------------------------------------------------------------
+   cross-session: det1 vs _l198_gateon.json  cost 88/100  DIFFERS
+========================================================================
+VERDICT: FAIL G2
+
+=== L215 Linux lanes  2026-08-25T04:21:42Z ===
+L215_WSL_RC=0
+   tar md5:        2683751f6e8458c449175fcaa2c649fe
+   op_wrapper md5: 09faf9b39514270c144f77c4743e6b86
+   _L157_DEPTH hits: 4   _L196_LPGATE hits: 3   _LP_HB_K hits: 2
+   staged dir md5: 09faf9b39514270c144f77c4743e6b86   (tar must equal the staged tree, not a constant)
+   _L211_POOLDROP hits in the tar: 4 (the L211/L213 pool drop)
+   LP gate  in the tar: {0: 37, 1: 63}  OK
+########## LANE 1 -- 48c, LP off: the Linux pre-LP base ##########
+L117 LINUX-VERIFY [final48/t_lpoff]: PASS
+LANE1_RC=0
+########## LANE 2 -- 48c, kill switch: the pre-L147 band ##########
+   LP liveness: 63/100 cases entered the LP; the shipped gate selects 63 of 100
+   LP gate: OK -- ran on exactly the 63 selected block counts, skipped 37
+L117 LINUX-VERIFY [final48/t_off]: PASS
+LANE2_RC=0
+   budget = 0.100155439
+########## LANE 3 -- 48c, THE SHIPPED DEFAULT, nothing set ##########
+   LP liveness: 63/100 cases entered the LP; the shipped gate selects 63 of 100
+   LP gate: OK -- ran on exactly the 63 selected block counts, skipped 37
+   feasible 100/100   regressions vs pre-LP 1 (budget 0.100155 -> 0 over)
+L117 LINUX-VERIFY [final48/t_ship]: PASS
+LANE3_RC=0
+########## LANE 4 -- DETERMINISM: the same run again ##########
+   LP liveness: 63/100 cases entered the LP; the shipped gate selects 63 of 100
+   LP gate: OK -- ran on exactly the 63 selected block counts, skipped 37
+L117 LINUX-VERIFY [final48/t_ship2]: PASS
+LANE4_RC=0
+   DETERMINISM on Linux: cost 100/100  positions 100/100  PASS
+########## LANE 5 -- THE GATE IS LIVE ON LINUX ##########
+   env override: ICCAD_LP_GATE=0
+   LP liveness: 100/100 cases entered the LP, kept 99/100
+L117 LINUX-VERIFY [final48/t_gateoff]: PASS
+LANE5_RC=0
+   LP executions: default 63   ICCAD_LP_GATE=0 100   (expect 63 / 100)
+   GATE LIVENESS on Linux: PASS
+   gate SET on Linux: default=={table 1s} True   gateoff==all True   PASS
+LANE5_SET_RC=0
+L215_CHAIN_DONE 2026-08-25T04:34:07Z

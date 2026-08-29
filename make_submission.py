@@ -144,9 +144,9 @@ _FORBIDDEN_EXT = {".pkl", ".json", ".log", ".exe", ".pyc"}
 # Absolute-path scan: the m48 phase-4 pattern family (a broader [A-Za-z]:
 # drive class false-positives on ":\n" escape sequences in f-strings).
 _ABS_RE = re.compile(r"[Cc]:[\\/]|/home/|/Users/")
-# The single allowed absolute path: the nt-gated msys compiler candidate
-# (M67-A; dead code on the POSIX grader, load-bearing for Windows dev).
-_ABS_ALLOW = r"C:\msys64\ucrt64\bin\g++.exe"
+# No allowance list: ANY absolute path in a shipped text file is a hard error.
+# The nt-gated msys compiler candidate used to be exempted here; it was removed
+# from the source instead, because the checklist scans text, not reachability.
 
 _README = """# ICCAD 2026 Problem C -- team cadc1075
 
@@ -343,7 +343,7 @@ def _hygiene(stage: Path, expected: set) -> list:
         if Path(f).suffix not in _TEXT_EXT:
             continue
         for ln, line in enumerate((stage / f).read_text(encoding="utf-8").splitlines(), 1):
-            if _ABS_RE.search(line) and _ABS_ALLOW not in line:
+            if _ABS_RE.search(line):
                 errs.append(f"absolute path in {f}:{ln}: {line.strip()[:90]}")
     return errs
 

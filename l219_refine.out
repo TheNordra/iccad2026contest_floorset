@@ -1,0 +1,23 @@
+=== L219 REFINE sweep on n>100  2026-08-25T07:33:03Z ===
+REFINE=4 exit=0  records=5100
+REFINE=3 exit=0  records=5100
+REFINE=2 exit=0  records=5100
+REFINE=1 exit=0  records=5100
+==================================================================================
+REFINE on n>100: quality MEASURED, wall MEASURED, phi MEASURED
+==================================================================================
+  REFINE    quality   movedprof wall n>100        NET    graded  rank
+----------------------------------------------------------------------------------
+       4   +0.0000%       0       +0.00%    +1.260%   0.91491     4
+       3   +0.0898%       1       +4.59%    +1.603%   0.91173     4
+       2   +0.0965%       2      +21.52%    +3.723%   0.89209     3
+       1   +0.0716%       2      +21.77%    +2.814%   0.90051     4
+----------------------------------------------------------------------------------
+quality is the in-set delta x2.41, the OOS amplification measured for the pool drop.
+REFINE=4 is the shipped band, so its row is the reference (0 by construction).
+For comparison: pool drop shipped +1.838%, targeted +2.415%, oracle ceiling +2.773%.
+r3 = 0.89933 needs NET >= 2.942%
+
+!! The two knobs are NOT additive -- both shorten the same max-setter.
+   A positive row here licenses a JOINT re-derivation, not a sum.
+L219_DONE

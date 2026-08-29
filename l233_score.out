@@ -1,0 +1,21 @@
+s1: 240 cases in common (base 240 / treat 240)
+    infeasible base 0  treat 0   PASS
+    out-of-band movers (must be 0): 0   PASS
+    OOS quality -0.0026%   moved 14 / 240   worse 9
+s2: 240 cases in common (base 240 / treat 240)
+    infeasible base 0  treat 0   PASS
+    out-of-band movers (must be 0): 0   PASS
+    OOS quality -0.0505%   moved 19 / 240   worse 12
+
+mean OOS quality delta -0.0265%   (in set it was +0.0003%)
+mid-band wall cut +21.20%  x PHI 0.821  (flat, un-de-biased = the conservative direction)
+
+configuration                                      NET    graded  rank
+----------------------------------------------------------------------
+shipped (mid 6, gate 63)                       +4.271%   0.88701     2
+L234 (mid 2, gate 71 on)                       +5.026%   0.88001     2
+----------------------------------------------------------------------
+gate adds: [62, 72, 74, 90, 102, 103, 106, 119]
+delta +0.755 pp   bar 0.30 pp   margin over r2 (0.888187) +0.882 pp
+
+L233_VERDICT=GO

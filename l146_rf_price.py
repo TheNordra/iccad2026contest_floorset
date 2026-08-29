@@ -47,12 +47,37 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics as st
 import sys
 from pathlib import Path
 
 _DIR = Path(__file__).parent
-CSV = Path("C:/Users/.01/Downloads/C_median_runtimes_beta_hidden.csv")
+
+
+def _median_csv():
+    """The published per-case medians.
+
+    Was hardcoded to one machine's Downloads folder, which made every RF number
+    in this tree unreproducible by anyone else (HackMD review C). Repo copy
+    first, then $ICCAD_MEDIAN_CSV, then the historical Downloads location so
+    existing checkouts keep working.
+    """
+    name = "C_median_runtimes_beta_hidden.csv"
+    for p in (_DIR / name, _DIR / "beta_2026-08-16" / name):
+        if p.exists():
+            return p
+    if os.environ.get("ICCAD_MEDIAN_CSV"):
+        return Path(os.environ["ICCAD_MEDIAN_CSV"])
+    home = Path.home() / "Downloads" / name
+    if home.exists():
+        return home
+    raise SystemExit(
+        f"{name} not found. Put it next to this script, or set "
+        f"ICCAD_MEDIAN_CSV=/path/to/{name}")
+
+
+CSV = _median_csv()
 BETA = _DIR / "beta_2026-08-16" / "beta_evaluation_results.json"
 THR = 0.7 ** (1 / 0.3)            # t/M at which RF leaves the floor: 0.3045515...
 

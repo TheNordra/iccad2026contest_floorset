@@ -1,0 +1,62 @@
+[scipy] source=system
+[index] scanning 900 files in worker_0..9 (one-time, cached) ...
+[index]   200/900 (1s)
+[index]   400/900 (1s)
+[index]   600/900 (2s)
+[index]   800/900 (2s)
+=== n=120 profile=96  RUIN=0.12 STEP=0.99 ITERS=40 ===
+   L256DBG enter N=120 best_fw=125.245 best_fh=324 score=347296.8299
+   L256DBG floors fw>=99 fh>=324 (have 125.245 x 324)
+   L256DBG step=0 items=99 ruin=10 frac=0.1728 fw=125.245->123.993
+   L256DBG   repack ok  s2=346919.5032 cur=347296.8299  ACCEPT
+   L256DBG step=1 items=99 ruin=11 frac=0.1815 fw=123.993->122.753
+   L256DBG   repack ok  s2=346542.1982 cur=346919.5032  ACCEPT
+   L256DBG step=2 items=99 ruin=10 frac=0.1630 fw=122.753->121.525
+   L256DBG stop: repack FAILED
+
+=== n=120 profile=92  RUIN=0.12 STEP=0.99 ITERS=40 ===
+   L256DBG enter N=120 best_fw=145.28 best_fh=264.146 score=345143.3889
+   L256DBG floors fw>=85 fh>=216 (have 145.28 x 264.146)
+   L256DBG step=0 items=99 ruin=22 frac=0.3221 fw=145.28->143.827
+   L256DBG stop: repack FAILED
+
+=== n=120 profile=90  RUIN=0.12 STEP=0.99 ITERS=40 ===
+   L256DBG enter N=120 best_fw=140.154 best_fh=335 score=353497.319
+   L256DBG floors fw>=53 fh>=335 (have 140.154 x 335)
+   L256DBG step=0 items=98 ruin=15 frac=0.1617 fw=140.154->138.753
+   L256DBG   repack ok  s2=353028.4688 cur=353497.319  ACCEPT
+   L256DBG step=1 items=98 ruin=15 frac=0.1617 fw=138.753->137.365
+   L256DBG   repack ok  s2=352565.7551 cur=353028.4688  ACCEPT
+   L256DBG step=2 items=98 ruin=17 frac=0.1926 fw=137.365->135.992
+   L256DBG   repack ok  s2=352105.9847 cur=352565.7551  ACCEPT
+   L256DBG step=3 items=98 ruin=15 frac=0.1617 fw=135.992->134.632
+   L256DBG   repack ok  s2=351651.2663 cur=352105.9847  ACCEPT
+   L256DBG step=4 items=98 ruin=16 frac=0.1679 fw=134.632->133.285
+   L256DBG   repack ok  s2=351200.9767 cur=351651.2663  ACCEPT
+   L256DBG step=5 items=98 ruin=16 frac=0.1771 fw=133.285->131.953
+   L256DBG   repack ok  s2=350755.7861 cur=351200.9767  ACCEPT
+   L256DBG step=6 items=98 ruin=15 frac=0.1617 fw=131.953->130.633
+   L256DBG   repack ok  s2=350312.1293 cur=350755.7861  ACCEPT
+   L256DBG step=7 items=98 ruin=18 frac=0.1887 fw=130.633->129.327
+   L256DBG   repack ok  s2=349874.7167 cur=350312.1293  ACCEPT
+   L256DBG step=8 items=98 ruin=16 frac=0.1739 fw=129.327->128.033
+   L256DBG   repack ok  s2=349442.3677 cur=349874.7167  ACCEPT
+   L256DBG step=9 items=98 ruin=15 frac=0.1617 fw=128.033->126.753
+   L256DBG   repack ok  s2=349015.8453 cur=349442.3677  ACCEPT
+   L256DBG step=10 items=98 ruin=17 frac=0.1718 fw=126.753->125.486
+   L256DBG   repack ok  s2=348590.1871 cur=349015.8453  ACCEPT
+   L256DBG step=11 items=98 ruin=18 frac=0.1794 fw=125.486->124.231
+   L256DBG stop: repack FAILED
+
+=== n=120 profile=99  RUIN=0.12 STEP=0.99 ITERS=40 ===
+   L256DBG enter N=120 best_fw=160.398 best_fh=304 score=648792.6312
+   L256DBG floors fw>=125 fh>=304 (have 160.398 x 304)
+   L256DBG step=0 items=95 ruin=11 frac=0.1733 fw=160.398->158.794
+   L256DBG   repack ok  s2=798310.2849 cur=648792.6312  reject
+
+=== n=119 profile=96  RUIN=0.12 STEP=0.99 ITERS=40 ===
+   L256DBG enter N=119 best_fw=120.668 best_fh=365.661 score=194180.4675
+   L256DBG floors fw>=79 fh>=290 (have 120.668 x 365.661)
+   L256DBG step=0 items=96 ruin=20 frac=0.3227 fw=120.668->119.462
+   L256DBG stop: repack FAILED
+

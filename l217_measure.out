@@ -1,0 +1,26 @@
+=== L217 in set  2026-08-25T07:15:28Z ===
+inset exit=0  table=1
+
+=== L217 OOS  2026-08-25T07:18:04Z ===
+s1/tgt exit=0  probe_module=1  drop_table=1  SAfallback=0
+s2/tgt exit=0  probe_module=1  drop_table=1  SAfallback=0
+==============================================================================
+L217 targeted shape: 38 of 100 block counts get a drop, 405 total (shipped: 100 / 800)
+==============================================================================
+IN SET  vs no drop (L209)        quality -0.1201%   5 moved / 5 worse
+IN SET  vs uniform k=8 (L214)    quality +0.0041%   7 moved / 0 worse
+------------------------------------------------------------------------------
+OOS s1    quality/n -0.3240% vs no drop   29 moved   vs uniform k=8: +0.0610%
+OOS s2    quality/n -0.6006% vs no drop   27 moved   vs uniform k=8: -0.3873%
+------------------------------------------------------------------------------
+mean OOS quality cost: -0.4623%
+uniform k=8 was      : -0.2989%   (for a smaller RF gain)
+
+MODELLED NET: targeted +2.190% vs shipped +1.692% vs no drop +1.260%.
+The RF half of that is a model; this file measures the quality
+half. Substituting the measured cost for the modelled -0.2993%:
+   NET +2.027%
+
+SHIP TEST: both samples same sign, 0 infeasible, and the NET
+above still ahead of the shipped +1.692%.
+L217_DONE

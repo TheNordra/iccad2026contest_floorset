@@ -1,0 +1,5 @@
+s1/twins exit=0  SAfallback=0   feasible 240/240  weighted cost 1.427177 
+s1/notwins exit=0  SAfallback=0   feasible 240/240  weighted cost 1.440270 
+s2/twins exit=0  SAfallback=0   feasible 240/240  weighted cost 1.430123 
+s2/notwins exit=0  SAfallback=0   feasible 240/240  weighted cost 1.436208 
+L186_TWIN_OOS_DONE

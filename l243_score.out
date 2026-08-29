@@ -1,0 +1,15 @@
+s1: 240 cases  infeasible 0/0  quality +0.0002%  moved 30  worse 4
+s2: 240 cases  infeasible 0/0  quality +0.0240%  moved 30  worse 10
+
+mean OOS quality +0.0121%   both samples same sign: True
+
+configuration                                 NET    graded  rank
+------------------------------------------------------------------
+rb=0.7200  shipped                        +5.577%   0.87492     2
+rb=0.7200  + devex (RF and quality)       +5.605%   0.87466     2   +0.028 pp
+rb=0.7682  shipped                        +5.224%   0.87819     2
+rb=0.7682  + devex (RF and quality)       +5.288%   0.87759     2   +0.064 pp
+rb=0.8200  shipped                        +4.656%   0.88344     2
+rb=0.8200  + devex (RF and quality)       +4.719%   0.88286     2   +0.063 pp
+------------------------------------------------------------------
+L243_VERDICT=GO

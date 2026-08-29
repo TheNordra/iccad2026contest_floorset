@@ -1,0 +1,5 @@
+=== L229 G2 anchor arm  2026-08-25T10:27:30Z ===
+l147off_gateoff_r4 exit=0  LPran=100 (expect 100)
+G2c'' L147 + gateoff + REFINE=4 vs results_L165_l147off.json: 100/100   PASS
+      (the hatch in the anchor's OWN configuration: no gate, no L223 band)
+L229_DONE

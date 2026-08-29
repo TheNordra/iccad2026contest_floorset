@@ -1,0 +1,23 @@
+﻿cores  case   runtime_s  n
+4      99     38.416     120
+4      93     30.379     114
+8      99     20.273     120
+8      93     16.207     114
+16     99     11.250     120
+16     93     9.622      114
+powershell : Exception setting "ProcessorAffinity": "The parameter is incorrect"
+At line:1 char:302
++ ... tch {} } }; powershell -NoProfile -ExecutionPolicy Bypass -File C:\IC ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Exception setti...r is incorrect":String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+At C:\ICCAD_ml\ship_final\l173_cores.ps1:32 char:3
++   $self.ProcessorAffinity = [IntPtr]$mask
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [], SetValueInvocationException
+    + FullyQualifiedErrorId : ExceptionWhenSetting
+ 
+32     99     11.314     120
+32     93     10.116     114
+L173_CORES_DONE

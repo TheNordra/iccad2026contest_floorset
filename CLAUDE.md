@@ -20,7 +20,7 @@
 
 > 🚨 **本節 08-19 大改。此前寫的「M80 包只剩 Drive 覆蓋」「deadline 08-21」全部作廢。**
 
-- 🗓️ **Final deadline = 2026-08-28**（組員 `HANDOFF_2026-08-17.md` 記錄延期）。
+- 🗓️ **Final deadline = 2026-08-31 23:59 GMT+8**（主辦澄清信：延期**只適用 Problem C**；ABC 通用的 `Final Submission Guidelines_ABC.pdf` 寫 08-28 17:00，對我們已被取代。證據鏈見 `DEADLINE_PRIMARY_EVIDENCE.md`）。
 - 📦 **Drive 上的 Final 是組員的 L136，不是我們的 M80**。組員（Chingching LIN）在
   `main.nrd/l113-route-a` 從我們的 M80（`2aae61c`）做了 45 個 commit（L113→L139），
   **2026-08-16 自行上傳**。**主辦每隊發 Alpha/Beta/Final 三個獨立資料夾** ⇒ 從來不需要覆蓋，
@@ -99,7 +99,7 @@
 - OOS 240 案：**48c 評分機形狀 ALL −2.068%（71 好 / 5 壞）**、mid −0.583%。⚠️ 其中 n>100 的 −2.238% 是對「舊常數 @16 核」比的；真 48 核上舊常數也會由 tier-5 還原同一組 35 隻 pool ⇒ **重帶在評分機上新舊相同**，48c 的真增益 = mid 的 −0.583%。
 - 副產物（長期價值）：cache 簽章現在釘 **exe md5 + overlay 常數**。舊簽章只有 `repr(_PROFILES)`，所以 07-10 的 cache 對上 07-29 的 M71 exe 完全偵測不到，**所有離線 gate 一直在量 pre-M71 的 placer**（`profile_audit` / `m49_refine_probe` 都漏了 `_m71_env()`）。
 
-### 📦 送件狀態（**Final deadline 2026-08-28**）
+### 📦 送件狀態（**Final deadline 2026-08-31 23:59 GMT+8**）
 
 **✅ Drive 上已經有一顆 Final = 組員的 L136（2026-08-16 上傳，我方 08-19 逐位複驗過）。
 不做任何事也有分。** 身分（git 內可復原，`build_submission.L136FIX/`）：
@@ -228,7 +228,7 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
    上刪掉 12/22 案的 winner**，in-set 的 0/41 純屬 by construction）；
    **`ICCAD_ANCHOR_W` 掃參**（L137 全部增益來自修語意，掃權重是在兩個座標系 bug 上擬合雜訊）。
 
-> 🗓️ **Final deadline = 2026-08-28**。
+> 🗓️ **Final deadline = 2026-08-31 23:59 GMT+8**（Problem C 專屬延期，見 `DEADLINE_PRIMARY_EVIDENCE.md`）。
 > 📋 **每個 session 開始前**：`git fetch main.nrd` 看組員的 `l113-route-a`
 > （他們現在推**我們這個 repo**，不是舊的 `teammate_iccad_study`），再讀最新的 `HANDOFF_*.md`。
 

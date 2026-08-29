@@ -1,0 +1,21 @@
+=== L224 uncontended REFINE=2  2026-08-25T09:04:55Z ===
+seq R=2 exit=0  records=5100 (expect 5100)
+[scipy] source=system
+==============================================================================
+UNCONTENDED REFINE 4 -> 2
+  band cut n>100 : +27.57%   (contended single pair read +21.52%)
+  CONTROL n<=100 : -0.89%   (must be ~0; REFINE untouched there)
+  per block count: p10 +23.85%  median +27.42%  p90 +30.99%
+==============================================================================
+configuration                   quality        NET    graded  rank
+----------------------------------------------------------------------
+today (k=0, R=4)               +0.0000%    +1.260%   0.91491     4
+pool drop k=8 only             -0.2989%    +1.613%   0.91164     4
+REFINE=2 only                  +0.0400%    +4.483%   0.88504     2
+k=8 + REFINE=2                 -0.1416%    +4.305%   0.88669     2
+----------------------------------------------------------------------
+r3 = 0.89933   r2 = 0.88819
+
+!! quality for the two REFINE rows is still IN SET. L223's OOS runs
+   are what decide them; this file only fixes the WALL half.
+L224_DONE

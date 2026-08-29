@@ -185,4 +185,4 @@ proxy 逐案挑贏家，然後對其中 71 個 block count 跑一次 shape LP �
 兩個 kill switch：`ICCAD_L223_REFINE_HEAVY`、`ICCAD_L231_REFINE_MID`。
 
 投影：NET +5.224% vs 我們的 beta，graded **0.87818**，**rank 2**，
-距 rank-2 門檻（0.888187）餘裕 **1.08 pp**。
+距 rank-2 門檻（0.888187391）餘裕 **1.00 pp**。

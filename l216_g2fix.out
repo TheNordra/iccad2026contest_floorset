@@ -1,0 +1,6 @@
+=== L216 G2 anchor arm  2026-08-25T04:34:15Z ===
+l147off_gateoff_nodrop exit=0  LPran=100 (expect 100)
+G2c' L147+gateoff+nodrop vs results_L165_l147off.json: 100/100   PASS
+     (the hatch tested in the anchor's own pool configuration; the
+      L214 g2c arm carries the pool drop and cannot be compared to it)
+L216_DONE

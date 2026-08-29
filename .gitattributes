@@ -1,3 +1,11 @@
+# 2026-08-28 (HackMD review G): the rules below were added ONE PATH AT A TIME,
+# five times, each after a new package directory appeared. build_submission.MIX
+# and build_submission.SHIPPED.bak were never covered, and any future
+# build_submission.E would not be either -- the trap re-arms itself every time
+# the package moves. This glob covers every current and future variant, so the
+# per-path rules below are now redundant (kept only for their reasoning).
+build_submission*/** -text
+
 # core.autocrlf is true in this repo, so a checkout on Windows rewrites LF to
 # CRLF in the working tree. For most files that is harmless. For the submission
 # package it is not: the package's IDENTITY is op_wrapper.py's md5 (the tar's own

@@ -1,0 +1,23 @@
+=== L220 additivity probe  2026-08-25T07:44:15Z ===
+k=8 R=2 exit=0  drop_table=1  records=4300
+k=16 R=2 exit=0  drop_table=1  records=3500
+k=8 R=1 exit=0  drop_table=1  records=4300
+==============================================================================
+ADDITIVITY of the two runtime knobs, per block count
+==============================================================================
+     k    R   predicted    measured       errorn mismatch
+------------------------------------------------------------------------------
+     8    2    1.240601    1.241313    -0.0574%     1/100
+    16    2    1.243336    1.244048    -0.0572%     1/100
+     8    1    1.240729    1.242550    -0.1466%     2/100
+------------------------------------------------------------------------------
+NOT ADDITIVE. The marginals cannot be mixed across knobs, so a
+joint table built from them would be fiction. Either run the
+full 6x4 grid (l220_grid.sh, ~66 min) or restrict the joint
+search to the (k, R) pairs actually measured.
+
+Note the weighted error column: a small weighted error with many
+per-case mismatches means the interaction exists but is not
+weighted where it matters -- that is a REASON TO MEASURE the
+chosen pair, not a licence to mix.
+L220_DONE

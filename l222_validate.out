@@ -1,0 +1,10 @@
+=== L222 joint timing repeats  2026-08-25T08:11:11Z ===
+repeat 2 exit=0  drop_table=1  records=4300
+repeat 3 exit=0  drop_table=1  records=4300
+baseline repeat 2 exit=0  records=5100
+baseline repeat 3 exit=0  records=5100
+
+=== L222 OOS, k=8 + REFINE=2  2026-08-25T08:27:22Z ===
+s1 exit=0  probe_module=1  drop_table=1  SAfallback=0
+s2 exit=0  probe_module=1  drop_table=1  SAfallback=0
+L222_DONE

@@ -1,0 +1,18 @@
+arm              case   runtime_s 
+default          99     8.433 120
+default          96     8.514 117
+default          93     7.970 114
+default          90     5.077 111
+nom80            99     6.497 120
+nom80            96     7.628 117
+nom80            93     7.129 114
+nom80            90     3.658 111
+nom80_not5       99     4.755 120
+nom80_not5       96     4.226 117
+nom80_not5       93     4.441 114
+nom80_not5       90     3.163 111
+nopool           99     12.652 120
+nopool           96     11.473 117
+nopool           93     10.895 114
+nopool           90     9.947 111
+L173_ATTRIB_DONE

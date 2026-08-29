@@ -1,0 +1,5 @@
+pre-LP base  results_l117_t_lpoff.json              1.258765435634048
+control      results_l117_t_off.json                1.247133618964914   +0.9241%
+  control regressions vs base: 0
+
+BUDGET 0.000000000

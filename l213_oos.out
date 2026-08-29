@@ -1,0 +1,25 @@
+=== L213 OOS for the pool drop  2026-08-25T03:21:37Z ===
+s1/base exit=0  probe_module=1  drop_table=0  SAfallback=0
+s1/k8 exit=0  probe_module=1  drop_table=1  SAfallback=0
+s2/base exit=0  probe_module=1  drop_table=0  SAfallback=0
+s2/k8 exit=0  probe_module=1  drop_table=1  SAfallback=0
+==============================================================================
+L213 -- pool drop k=8, OUT OF SAMPLE
+==============================================================================
+  sample  cases  quality/case     quality/n     moved     worse
+------------------------------------------------------------------------------
+      s1    240      -0.3894%      -0.3852%        49        42
+      s2    240      -0.1842%      -0.2125%        38        31
+------------------------------------------------------------------------------
+mean OOS quality (per-n): -0.2989%
+in-set was              : -0.1242%
+OOS / in-set            : 2.41x   (amplified, as the thin pool did (1.9x))
+
+The wall it buys is unchanged by the corpus: -5.50% of case wall.
+l212 scored that at NET +2.305% with the in-set quality cost.
+Substituting the OOS cost: NET +2.130%
+
+SHIP TEST: both samples same sign, and the NET above still ahead
+of today's +1.260%. Either sample negative enough to sink it is
+a RED -- this mechanism has reversed out of sample twice before.
+L213_DONE

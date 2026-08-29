@@ -1,0 +1,12 @@
+
+=== L147 Gate 3: r15g vs ctrl, min of 3 ===
+
+per-case added time (s):  min -0.310  p50 +0.047  p90 +0.293  max +1.092  sum +9.67
+wall ratio (sum arm / sum ctrl):  1.0310x
+control's own run-to-run spread:  p50 2.8%  max 8.9%   (this is why min-of-3)
+
+quality (in-set, Gate 2)   +2.4995%
+  all cases    RF -0.9726%   permuted p50 -0.2335% / p05 -0.5785%   ->  NET +1.5269%
+  n>100 only   RF -0.7900%   permuted p50 -0.1075% / p05 -0.4584%   ->  NET +1.7095%
+
+GATE 3 (identity join, all cases): NET +1.5269%  -- bar is +0.80%  ->  PASS

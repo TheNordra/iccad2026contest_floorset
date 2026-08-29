@@ -1,0 +1,9 @@
+det1 exit=0  LPran=63  SAfallback=0  scipy=1
+det2 exit=0  LPran=63  SAfallback=0  scipy=1
+gateoff exit=0  LPran=100  SAfallback=0  scipy=1
+k1 exit=0  LPran=63  SAfallback=0  scipy=1
+l147off exit=0  LPran=63  SAfallback=0  scipy=1
+hboff exit=0  LPran=63  SAfallback=0  scipy=1
+l199_gates.sh: line 51: ../l199_lpoff_stats.txt: No such file or directory
+lpoff exit=0  LPran=0  SAfallback=0  scipy=1
+L199_GATES_DONE

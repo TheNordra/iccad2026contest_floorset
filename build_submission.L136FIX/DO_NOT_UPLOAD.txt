@@ -1,0 +1,17 @@
+DO NOT UPLOAD THE TAR IN THIS DIRECTORY.
+=========================================
+
+Eight directories on this tree contain a file called cadc1075.tar.gz.
+Only ONE of them is the submission.
+
+  this one : build_submission.L136FIX
+             op_wrapper.py md5 2967efb6876f70685a18e1a160644fdd
+  UPLOAD   : ../build_submission.RFSAFE/cadc1075.tar.gz
+             op_wrapper.py md5 62db6ee4569b31ddc8c546ccf3e7cd0b
+             409,589 bytes, 8 tar members, no vendor/
+
+  (build_submission.D is the PREVIOUS upload and the fallback -- still valid,
+   but superseded by RFSAFE as of 2026-08-28. See ../UPLOAD_THIS.md.)
+
+Identity is the op_wrapper.py md5, never the tar md5 (gzip embeds an mtime, so
+the tar md5 changes on every stage).

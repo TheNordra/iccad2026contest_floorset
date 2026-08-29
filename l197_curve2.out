@@ -1,0 +1,8 @@
+﻿cores  case   routeA_ON  routeA_OFF
+4      99     41.272     33.694      ratio 1.225
+4      93     29.859     22.086      ratio 1.352
+8      99     14.598     11.328      ratio 1.289
+8      93     13.566     8.409       ratio 1.613
+16     99     8.805      5.977       ratio 1.473
+16     93     7.074      4.422       ratio 1.600
+L197_ROUTEA_DONE

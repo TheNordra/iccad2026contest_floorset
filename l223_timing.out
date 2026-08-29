@@ -1,0 +1,17 @@
+==============================================================================
+repeats found: r4=3  r2=3  k8r2=3
+==============================================================================
+arm          wall n>100 CONTROL n<=100    quality        NET    graded  rank
+------------------------------------------------------------------------------
+r4               +0.00%         +0.00%   +0.0000%    +1.260%   0.91491     4
+r2              +27.23%         +4.06%   +0.0400%    +3.536%   0.89383     3
+k8r2            +36.96%        +19.75%   -0.1416%    +4.687%   0.88315     2
+------------------------------------------------------------------------------
+CONTROL is the residual noise after min-of-N: REFINE never changes
+below n=101, so anything it reads is the floor the verdict must
+clear. r3 = 0.89933   r2 = 0.88819
+
+!! quality is IN SET. The OOS runs are what decide this; M49 picked
+   REFINE=4 by a strictly selection-preserving derivation, so going
+   below it changes selections BY CONSTRUCTION and '2 movers in set'
+   is exactly the number this ledger has watched grow out of sample.

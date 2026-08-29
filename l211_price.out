@@ -1,0 +1,27 @@
+=== L211 pricing the pool drop  2026-08-25T03:05:54Z ===
+k0 exit=0
+k3 exit=0  table loaded=1
+k8 exit=0  table loaded=1
+k12 exit=0  table loaded=1
+==============================================================================
+K0 PROBE INERT: cost 100/100  positions 100/100   PASS
+==============================================================================
+   k   pool     quality     moved   prof wall          RF       NET
+------------------------------------------------------------------------------
+[scipy] source=system
+   3     48    -0.0232%      2/2        -4.17%     +0.889   +0.865
+   8     43    -0.1242%     12/12       -7.74%     +1.649   +1.525
+  12     39    -0.2438%     20/18       -9.41%     +2.004   +1.760
+------------------------------------------------------------------------------
+quality: + is BETTER. moved = a/b, b of them worse.
+prof wall: profile-phase only. RF applies M47's x0.71 tail and the
+           t^0.3 exponent. NET = quality + RF, both in points of score.
+
+Current NET vs beta is +1.260%; rank 3 needs +2.95% (graded 0.89933).
+Traceback (most recent call last):
+  File "C:\ICCAD_ml\ship_final\l211_score.py", line 131, in <module>
+    raise SystemExit(main())
+  File "C:\ICCAD_ml\ship_final\l211_score.py", line 124, in main
+    print("\u26a0\ufe0f IN-SET ONLY -- pool pruning is the exact mechanism that reversed")
+UnicodeEncodeError: 'cp950' codec can't encode character '\u26a0' in position 0: illegal multibyte sequence
+L211_DONE

@@ -68,3 +68,36 @@ eval_*.txt
 *_sweep_*.txt
 fcbnd_*.txt
 *_out.txt
+
+# --- 2026-08-29: caches, vendored trees and eval anchors stay out ---
+# 75 probe/sweep caches totalling ~1.0 GB; none was ever tracked. Several are
+# well over GitHub's 100 MB file limit (l306_capture 276 MB, m79_knob_cloud 182 MB),
+# so a blanket `git add -A` would have produced a push that cannot succeed.
+*.pkl
+*.pkl.*
+# Vendored wheels / quarantine / pip scratch (~240 MB, never shipped; `vendor/`
+# was additionally polluted by 262 .pyc, which is why stage() refuses to run).
+vendor/
+vendor_src/
+_quarantine/
+--no-deps/
+bin_out/
+_l136_linux/
+_l136_final/
+# Official-eval anchor JSONs (~373 MB). These are MEASUREMENTS, not source: the
+# offline gates read them, and the long-standing convention in this tree is that
+# they travel with the machine rather than the repo. Regenerate with
+# iccad2026_evaluate.py / l117_linux_verify.py.
+results_*.json
+l*_ship*.json
+l*_gate0*.json
+l*_oos*.json
+l*_linux*.json
+*.prof
+# Root-level probe output JSONs (per-case layout dumps, ~1.4 MB each). Same
+# category as the anchors above: measurements. Subdirectories are NOT ignored,
+# so beta_2026-08-16/ and beta_2026-08-23/ still go in -- the peer review's §C
+# asked for exactly those.
+/*.json
+# Stray file from a shell redirect to the Windows NUL device; git cannot index it.
+NUL
