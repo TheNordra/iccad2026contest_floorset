@@ -1,0 +1,44 @@
+# Alpha submission (archived 2026-09-10)
+
+**This file is not part of the submission.** It was added at close-out to record
+what the six files next to it are. Everything else in this directory is the Alpha
+artefact byte-for-byte, copied from `Downloads/ICCAD2026_FloorSet/alpha_test_submission/`,
+which was outside the repository and would have been lost when the machine was cleared.
+
+## What it scored
+
+Official Alpha result: **1.0286, rank 3**. That is `raw 1.4528` (the M10-era placer:
+`%.17g` output + compaction) multiplied by a cost-weighted RuntimeFactor of `0.7081`,
+i.e. essentially at the `max(0.7, R^0.3)` floor. The Alpha test set turned out to be
+bit-identical to the local validation set.
+
+## Identity
+
+```
+6d80cd4d55cce3a6093cdd80d5c18917  constructive.cpp
+4c9d477a5b2a87ff7153a5ff6209ee98  floorplan_gnn.pth
+c0a889cc9cc9ddba47289068c755fd49  my_optimizer.py
+9f35dfcb018a8fd481126091582441d4  optimizer_claude.cpp
+468a0afbb1995e3d6b59cd0b01bc7180  optimizer_claude.py
+b70b0d8110080a995fbd9e3e6715dea5  requirements.txt
+```
+
+`alpha_test_submission/** -text` in `.gitattributes` keeps these byte-exact across
+checkouts, for the same reason `build_submission/**` has that rule: core.autocrlf is
+true in this repo and a CRLF rewrite would change every md5 while looking correct.
+
+## How it differs from the Final packages
+
+* **Entry point is `my_optimizer.py`**, not `op_wrapper.py`. The organisers renamed the
+  required entry between rounds; the Final packages all use `op_wrapper.py`.
+* **`floorplan_gnn.pth` is dead weight.** It is a leftover from the GNN line that the
+  ML ledger later closed. Shipping an unused binary became an explicit DQ risk in the
+  Final rules ("no unused large binaries"), which is why no later package carries it.
+* **`requirements.txt` lists matplotlib / tqdm / requests and no scipy.** The Final
+  list is `torch / numpy / shapely / scipy`, because the LP arrived at L114 and the
+  organisers' Beta report named scipy directly.
+* **No `bin/constructive_linux`.** Alpha compiled `constructive.cpp` on the grader;
+  the bundled-ELF-first layout only arrived at M67-C.
+
+`optimizer_claude.py` / `.cpp` are the older SA line, kept in the package as the
+fallback path of that era.

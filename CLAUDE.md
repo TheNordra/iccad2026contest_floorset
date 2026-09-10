@@ -183,8 +183,10 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 | `results_*.json` 錨檔、`*_stdout.txt` / `*.txt` 日誌 | ~50 MB | 離線 gate 的比較錨；**gate 不會再跑** |
 | `vk/`、`vk_linux/`、`build_submission.*BAK/` | ~530 MB | 一次性驗收暫存與已被取代的包 |
 
-> 唯一「不在 git、但真的有價值」的兩樣東西，**已由本 commit 收進 repo**：
-> `verify_kit/`（我方驗收鏈）與 `handover/`（08-28 的 absolute-path patch、08-29 的驗收報告）。
+> 「不在 git、但真的有價值」的三樣東西**已在結案時收進 repo**：`verify_kit/`（我方驗收鏈）、
+> `handover/`（08-28 的 absolute-path patch、08-29 的驗收報告），以及 `alpha_test_submission/`
+> （Alpha 那顆 1.0286 / rank 3 的包，原本躺在 repo 外的父目錄，逐位複製 + `-text` 釘住，
+> 來歷與六個 md5 見 `alpha_test_submission/README_ALPHA.md`）。
 
 ### 3. 若日後要重跑任何東西
 

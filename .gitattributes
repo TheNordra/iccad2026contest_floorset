@@ -26,3 +26,9 @@ build_submission.L136FIX/** -text
 # stray \r. The .patch is applied with `git apply`, which is equally unforgiving.
 verify_kit/*.sh text eol=lf
 handover/*.patch text eol=lf
+
+# Alpha submission (added at close-out, 2026-09-10). This is the artefact that
+# scored 1.0286 / rank 3; its identity is the per-file md5 recorded in
+# alpha_test_submission/README_ALPHA.md. Same reasoning as build_submission/:
+# a CRLF rewrite on checkout would hash differently while looking correct.
+alpha_test_submission/** -text
