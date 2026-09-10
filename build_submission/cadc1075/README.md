@@ -15,5 +15,13 @@ optimizer load time (outside the scored per-case window):
    accepted only after the same 1-block smoke test;
 3. pure-Python SA fallback (embedded in op_wrapper.py) if no binary runs.
 
-`requirements.txt` is intentionally empty: only torch / shapely / numpy from
-the official environment are used.
+`requirements.txt` lists every third-party package `op_wrapper.py` imports:
+torch, numpy, shapely, scipy. Floors match the contest's own
+`requirements.txt` so nothing here can force a version change in the
+evaluation environment; `scipy>=1.6.0` is the release that added the HiGHS
+backend this code asks for by name (`linprog(..., method="highs")`).
+
+scipy is used by one post-processing step (a shape LP over the selected
+layout). It is imported inside a try/except and the step is skipped entirely if
+scipy is absent, so the solver still produces valid, feasible layouts without
+it -- but the results are meaningfully better with it.

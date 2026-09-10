@@ -2,6 +2,10 @@
 
 > 本檔 2026-07-29 大幅精簡。**舊版完整敘述（每條 ledger 的逐案數字、probe 全文）留在 git commit `4e2eb42` 的 CLAUDE.md**，需要考古時 `git show 4e2eb42:CLAUDE.md`。證據本體在各 `MXX_REPORT.md` 與 memory。
 
+> 🏁 **2026-09-10 專案結案封存。** 比賽已結束（Final deadline 2026-08-31 23:59 GMT+8），
+> 出貨樹凍結於 08-30。本檔保留為**知識檔案**——ledger 與 doctrine 仍然有效，
+> 但每一句「待辦／待上傳／下一步」都是歷史敘述。結案摘要見「現況一句話」與「封存說明」。
+
 ## Claude 對話框規範
 - 聊天室語句**盡量精簡**、用**繁體中文**。
 
@@ -16,27 +20,29 @@
   （分解：hpwl_gap 歸零值 +10.15%、area_gap +6.00%、vrel +3.57%。）
 - 但 **reconstruction 本身 RED**（M40）：X 結構無法從 connectivity 還原、Y 序需 label。⇒ 走「更好的 placer / 更聰明的 portfolio」而非「還原」。
 
-### 現況一句話（2026-08-23，L161 驗證完畢）
+### 現況一句話（2026-09-10，**專案結案封存**）
 
-- 🗓️ **Final deadline = 2026-08-28**。**Drive 上目前那顆是組員 08-16 上傳的 L136**
-  （48c Linux `1.2284538948373953`）。**L161 包已備妥、待上傳。**
-- 🏆 **L161 = L147（面積切線割）+ L157/L160（選擇性 LP 深度）**，`l147-tangent-cut` 45→63 commit。
-  **只動 `optimizer_constructive.py`**；`constructive.cpp` 與 `bin/constructive_linux`
-  **md5 完全未變** ⇒ **不需要 Linux 重建**（卡了兩個 session 的那道牆這次不存在）。
-- **L147** = 把 LP 的面積帶（兩列）換成**下界切線割**（凸側可精確表示 ⇒ 不需要信賴域），
-  上界丟掉交給 `hard_ok` 裁決 + 對 block 自身面積計價。**這正是我方 `L122_REPORT` 判死的機制**
-  ——翻案理由不是新實作，是**主辦公布了 beta 逐案 median**，L122 的機速格點在模擬一個
-  現在已經被量掉的不確定性。
-- **L157/L160** = 第二個 LP pass **只花在 89 個 block count 上**（`_L157_NSET` 硬編、
-  不讀時鐘 ⇒ 逐位可重現）。**取代我方 L140 的「k=2 全開」**：品質差 0.1~0.3pp，
-  但離開 RF floor 的案 **10 → 2**。
-- 🚨 **RF 現在可精確計算**：主辦公布 `C_median_runtimes_beta_hidden.csv`
-  （**組員機器上，我們這台沒有**），重現 graded total 到 **2.4e-7**。
-  **M67-E 的 `M_i = 3.161·t_i^alpha` 不可用於逐案定價**（逐案比值散佈 0.217×–1.786×、
-  cwRF 差 800 倍）。**RF floor 是逐案的、不是單一全域預算**（slack 0.96×–3.91×，p50 1.74×）
-  ⇒ ledger 裡每一條「因 runtime 判死」的線都值得用這面鏡子重掃。
-- 📊 **Beta 排行榜**：我們 total 0.9245 = **rank 6/10**；**rank 1 跑 169s、RF 0.824、raw 1.0027**
-  ⇒ **領先者是「慢」的隊伍**，用 runtime 換品質正是這題的贏法。
+- 🏁 **比賽結束、樹已凍結。** Final deadline `2026-08-31 23:59 GMT+8`（Problem C 專屬延期，
+  證據鏈見 `DEADLINE_PRIMARY_EVIDENCE.md`）已過，出貨樹自 **08-30 23:59** 起不再變動。
+  ⇒ **本檔以下每一句「待上傳」「未出貨」「下一步」都是歷史敘述，不是待辦事項。**
+- 📦 **最終送件 = `cadc1075.tar.gz`**，走 Google Drive 每隊專屬的 `final_test_submission`
+  資料夾。逐顆包的身分與去向見「📦 送件狀態（結案）」。**身分一律看 `op_wrapper.py` 的
+  md5**——tar 自己的 md5 不可重現（gzip 內嵌 mtime，每次 stage 都變）。
+- 🌿 **權威分支是 `main.nrd/final-2026-08-29-rfsafe`**（GitHub `TheNordra/iccad2026contest_floorset`）。
+  **不是** `main`（停在 6 月的 M28）、**也不是**本分支 `l113-route-a`（停在 08-23 的 L161）。
+  三條線在 08-24 之後就分岔了，**沒有合併也不需要合併**——每一條各自是一顆已驗過的包的產地。
+- 📊 **最後一次拿到官方數字的是 Beta**：total `0.9245183670`、raw `1.3206649447`、
+  cost-weighted RF `0.7000400599`（貼在 floor）、100/100 feasible、52.07s、**rank 6/10**。
+  **Final 成績未知**；D 的 `0.87818` / rank 2 是我方投影，不是結果。
+- 🔑 **這個專案最可外推的三課**（證據在 ledger，這裡只留指針）：
+  (a) **兩個最大的近期增益都是「修語意」不是「找機制」**，而且都在浮點／容差那一層
+      ——M10 的 `%.17g`、L131 的 sub-ULP abutment、L136 的 `MARGIN` 比評分機 `TOL` 大一百倍。
+      查不明的 violation 先疑精度與容差常數。
+  (b) **in-sample 打平可以藏住 1.4% 的 OOS 差距**（M72）；strict in-sample gate 完全不保證
+      OOS（M74）；**「某旋鈕封卷」的結論只對單軸掃描成立**（M80：單獨死不代表聯合死）。
+  (c) **在已知答案上失敗的工具，它的輸出不算證據。** 最後一輪 LP 閘定價就是這樣被我方
+      自己證偽的（本機把 LP 算得太便宜，λ≈4.8）——同一課在 judge48、`l137_oos_ab`、
+      wall 差算出負的 LP 成本上各踩過一次。
 
 ## 目前狀態
 
@@ -63,73 +69,53 @@
 - OOS 240 案：**48c 評分機形狀 ALL −2.068%（71 好 / 5 壞）**、mid −0.583%。⚠️ 其中 n>100 的 −2.238% 是對「舊常數 @16 核」比的；真 48 核上舊常數也會由 tier-5 還原同一組 35 隻 pool ⇒ **重帶在評分機上新舊相同**，48c 的真增益 = mid 的 −0.583%。
 - 副產物（長期價值）：cache 簽章現在釘 **exe md5 + overlay 常數**。舊簽章只有 `repr(_PROFILES)`，所以 07-10 的 cache 對上 07-29 的 M71 exe 完全偵測不到，**所有離線 gate 一直在量 pre-M71 的 placer**（`profile_audit` / `m49_refine_probe` 都漏了 `_m71_env()`）。
 
-### 📦 送件狀態（**Final deadline 2026-08-28**）
+### 📦 送件狀態（**結案，2026-09-10**）
 
-**🏆 L161 包已備妥、Windows 全驗、待上傳。** Drive 上目前那顆是組員 08-16 上傳的 L136，
-**不上傳也有分**；上傳 L161 大約再賺 **2.6%**（Linux 側）。
+**身分一律看 `op_wrapper.py` 的 md5。** tar 的 md5 不可重現。
 
-| | L136（**Drive 上現況**） | **L161（待上傳）** |
-|---|---|---|
-| `op_wrapper.py` / `op_src.py` | `2967efb6876f70685a18e1a160644fdd` | **`af1c100da917fdf61c41b531a4a0607d`** |
-| `constructive.cpp` | `570ee27001df8c04afb07a8da4ecb1f2` | `3acca04c8db7279761c9bb20408c569d` |
-| `bin/constructive_linux` | `6d43cf2cbfd9e4d578cd692277a7f868` | `bc9912072cd97b45b47a03adec7170ce` |
-| **48c LINUX（評分的那個）** | `1.2284538948373953` | **`1.1964885214171022`** |
-| 48c Windows | `1.2284738198320346` | `1.191977686767963` |
-| 32c 預設 | `1.2772224039603648` | `1.2772224039603648`（**逐位相同 ⇒ 閘惰性**） |
+| 包 | 日期 | `op_wrapper.py` md5 | 48c Linux | 去向 |
+|---|---|---|---|---|
+| M73（Beta） | 07-30 | `c2e27c9993afd20b5c14934f6ceea8c3` | — | ✅ Beta 資料夾，官方 0.9245 / rank 6 |
+| L136 | 08-16 | `2967efb6876f70685a18e1a160644fdd` | `1.2284538948373953` | ✅ 曾上傳 Final，已被 D 取代 |
+| **L161** | 08-23 | `af1c100da917fdf61c41b531a4a0607d` | `1.1964885214171022` | ❌ **從未上傳**（= 本分支 `build_submission/`） |
+| **D** | 08-26 | `1c326784de7cd9246cd1f380e2842668` | `1.2264069637381392` | ✅ **已上傳 Final**，投影 graded `0.87818` / rank 2 |
+| **RF-SAFE** | 08-29 | `62db6ee4569b31ddc8c546ccf3e7cd0b` | `1.2178289924684162`（期望值） | 指定接替 D；我方驗收 **PASS**，實際上傳與否見下 |
 
-**L161 的 `constructive.cpp` 與 `bin/constructive_linux` 與 L137 完全相同、沒有改過**
-⇒ **不需要 Linux 重建**。備份：`build_submission.L136FIX/`（Drive 上那顆）、
-`build_submission.L140BAK/`（我方 L140，已作廢）。
+🚨 **不要用 in-set 數字判斷哪顆該送。** L161 的 `1.1965` 是全場最好的，但那是**本機 harness
+強制 RF=1.0 的尺**。D 是**刻意用量到的品質換模型算出的 RF**：in-set 從 L165 最好的 `1.19432`
+退到 `1.22641`（退 **2.69%**），換來 route A OFF、REFINE band 4→2 / 6→2、LP 深度 k=1、
+LP 閘只開 71 案——投影 NET **+5.224%** vs beta。**wall 增益在本機結構上看不見，只有品質成本
+會顯示**，這就是為什麼「更好的本機分數」在這題常常是更差的送件。
 
-**Windows 閘（2026-08-23 我方跑）**：官方 eval @48c 逐位等於組員錨 `results_L160_det1.json`
-（cost 100/100、positions 100/100、pass 分佈 87×2 / 13×1 也相同）；
-**`l113_ship_gate --cores 48` ALL PASS**（route A peak 16 ≤ queue 16）——**這道閘組員跑不了**，
-他們機器上每個編譯器都 exit 1 空輸出；`--cores 32` 與 L136 逐位相同（G5 因 route A 在 <40 核
-不觸發而報 FAIL，**設計使然**）；regression suite **m48 / m47b / m67g / m80 四閘 PASS**。
-**vs pre-LP base 0 案退步。**
+⚠️ **唯一沒有閉合的一項：RF-SAFE 是否真的取代 D 上傳，本檔無法確認。** 我方角色是**驗收**，
+做到「可上傳性 PASS」為止（全文 `handover/VERIFY_2026-08-29.md`；組員的上傳指示在
+`main.nrd/final-2026-08-29-rfsafe` 的 `UPLOAD_THIS.md` / `SHIP_DECISION_2026-08-28.md`）。
+**D 本身已上傳且有效** ⇒ 最壞情況是 D 的投影仍然成立，不存在「什麼都沒交」的風險。
+RF-SAFE 唯一的行為改動是 `_L196_LPGATE` 71→83，我方**既不背書也不否定**（定價模型在
+已知答案上證偽失敗，見上面第 (c) 課）。
 
-**Linux（組員 WSL2 32c 強制 48 核池形狀）四 lane ALL PASS**、100/100 feasible、
-0 regressions、determinism 100/100，**87/13 的 pass 分佈在 Windows 與 Linux 逐位相同**。
+**各包的產地**：
 
-⚠️ **Linux 比 Windows 差 0.38%，幾乎全在 case 96 (n=117)**：Linux 的 scipy 把切線割解判成
-`hard_ok` 不過、整案退回 pre-LP。**LP 是唯一的跨平台變動源**（LP 關掉時 32c/48c 兩邊逐位相同）。
-⇒ **對外報 `1.1965`，不要報 `1.1920`。**
+| 位置 | 內容 |
+|---|---|
+| 本分支 `l113-route-a` | `build_submission/`（**L161**，六檔 + tar）、`build_submission.L131FIX/`、`build_submission.L136FIX/` |
+| `main.nrd/final-2026-08-26-verified` | `build_submission.D/` + `L246` 合規報告 + 驗收 runbook |
+| `main.nrd/final-2026-08-29-rfsafe` | **RF-SAFE** + `UPLOAD_THIS.md` / `SHIP_DECISION_2026-08-28.md` + `L2xx`/`L3xx` 全部報告 + `HANDOFF_2026-08-2x` |
+| 本分支 `verify_kit/` | **我方獨立驗收鏈**（`verify_final.sh` / `RUN.sh` / `judge.py` / `l246_compliance.py` / `price_gate.py` / `beta_anchor.py`），不採信包裡宣稱的任何值 |
 
-> 🚨 **改了 `constructive.cpp` 就一定要重建 `bin/constructive_linux`，而這件事 Windows 上結構性看不到。**
-> `_ensure_compiled` 在 `os.name == "nt"` 時**直接跳過 bundle** 自己編 `constructive.exe`
-> ⇒ 每個本機 gate 都在量新 C++，評分機卻跑舊 ELF，而且**失敗是靜默的**（序列化 append-only、
-> 舊 binary 讀到一半就停、scanf 丟掉尾巴 ⇒ 不崩，只是安靜地丟掉整個機制）。
-> `make_submission._binary_matches_source()` 會擋：source 用 `getenv()` 讀的每個 `ICCAD_*`
-> 都必須以字面出現在 ELF 裡（L161 實測 48/48 個 knob 全在）。
+**格式硬規則（若日後再交同一個比賽，直接照抄）**：entry 必名 `op_wrapper.py`；
+**禁絕對路徑**（官方 §4 checklist 明列，零白名單）；禁多餘 optimizer `.py`；禁未使用的
+大 binary；**`requirements.txt` 必須完整**（官方 Beta report §2(a) 直接點名 scipy —— 我們自
+L114 起真的 import 它，而舊的 0-byte 規則已靜默失效，代價實測 **−5.4% 且本機每道閘照樣全綠**）；
+**不要 vendor 依賴**（Section 2 Case B：評分機用 `requirements.txt` 建乾淨 venv，vendor 永遠到不了）。
 
-⚠️ **`make_submission.py verify` 在這台 16 核機器上必然 FAIL，而且不是迴歸**：
-`results_L136_default.json` 是**32 核產物**，tier-3 的閘是 `_effective_cores() <= 16`。
-本機驗預設 lane 一律用 `l113_ship_gate.py --cores 32`（它會強制核數），別用 `verify`。
-
-格式硬規則：entry 必名 `op_wrapper.py`、**禁絕對路徑（2026-08-23 起零白名單）**、
-禁多餘 optimizer .py、禁未使用的大 binary（違反可能 DQ）。
-M48 那條 nt-gated 的 `C:\msys64\...\g++.exe` **已從出貨路徑移除**——官方 §4 checklist
-明列「No absolute paths in code」，而它是包裡唯一一條。它在評分機上本來就到不了
-（`os.name != "nt"`），本機也已多餘（bare `g++` 解到同一顆、`l113_ship_gate` 的 preflight
-會補 PATH）。`make_submission` 的 `_ABS_ALLOW` 一併拿掉 ⇒ **任何絕對路徑現在都是硬錯**。
-
-🚨 **`requirements.txt` 自 2026-08-23 起不再是 0 bytes**，內容 =
-`torch>=2.0.0 / numpy>=1.24.0 / shapely>=2.0.0 / scipy>=1.6.0`。
-理由是**官方 Beta evaluation report §2(a) 直接點名 scipy**：
-「Several submissions import packages such as torch-geometric, torch-scatter, and **scipy**
-… **this causes runtime failures**」、「**Do not assume any package beyond the Python
-standard library is available**」，§4 checklist 把 COMPLETE requirements.txt 列為硬性項目。
-我們自 L114 起真的 import scipy，而舊的 0-byte 規則是 M67-G 時代的推論（那時包裡沒有 LP，
-`_shape_lp` 比 beta 上傳晚十一天才進出貨檔）。**代價實測：有 scipy `1.191978`、沒有 `1.260247`，
-−5.4% 靜默蒸發，而本機每道閘照樣全綠**（這台有 scipy）。
-前三個版本下限**照抄官方自己的 `requirements.txt`** ⇒ 我們不可能是評分機改動套件的原因；
-scipy 下限 1.6.0 = HiGHS 進 scipy 的版本（程式碼是 `linprog(..., method="highs")` 明示要它）。
-`make_submission._requirements_complete()` 取代舊的 0-byte assert：**從出貨 `op_wrapper.py` 的 AST
-抓每一個非 stdlib import**，未宣告是錯、宣告了卻沒人 import 也是錯（五個已知該失敗的輸入全部正確失敗）。
-同報告的 §2(b) `.so` ABI、§2(d) `getpass`/`torchinductor` **與我們無關**（包裡沒有）。
-
-**🚨 上傳時確認 Drive 麵包屑是 `cadc1075`**——有一顆包曾被傳進 `cadb1036`（別隊，問題 B）。
-主辦每隊發 **Alpha / Beta / Final 三個獨立資料夾** ⇒ Final 是全新上傳、不覆蓋任何東西。
+> 🚨 **改 `constructive.cpp` 就一定要重建 `bin/constructive_linux`，而這件事在 Windows 上
+> 結構性看不到**：`_ensure_compiled` 在 `os.name == "nt"` 直接跳過 bundle 自己編
+> `constructive.exe`，評分機卻跑 bundled ELF，而且失敗是**靜默**的（序列化 append-only，
+> 舊 binary 讀到一半就停 ⇒ 不崩，只是安靜地丟掉整個機制）。
+> `make_submission._binary_matches_source()` 是擋這件事的閘。
+> **最終三顆包（L161 / D / RF-SAFE）的 `bin/constructive_linux` 都是同一顆
+> `bc9912072cd97b45b47a03adec7170ce`，自 L137 起未變** ⇒ 這條在收尾階段沒有咬到。
 
 ### 📦 已上傳的舊包（Beta，2026-07-30）
 - **✅ 已上傳 = M73 包（M71 + tier-5），2026-07-30 覆蓋成功**：6 檔、tar md5 `ba694bc6c4c40485b12146d6696dbf7b`（299257 B）、**`op_wrapper.py` md5 `c2e27c9993afd20b5c14934f6ceea8c3`**。⚠️ **tar md5 不可重現**（gzip 內嵌 mtime，每次 stage 都變）⇒ **身分一律看 op_wrapper md5**。
@@ -153,7 +139,7 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
 - **proxy 自 M13 起 = per-case oracle ceiling**（selection 不是瓶頸；加 profile 全額 realize）
 - ⚠️ vrel **必須用 shapely**（wrapper `_proxy_metrics`），不可用 C++ union-find
 
-里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）→ M75 M71 殘餘四旗標全 RED（軸關閉，分數不動）→ M76 組員 escape tier RED（48 核形狀只剩 +0.10%，被 tier-5 吃掉）→ M78 候選集合第二條路徑 RED（唯一贏的 `anch_cross` OOS 只有 −0.160%，且「加候選」預設有害）→ **M79 自建 ML Gate 0：形狀 oracle +0.099% RED、逐案旋鈕 oracle +2.03% 但不可預測 RED，副產物「隨機聯合抽樣的固定 profile」held-out NET +0.655% ⇒ 古典線重開** → **🏆 M80 cores-gated tier 48 核 1.2666（−2.075%）** → **組員 L113-L139：route A + in-window shape LP（L114，翻掉 M54 的 RED）+ L131/L136 兩個 correctness bug ⇒ 48c `1.22845`，已上傳** → L137 GORDIAN hint 48c `1.227177` → **🏆 組員 L147 面積切線割 + L157/L160 選擇性 LP 深度 = L161，48c Linux `1.196489`（比 Drive 上的 L136 好 2.60%），我方 08-23 逐位複驗、Windows 全閘綠、待上傳**。
+里程碑一行：M1 3.62 → M10 `%.17g`+compaction 1.4528 → M13 proxy oracle 1.4349 → M24 HPWL jump 1.3862 → M29-M37 free-aspect 六子軸 1.3269 → M41-M50 RF 七槍（local 1.3285 = RF fiction、avg 9.89→1.49s）→ M51 wide-CLAMP 1.3265 → **M71 cluster-item 1.3054** → **M74 adaptive 常數 regen 1.2935**（未出貨）→ M75 M71 殘餘四旗標全 RED（軸關閉，分數不動）→ M76 組員 escape tier RED（48 核形狀只剩 +0.10%，被 tier-5 吃掉）→ M78 候選集合第二條路徑 RED（唯一贏的 `anch_cross` OOS 只有 −0.160%，且「加候選」預設有害）→ **M79 自建 ML Gate 0：形狀 oracle +0.099% RED、逐案旋鈕 oracle +2.03% 但不可預測 RED，副產物「隨機聯合抽樣的固定 profile」held-out NET +0.655% ⇒ 古典線重開** → **🏆 M80 cores-gated tier 48 核 1.2666（−2.075%）** → **組員 L113-L139：route A + in-window shape LP（L114，翻掉 M54 的 RED）+ L131/L136 兩個 correctness bug ⇒ 48c `1.22845`，已上傳** → L137 GORDIAN hint 48c `1.227177` → **🏆 組員 L147 面積切線割 + L157/L160 選擇性 LP 深度 = L161，48c Linux `1.196489`（比 Drive 上的 L136 好 2.60%），我方 08-23 逐位複驗、Windows 全閘綠，**但最終未上傳** → **L2xx/L3xx 的轉向：用量到的品質換模型算出的 RF**——route A OFF、REFINE band 4→2 / 6→2、LP 深度回 k=1、LP 閘只開 71 案，in-set **刻意退 2.69%** 到 `1.226407`，換投影 graded `0.87818` / **rank 2** ⇒ 這就是 **08-26 上傳的 D** → **RF-SAFE（08-29，LP 閘 71→83、`1.217829`）我方驗收 PASS，為最終候選** 🏁。
 
 ## 🔑 戰略結論（哪些軸封了、哪些沒）
 
@@ -169,47 +155,59 @@ Portfolio 層：平行跑 41 個 deterministic profile，用 **baseline-free pro
    ⇒ 缺的不是逐 block 的參數，是**版圖拓撲本身**（M27 的另一面）。任何「ML 預測某個
    per-block 量再交給我們的 placer」的提案，天花板都在 0.1% 量級，**不必再量**。
 
-## 下一步（依 ROI）— 更新於 2026-08-23
+## 📦 封存說明（2026-09-10）— 取代原本的「下一步」
 
-> **只列還沒做的事。**
+> **專案已結束，沒有下一步。** 這一節只回答兩個問題：*東西在哪*、*什麼可以刪*。
 
-1. **【等使用者】上傳 L161 到 Drive 的 Final 資料夾**
-   包在 `build_submission/cadc1075.tar.gz`。**身分看 `op_wrapper.py` md5**（tar md5 不可重現）。
-   ⚠️ 上傳前確認麵包屑是 **cadc1075**——上一次有一顆包被傳進 `cadb1036`（別隊，問題 B）。
+### 1. 三條分支，各是什麼
 
-2. **跟組員要 `beta_2026-08-16/beta_evaluation_results.json`**（逐案 beta runtime + cost）。
-   ✅ `C_median_runtimes_beta_hidden.csv` **已經拿到**（在 `C:/Users/Nordra/Downloads/`）。
-   有 CSV 已經可以獨立驗到：M67-E 逐案比值 **0.217×–1.786×**（與組員回報逐位一致）、
-   `_M157_A/_M157_B=0.0196/1.168` 與 **R²=0.907** 完全重現、
-   我們 beta 的 52.07s = 逐案 floor 預算總和 90.1s 的 **57.8%**。
-   **缺 JSON 就重現不了 graded total（那個 2.4e-7）也算不出逐案 n-set 成員**——
-   兩者都需要我們自己的逐案 beta t_i。
+| 分支 | 停在 | 為什麼留著 |
+|---|---|---|
+| `main` / `main.nrd/main` | 2026-06-14，M28 | 上游 fork 點，歷史用 |
+| `l113-route-a`（本分支） | 2026-08-23，L161 + 兩個合規修正 | L161 包的產地；`verify_kit/` 與本結案文件在這裡 |
+| `main.nrd/l147-tangent-cut` | 2026-08-24 | 組員的 L147/L157 線，L161 的上游 |
+| `main.nrd/final-2026-08-26-verified` | 2026-08-26 | **已上傳的 D** |
+| **`main.nrd/final-2026-08-29-rfsafe`** | 2026-08-29 | **權威分支**：最終候選 RF-SAFE + 全部 L2xx/L3xx 報告 |
 
-3. **重推 drop 常數（`rf`/`m49big`/`m49mid` 三閘仍是紅的）**
-   `cache profile signature != current pool`——快取錨的是 M80 時代的 exe，
-   組員動了三次 `constructive.cpp` 都沒重建。**品質風險非可行性風險**，
-   M74 同型重推值 **−0.769%**。鏈：`profile_audit.py base` + `ship`（各 8-11 分、**必須序列跑**）
-   → `ICCAD_REGEN=1 rf_score_model.py` → m49 三 gate → `m67g` → `m80_tier_gate`。
-   ⚠️ 會改出貨常數 ⇒ 整條送件鏈要重走。
+⚠️ **GitHub 的預設分支若還指著 `main`，讀者會看到 6 月的狀態。** 封存時建議把預設分支
+指向 `final-2026-08-29-rfsafe`，或至少在 repo description 寫明。
 
-4. **用「逐案 RF」這面新鏡子重掃 ledger**（L157 §6 點名的下一個候選 = L125 §4.4）
-   `_pool_indices(n)` 本來就是逐案的，當初要求「每一案都負擔得起」的交集限制
-   （eligibility 16 vs 逐案 44–47）是因為 L146 之前不知道逐案 slack。
-   **純離線重定價、不需新跑**。
+### 2. 不在 git 裡的東西（換機器就沒了，而且**不必救**）
 
-5. **`ICCAD_SHAPE_LP_CATCH=1`（L154 band-catch）目前預設 OFF，是可考慮的保險**
-   被 `hard_ok` 拒掉的切線割案子現在會掉回 **pre-LP**（丟掉整個 LP 增益，不只是增量）；
-   CATCH 讓它退回**出貨帶**的版圖。Windows +0.0009%、**Linux +0.1498%**、
-   OOS s1 +0.0356% / s2 +0.0532%、**680 個 case-run 零退步**，跨平台離散度砍半
-   （0.3140pp → 0.1683pp）。**但它沒有跟深度閘一起被 Linux 驗過** ⇒ 不建議在 08-28 前翻。
+| 類別 | 量級 | 為什麼可以丟 |
+|---|---|---|
+| `floorset_lite/` | **24.4 GB** | 主辦提供的資料集，`.gitignore` 排除，需要時重抓 |
+| `LiteTensorDataTest/` | 522 MB | 同上 |
+| `build_submission.M80BAK/verify/` | 526 MB | `make_submission verify` 的暫存（裡面是資料集副本） |
+| `*.pkl` 離線 cache（最大 `m79_knob_cloud.pkl` 145 MB） | ~350 MB | **全部可重生**（8–11 分/顆、必須序列跑）；簽章釘 exe md5 + overlay 常數，換 exe 就自動失效 ⇒ 留著反而是陷阱 |
+| `results_*.json` 錨檔、`*_stdout.txt` / `*.txt` 日誌 | ~50 MB | 離線 gate 的比較錨；**gate 不會再跑** |
+| `vk/`、`vk_linux/`、`build_submission.*BAK/` | ~530 MB | 一次性驗收暫存與已被取代的包 |
 
-6. **不要做**：ledger 標 RED 的軸；以 fp_sol 為監督的 ML；pool pruning；
-   `ICCAD_ANCHOR_W` 掃參；**更深的 LP（k≥3）**——k=3 只剩 +0.296%、k=4 是 −3.125%，
-   而且 L156 已證明「讓 LP 變便宜」整條是 RED（可得 1.06× vs 需要 1.75×）。
+> 唯一「不在 git、但真的有價值」的兩樣東西，**已由本 commit 收進 repo**：
+> `verify_kit/`（我方驗收鏈）與 `handover/`（08-28 的 absolute-path patch、08-29 的驗收報告）。
 
-> 🗓️ **Final deadline = 2026-08-28**。
-> 📋 **每個 session 開始前**：`git fetch main.nrd`，組員的活躍分支現在是
->    **`l147-tangent-cut`**（不是 `l113-route-a`），再讀最新的 `HANDOFF_*.md`。
+### 3. 若日後要重跑任何東西
+
+1. clone → `git checkout final-2026-08-29-rfsafe`
+2. 重抓 FloorSet 資料集放回 `floorset_lite/`
+3. `& "C:\msys64\ucrt64\bin\g++.exe" -O3 -std=c++17 -o constructive.exe constructive.cpp`
+4. 官方 eval：`iccad2026contest/iccad2026_evaluate.py --evaluate ../optimizer_constructive.py`
+5. **所有 `*.pkl` cache 必須重生**（`profile_audit.py base|ship|esc` → `ICCAD_REGEN=1 rf_score_model.py`
+   → `m49_refine_probe` 三 gate → `m67g` → `m80_tier_gate`）。忘了重建會**明確報錯**而不是靜默用舊資料。
+6. 封包驗收走 `verify_kit/RUN.sh`（Linux）或 `verify_kit/run_arm.ps1`（Windows），
+   **不要**用 `make_submission.py verify`——它會剝掉 `ICCAD_*` 並用本機核數跑，
+   在 <40 核的開發機上驗的是評分機不會跑的組態。
+
+### 4. 收尾時仍然開著、但已被判定不值得追的線
+
+- **RF-SAFE 的 `_L196_LPGATE` 71→83**：我方無法定價（見上面第 (c) 課），需要組員的推導。
+- **`ICCAD_SHAPE_LP_CATCH=1`（L154 band-catch）**：Windows +0.0009% / Linux +0.1498% /
+  OOS +0.036~0.053%、680 個 case-run 零退步，但**沒有跟深度閘一起 Linux 驗過** ⇒ 全程維持 OFF。
+- **L340 的 C++ B\*-tree SA**：品質是真的（n=80 上 5/5 seed 贏我們的 packer，中位 −0.0678），
+  但預算內要 **2.8× / 27.5× / 55.8×** 的迭代數才打平，且倍數對 n 超線性 ⇒ runtime 判死。
+- **對手 `cadc1106` 的 1.1747** 始終沒有解釋。L128 之後已知 `fp_sol` verbatim 的 1.1079
+  **不是 floor**（label 自己就違反 soft 約束），真 headroom 是 **19.15%** ⇒ 那個數字落在
+  古典方法搆得到的範圍內，不必假設有 label 洩漏。
 
 ## 死路 ledger（勿重試）
 

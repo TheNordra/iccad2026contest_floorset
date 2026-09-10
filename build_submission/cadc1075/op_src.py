@@ -553,6 +553,59 @@ _PROFILES.extend(_M124_EXTRA)
 _M124_CORES_MIN = 40
 
 
+# L137 (2026-08-17): the GORDIAN hint as a POOL TIER, not a global overlay.
+#
+# WHY A TIER. Applied globally (ICCAD_HINT_MODE=1 on every profile) the hint is
+# quality-positive -- in-set 48c 1.2284738 -> 1.2279371 (+0.0437%), OOS s1 240
+# cases 1.563347 -> 1.561957 (+0.0889%) with hpwl_gap 0.3135 -> 0.3116 and
+# area_gap 0.2569 -> 0.2529, both moving the way the mechanism predicts -- but it
+# also moves the 48c wall +1.76%, and that cost is NOT spread: case 90 alone is
+# 190% of the weighted delta and case 91 another 73% (over 100% because the rest
+# get FASTER). Timed on one profile, case 90 is 0.213 -> 0.380s while case 92,
+# the biggest quality gain, is 0.674 -> 0.674s unchanged.
+#
+# A tier removes exactly that cost. At >=40 cores the wall is the max-setter
+# (M67-E, 100/100), so a 0.38s hinted profile against case 90's 2.93s wall costs
+# nothing on the max term, and the existing profiles keep their exact runtime AND
+# their exact output. M76/M77 measured the proxy as oracle-perfect on
+# heterogeneous candidates, so an added candidate cannot lose quality -- it can
+# only fail to be selected.
+#
+# Same discipline as M72/M76/M80/M124: appended UNCONDITIONALLY so indices stay
+# stable (_BIG_REDUNDANT_IDX / _M45_BAND_DROP are index-based frozensets over
+# 0..40), gated at CALL time so a probe that sets the env after import actually
+# flips it, and NEVER inserted or reordered.
+#
+# Sources are four diverse always-in-pool base recipes (<_M55_BASE_LEN so they
+# are never dropped by the M55 gate): free_aspect, free_gm_wt_wire,
+# free_pin_wt_wire, free_gm_tight_wire -- spanning GUIDE_MED / BFS_PIN / tight
+# frames, since the hint changes the anchor term and that interacts with the
+# wire and frame knobs.
+_L137_SRC = (0, 2, 4, 5)
+_L137_EXTRA = [dict(_PROFILES[i], ICCAD_HINT_MODE="1") for i in _L137_SRC]
+_L137_BASE = len(_PROFILES)
+_L137_IDX = frozenset(range(_L137_BASE, _L137_BASE + len(_L137_EXTRA)))
+_PROFILES.extend(_L137_EXTRA)
+_L137_CORES_MIN = 40
+
+
+def _l137_active(block_count: int) -> FrozenSet[int]:
+    """Tier indices this call should add. CALL time, never import time.
+
+    Uses _effective_cores_hi() (unknown -> 0) for the same reason M80/M124 do:
+    this tier fires at HIGH core counts, so the 9999 sentinel that keeps tier-4
+    safe would switch it ON wherever detection fails -- and below the gate the
+    pool is sum-bound, where four more profiles DO cost wall.
+
+    Default OFF while the net is unresolved: the quality is measured and the
+    runtime is not yet, so this must not ship by accident."""
+    if os.environ.get("ICCAD_HINT_POOL", "0") != "1":
+        return frozenset()
+    if _effective_cores_hi() < _L137_CORES_MIN:
+        return frozenset()
+    return _L137_IDX
+
+
 def _m124_active(block_count: int) -> FrozenSet[int]:
     """Tier indices this call should add. Read at CALL time, never at import, so
     a probe that sets the env after importing this module actually flips it.
@@ -829,6 +882,44 @@ def _m71_env() -> Dict[str, str]:
     return dict(_M71_ENV)
 
 
+# L137 (2026-08-19): the GORDIAN hint as the GLOBAL overlay, which is the form
+# that was measured. The TIER form above (_l137_active) stays default-OFF -- it
+# was worse on both axes (commit d64abe0).
+#
+# CORES-GATED at the same >=40 as route A / the shape LP / tier-5 / M80, and for
+# the same reason M76 recorded: the quality (+0.0889% OOS s1 240) and the wall
+# (+0.46%) were BOTH measured at 48c with route A and the LP live, so that is the
+# only shape the number describes. Below the gate the pool is sum-bound, where
+# the hint's extra refine passes are NOT absorbed by a max-setter, and nothing
+# has measured it there. _effective_cores_hi() maps unknown -> 0, so a detection
+# failure falls back to L136 behaviour (fail-CLOSED, the M67-F doctrine).
+#
+# HINT_REFINE=4 is part of the recipe, not a separate knob: it caps the refine
+# loop on hinted runs only, and it is what turns the arm from "quality up, wall
+# up 1.76%" into "quality up, wall up 0.46%".
+_L137_ENV: Dict[str, str] = {"ICCAD_HINT_MODE": "1",
+                             "ICCAD_HINT_REFINE": "4"}
+
+
+def _l137_env() -> Dict[str, str]:
+    """Per-profile env overlay for the L137 GORDIAN hint (global form).
+
+    ICCAD_HINT_MODE=0 forces it off; any other explicit ambient value forces it
+    on and wins over the recipe, so the A/B tools (l137_oos_ab.py,
+    l113_ship_gate.py --env) keep measuring what they ask for."""
+    v = os.environ.get("ICCAD_HINT_MODE", "")
+    if v == "0":
+        return {}
+    if v == "" and _effective_cores_hi() < _L137_CORES_MIN:
+        return {}
+    ov = dict(_L137_ENV)
+    for k in ov:
+        amb = os.environ.get(k, "")
+        if amb != "":
+            ov[k] = amb
+    return ov
+
+
 def _profile_env(i: int, block_count: int) -> Dict[str, str]:
     """The per-profile env overlay _solve_impl applies to pool index `i`, in the
     wrapper's precedence order (profile dict, then band, then M71).
@@ -840,6 +931,7 @@ def _profile_env(i: int, block_count: int) -> Dict[str, str]:
     ov = dict(_band_env(block_count))
     if i not in _M73_IDX:
         ov.update(_m71_env())
+        ov.update(_l137_env())          # L137 GORDIAN hint, cores-gated >= 40
     return ov
 
 
@@ -910,7 +1002,8 @@ def _pool_indices(block_count: int) -> List[int]:
     # gate lives inside _m80_active() because, unlike M72/M76, this tier is meant
     # to SHIP and the gate is the mechanism, not a measurement switch.
     extra = ((_M55_IDX if m55 else frozenset()) | esc
-             | _m80_active(block_count) | _m124_active(block_count))
+             | _m80_active(block_count) | _m124_active(block_count)
+             | _l137_active(block_count))          # L137 GORDIAN-hint tier
     full = [i for i in range(len(_PROFILES))
             if i < _M55_BASE_LEN or i in extra]
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
@@ -1028,11 +1121,17 @@ def _ensure_compiled() -> bool:
     # M48 compile chain: the first candidate is the exact command used through
     # M47 (identical local behaviour); the others only matter where it is
     # missing (e.g. a Linux grader). -O2 is retried last in case -O3 fails.
-    # ICCAD_CXX forces a specific compiler to the front of each round. The msys
-    # candidate is Windows-only (M67-A: no doomed absolute-path exec on POSIX).
+    # ICCAD_CXX forces a specific compiler to the front of each round, and is
+    # how you reach one that is not on PATH.
+    #
+    # A hardcoded absolute path to the msys64 ucrt64 g++ used to sit at the
+    # front of this list under an os.name == "nt" guard. Dropped 2026-08-23: the beta
+    # report's final checklist says "No absolute paths in code", and it was the
+    # only one in the package. It could never run on the grader (os.name is not
+    # "nt" there) and locally it is redundant -- a bare g++ resolves to the same
+    # msys binary, and l113_ship_gate's preflight prepends the msys bin dir when
+    # it does not.
     compilers = ["g++", "clang++", "c++"]
-    if os.name == "nt":
-        compilers.insert(0, r"C:\msys64\ucrt64\bin\g++.exe")
     if os.environ.get("ICCAD_CXX"):
         compilers.insert(0, os.environ["ICCAD_CXX"])
     for opt in ("-O3", "-O2"):
@@ -1574,6 +1673,229 @@ def _row_fallback(block_count, area_targets, constraints, target_positions):
     return pos
 
 
+try:                                     # L137: numpy only; no scipy dependency
+    import numpy as _gh_np
+except Exception:                        # absent -> the hint goes inert
+    _gh_np = None
+
+_HINT_DENSITY = float(os.environ.get("ICCAD_HINT_DENSITY", "0.80"))
+_HINT_LEVELS = int(os.environ.get("ICCAD_HINT_LEVELS", "16"))
+
+
+def _gordian_hint(n, at, b2b, p2b, pins, cons, tp):
+    """L137: a globally optimised centre for every block, as a placement hint.
+
+    WHY. `estimate_anchors()` in constructive.cpp can only anchor a block to
+    neighbours that are ALREADY PLACED, and it runs once when only the PREPLACED
+    blocks are down -- so a block with no preplaced neighbour and no pin gets no
+    anchor at all. The C++ header has said so since M9: "the first blocks are
+    placed blind to HPWL". hpwl_gap is worth +10.11% of the score and is the one
+    term this project has never moved on the shipped path.
+
+    WHAT. GORDIAN's alternation: solve the quadratic wirelength problem, cut the
+    region area-balanced, re-solve with one centre-of-gravity equality per region,
+    cut again. The equality is weak enough that blocks still move to shorten wire
+    and strong enough that they cannot re-pile, so wirelength keeps a say at every
+    level instead of only the first. L130 measured this as the first mechanism to
+    move hpwl_gap (-13.8% on the L129 candidate); L134 then closed that candidate
+    on RUNTIME, not quality -- the alternation was never the expensive part.
+
+    Block-level on purpose. L129 ran it over rigid cluster UNITS, but the C++
+    forms its own items and consumes anchors PER BLOCK, so the units would just be
+    rebuilt on the other side. Cluster members are instead collapsed onto their
+    shared centroid at the end, which is the property that mattered.
+
+    Priced before wiring (L137 gate 0): 19.7 ms weighted, 0.467% of the per-case
+    wall, worst case 0.63%. Never raises: on any failure the caller falls back to
+    the no-hint path, which is the shipped behaviour.
+    """
+    if _gh_np is None or n <= 2:
+        return None
+    np = _gh_np
+    area = np.array([max(float(at[i]), 1e-9) for i in range(n)])
+    pre = np.array([int(cons[i][1]) != 0 for i in range(n)])
+    code = [int(cons[i][4]) for i in range(n)]
+    clus = [int(cons[i][3]) for i in range(n)]
+
+    fx = np.zeros(n)
+    fy = np.zeros(n)
+    if tp is not None:
+        for i in range(n):
+            if pre[i]:
+                fx[i] = float(tp[i][0]) + float(tp[i][2]) / 2.0
+                fy[i] = float(tp[i][1]) + float(tp[i][3]) / 2.0
+
+    L = np.zeros((n, n))
+    bx = np.zeros(n)
+    by = np.zeros(n)
+    for e in b2b.tolist():
+        i, j, w = int(e[0]), int(e[1]), float(e[2])
+        if i < 0 or j < 0 or i >= n or j >= n or i == j or w <= 0:
+            continue
+        L[i, i] += w
+        L[j, j] += w
+        L[i, j] -= w
+        L[j, i] -= w
+    px = py = 0.0
+    plist = pins.tolist()
+    if plist:
+        px = sum(float(p[0]) for p in plist) / len(plist)
+        py = sum(float(p[1]) for p in plist) / len(plist)
+    for e in p2b.tolist():
+        p, j, w = int(e[0]), int(e[1]), float(e[2])
+        if j < 0 or j >= n or p < 0 or p >= len(plist) or w <= 0:
+            continue
+        L[j, j] += w
+        bx[j] += w * float(plist[p][0])
+        by[j] += w * float(plist[p][1])
+    # an unconnected block would leave a singular row; pull it weakly to the pins
+    for k in range(n):
+        L[k, k] += 1e-6
+        bx[k] += 1e-6 * px
+        by[k] += 1e-6 * py
+
+    free = ~pre
+    if not free.any():
+        return None
+    Lf = L[np.ix_(free, free)]
+    rx = bx[free] - L[np.ix_(free, pre)] @ fx[pre]
+    ry = by[free] - L[np.ix_(free, pre)] @ fy[pre]
+    fidx = np.flatnonzero(free)
+    pos = {int(k): t for t, k in enumerate(fidx)}
+    F = len(fidx)
+
+    def solve(rows, ux, uy):
+        """min x'Lx - 2b'x subject to the region centre-of-gravity rows."""
+        if not rows:
+            A = None
+        else:
+            A = np.array(rows)
+        try:
+            if A is None:
+                sx = np.linalg.solve(Lf, rx)
+                sy = np.linalg.solve(Lf, ry)
+            else:
+                R = A.shape[0]
+                K = np.zeros((F + R, F + R))
+                K[:F, :F] = Lf
+                K[:F, F:] = A.T
+                K[F:, :F] = A
+                K[F:, F:] = -1e-12 * np.eye(R)
+                rhs = np.zeros((F + R, 2))
+                rhs[:F, 0] = rx
+                rhs[:F, 1] = ry
+                rhs[F:, 0] = ux
+                rhs[F:, 1] = uy
+                sol = np.linalg.solve(K, rhs)
+                sx, sy = sol[:F, 0], sol[:F, 1]
+        except Exception:
+            return None, None
+        ox, oy = fx.copy(), fy.copy()
+        ox[free], oy[free] = sx, sy
+        return ox, oy
+
+    cx, cy = solve([], None, None)
+    if cx is None:
+        return None
+
+    # 🚨 THE BOX MUST BE ANCHORED AT THE ORIGIN, not at the solve's own minimum.
+    # constructive.cpp packs into a frame [0,fw] x [0,fh] -- its LEFT test is
+    # literally `fabs(x - 0.0)` -- and preplaced blocks sit at their absolute
+    # tx/ty while pins carry absolute coordinates, so the C++ coordinate space
+    # starts at 0. An unconstrained quadratic solve does NOT: it floats wherever
+    # the pins pull it. Anchoring the region box at min(cx), min(cy) (which is
+    # what L129 did, correctly, because it placed into its own frame) produces
+    # hint coordinates in a different origin from the consumer's, and the anchor
+    # pull then drags every block toward a meaningless point.
+    # MEASURED with the floating origin: 48c 1.2284738 -> 1.2344230, i.e. 0.48%
+    # WORSE, 59/100 cases changed. The mechanism was never given a fair test.
+    x0 = y0 = 0.0
+    side = math.sqrt(float(area.sum()) / max(_HINT_DENSITY, 0.05))
+    if pre.any():
+        side = max(side, float(cx[pre].max()), float(cy[pre].max()))
+
+    def rank(i, horiz):
+        """A boundary block must end up at that extreme, and nothing in the
+        quadratic objective knows it -- L130 measured the alternation buying hpwl
+        and area and paying more than both back in boundary violations without
+        this. Sorting it to the matching end of every cut it meets lands it in
+        the outermost leaf."""
+        lo, hi = (code[i] & 1, code[i] & 2) if horiz else (code[i] & 8, code[i] & 4)
+        return 0 if (lo and not hi) else (2 if (hi and not lo) else 1)
+
+    regions = [(list(range(n)), x0, y0, side, side)]
+    for _lvl in range(max(1, _HINT_LEVELS)):
+        nxt = []
+        for idx, rx0, ry0, w, h in regions:
+            if len(idx) <= 1:
+                nxt.append((idx, rx0, ry0, w, h))
+                continue
+            horiz = w >= h
+            key = cx if horiz else cy
+            order = sorted(idx, key=lambda q: (rank(q, horiz), key[q], q))
+            half, run, cut = float(area[order].sum()) / 2.0, 0.0, 1
+            for t, q in enumerate(order):
+                run += area[q]
+                if run >= half:
+                    cut = max(1, min(len(order) - 1, t + 1))
+                    break
+            lft, rgt = order[:cut], order[cut:]
+            fr = float(area[lft].sum()) / max(float(area[order].sum()), 1e-9)
+            if horiz:
+                nxt.append((lft, rx0, ry0, w * fr, h))
+                nxt.append((rgt, rx0 + w * fr, ry0, w * (1 - fr), h))
+            else:
+                nxt.append((lft, rx0, ry0, w, h * fr))
+                nxt.append((rgt, rx0, ry0 + h * fr, w, h * (1 - fr)))
+        if len(nxt) == len(regions):
+            break
+        regions = nxt
+        rows, ux, uy = [], [], []
+        for idx, rx0, ry0, w, h in regions:
+            mem = [q for q in idx if free[q]]
+            tot = float(sum(area[q] for q in mem))
+            if not mem or tot <= 1e-9:
+                continue
+            r = np.zeros(F)
+            for q in mem:
+                r[pos[q]] = area[q] / tot
+            rows.append(r)
+            ux.append(rx0 + w / 2.0)
+            uy.append(ry0 + h / 2.0)
+        nx, ny = solve(rows, ux, uy)
+        if nx is None:
+            break
+        cx, cy = nx, ny
+
+    # cluster members share a centroid: L129 placed each cluster as one rigid
+    # unit, and this is the part of that which the anchor consumer can use.
+    groups = {}
+    for i in range(n):
+        if clus[i]:
+            groups.setdefault(clus[i], []).append(i)
+    for mem in groups.values():
+        if len(mem) < 2:
+            continue
+        tot = float(sum(area[q] for q in mem))
+        gx = float(sum(area[q] * cx[q] for q in mem) / tot)
+        gy = float(sum(area[q] * cy[q] for q in mem) / tot)
+        for q in mem:
+            if not pre[q]:
+                cx[q], cy[q] = gx, gy
+
+    # 🚨 EMIT FRAME-RELATIVE, in [0,1]^2. constructive.cpp does not pack into one
+    # frame -- it tries a whole set (scales 1.05-2.10 x several aspects) and keeps
+    # the best. An absolute hint silently assumes ONE of them, and fights every
+    # other candidate, including the tall/wide frames that win on many cases: the
+    # box here is square by construction while e.g. case 54 packs into 141x219.
+    # The consumer scales by (fw,fh) at the point of use, where the frame is known.
+    # MEASURED absolute, after the origin was already fixed: 1.2311612 against a
+    # 1.2284738 baseline -- still 0.219% worse, which is what sent me here.
+    inv = 1.0 / max(side, 1e-9)
+    return [(min(max(float(cx[i]) * inv, 0.0), 1.0),
+             min(max(float(cy[i]) * inv, 0.0), 1.0)) for i in range(n)]
+
+
 _SNAP_TOL = 1e-9
 
 
@@ -1687,6 +2009,12 @@ class MyOptimizer(FloorplanOptimizer):
         # SA and row fallbacks too -- they emit `origin + offset` layouts as well.
         def _snap(p):
             return _snap_group_abutment(p, constraints, block_count)
+        # L157: the case clock. The per-case RF-floor gate needs this
+        # case's OWN elapsed time and solve() is the only place that
+        # knows when the case began. Stamped before the fallbacks too,
+        # so a case that lands on SA carries a valid clock, not a stale
+        # one from the previous case.
+        _case_clock_start()
         try:
             return _snap(self._solve_impl(
                 block_count, area_targets, b2b_connectivity,
@@ -1718,9 +2046,30 @@ class MyOptimizer(FloorplanOptimizer):
             return python_sa_solve(block_count, area_targets, b2b_connectivity,
                                    p2b_connectivity, pins_pos, constraints,
                                    target_positions)
+        # L137: the GORDIAN hint. OFF unless ICCAD_HINT_MODE>0, and the binary
+        # ignores the block unless the same knob is set on its side, so with the
+        # knob unset this is bit-identical to L136. Any failure falls back to
+        # gnn_hint=None, i.e. the shipped path -- the hint is an optimisation,
+        # never a dependency.
+        # The hint block rides in the ONE serialized input every profile shares,
+        # so it is computed at most once per case. A profile without
+        # ICCAD_HINT_MODE parses the block and ignores it, which is why the
+        # untiered profiles stay bit-identical -- verified by the gate.
+        # Computed when EITHER the tier is live (the deployment shape) or the
+        # global knob is set (the A/B shape kept for measurement).
+        _hint = None
+        _want = (bool(_l137_env())                     # global form (shipped)
+                 or bool(_l137_active(block_count)))   # tier form (default off)
+        if _want:
+            try:
+                _hint = _gordian_hint(block_count, area_targets,
+                                      b2b_connectivity, p2b_connectivity,
+                                      pins_pos, constraints, target_positions)
+            except Exception:
+                _hint = None
         inp = _serialize_input(
             block_count, area_targets, b2b_connectivity, p2b_connectivity,
-            pins_pos, constraints, target_positions, gnn_hint=None,
+            pins_pos, constraints, target_positions, gnn_hint=_hint,
         )
         profiles = _PROFILES[:1] if self._single else _PROFILES
 
@@ -2079,9 +2428,19 @@ def _sep_reduction_mask(rows, n, P, unit_of, sv, resh, rho):
 
 
 def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
-                    force_keep=frozenset()):
+                    force_keep=frozenset(), area_R=None, area_g=1.05,
+                    area_tol=None, area_price=0.0):
     """prune_B (L112): displacement bound used to drop HPWL terms that provably
     cannot change sign.  None = off = the shipped formulation, bit-for-bit.
+
+    area_R (L122, ported L147): replaces the two-sided band on the LINEARISED
+    area with tangent cuts of the convex side plus a price on the non-convex
+    one.  None = off = the shipped band, bit-for-bit.  The band is asymmetric in
+    practice -- the lower row binds on 259 of 338 reshapeable units and the
+    upper on 9 -- and the upper row is itself the barrier: an exact-area
+    widening by r has true area p but LINEARISED area p*(r + 1/r - 1), which at
+    r=1.5 reads +16.7% against a +/-0.8% band.  area_tol overrides _LP_AREA_TOL
+    for the tangent arm only, so the shipped band arm stays the control.
 
     Each (edge, axis) contributes `t >= |dC + delta|` as one aux column plus two
     rows -- 80.2% of all rows and ~98% of all columns (L112 S1: 15,572 cols /
@@ -2101,6 +2460,11 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
     units, unit_of, group_units, group_comp0 = decompose(ci, P)
     U = len(units)
     resh = reshapeable(ci, units)
+    if area_R is not None:
+        # rho stops being a trust region under area_R and becomes only what its
+        # two remaining users need -- an upper bound on |dsize| / dim for the
+        # separation reduction mask and the HPWL prune slack.
+        rho = max(rho, area_R - 1.0)
 
     XMIN, XMAX, YMIN, YMAX = 2 * U, 2 * U + 1, 2 * U + 2, 2 * U + 3
     nv = 2 * U + 4
@@ -2311,14 +2675,44 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
     add_ub([(YMAX, 1.0), (YMIN, -1.0)], H0, "bbox")
 
     at = c["at"]
-    for uid, i in resh.items():
-        kw, kh = sv[uid]
-        w, h = P[i][2], P[i][3]
-        p = w * h
-        A = float(at[i]) if float(at[i]) > 0 else p
-        slack = rho * rho * p
-        add_ub([(kw, -h), (kh, -w)], -(A * (1.0 - _LP_AREA_TOL) - p + slack), "area_band")
-        add_ub([(kw, h), (kh, w)], A * (1.0 + _LP_AREA_TOL) - p - slack, "area_band")
+    if area_R is not None:
+        # L122: the area band replaced by TANGENT CUTS of w*h >= A(1-TOL).
+        # The lower row bounds a CONVEX region (h >= A'/w), so tangents
+        # represent it EXACTLY -- no linearisation error and no trust region.
+        # The upper row is the non-convex side; it is dropped and adjudicated
+        # afterwards by hard_ok, which is the same solve-then-verify contract
+        # solve_pruned already uses.
+        #
+        # Tangent at wk:  h >= 2A'/wk - (A'/wk^2)*w.  Points are geometric with
+        # ratio area_g across [w0/R, w0*R]; consecutive tangents cross at
+        # wk*sqrt(g), where the envelope sits (sqrt(g)-1)^2 below the curve. At
+        # g=1.05 that is 0.061%, so with A' = A*(1-tol) the true area cannot
+        # fall below A*(1-0.008)*(1-0.00061) = 0.9914*A -- inside the official
+        # 1% hard limit. area_g is therefore the ROW-COUNT knob: steps scales as
+        # 1/ln(g), and g=1.10 with tol=0.006 cuts the rows 44% while TIGHTENING
+        # the guarantee to 0.99163.
+        _tol = _LP_AREA_TOL if area_tol is None else area_tol
+        steps = max(1, int(math.ceil(2.0 * math.log(area_R) / math.log(area_g))))
+        for uid, i in resh.items():
+            kw, kh = sv[uid]
+            w, h = P[i][2], P[i][3]
+            A = float(at[i]) if float(at[i]) > 0 else w * h
+            Ap = A * (1.0 - _tol)
+            for s in range(steps + 1):
+                wk = (w / area_R) * (area_R * area_R) ** (s / steps)
+                sl = Ap / (wk * wk)
+                # h0 + dh >= 2A'/wk - (A'/wk^2)(w0 + dw)  ->  -sl*dw - dh <= rhs
+                add_ub([(kw, -sl), (kh, -1.0)],
+                       -(2.0 * Ap / wk - sl * w - h), "area_tangent")
+    else:
+        for uid, i in resh.items():
+            kw, kh = sv[uid]
+            w, h = P[i][2], P[i][3]
+            p = w * h
+            A = float(at[i]) if float(at[i]) > 0 else p
+            slack = rho * rho * p
+            add_ub([(kw, -h), (kh, -w)], -(A * (1.0 - _LP_AREA_TOL) - p + slack), "area_band")
+            add_ub([(kw, h), (kh, w)], A * (1.0 + _LP_AREA_TOL) - p - slack, "area_band")
 
     a_base = max(float(c["base"].get("area_baseline", W0 * H0)), 1e-6)
     if W0 * H0 > a_base:
@@ -2327,6 +2721,23 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
         obj[XMAX] += bA * H0
         obj[YMIN] -= bA * W0
         obj[YMAX] += bA * W0
+
+    # Deliberately NOT gated on area_R: the price must be applicable to the
+    # shipped band too, or there is no control arm separating "wider aspect
+    # range" from "shrink every block to its minimum legal area".
+    if area_price:
+        # The dropped upper bound has exactly one failure mode: a block with no
+        # pressure on it runs to the far corner of the shape box, landing at
+        # area A*R^2 (measured 44% / 125% / 300% at R=1.2/1.5/2, i.e. R^2-1 to
+        # the digit). A tiny price on the block's own area removes the incentive
+        # without competing with any real term: {w*h >= A'} is convex, so a
+        # positive linear cost pushes such a block ONTO its boundary, where the
+        # true area is A' exactly.
+        pw = area_price * 0.5 / a_base
+        for uid, i in resh.items():
+            kw, kh = sv[uid]
+            obj[kw] += pw * P[i][3]
+            obj[kh] += pw * P[i][2]
 
     for u in freeze_units:
         add_eq([(u, 1.0)], 0.0, "boundary_eq")
@@ -2348,6 +2759,11 @@ def build_and_solve(ci, P, freeze_units, rho=0.06, sep_trim=False, prune_B=None,
     bounds.append((max((P[i][1] + P[i][3] for i in fro), default=ymax0 - D), ymax0 + D))
     for uid in sorted(sv):
         i = resh[uid]
+        if area_R is not None:
+            # a box on the SHAPE, not a trust region on the linearisation
+            bounds.append((P[i][2] / area_R - P[i][2], P[i][2] * area_R - P[i][2]))
+            bounds.append((P[i][3] / area_R - P[i][3], P[i][3] * area_R - P[i][3]))
+            continue
         bounds.append((-rho * P[i][2], rho * P[i][2]))
         bounds.append((-rho * P[i][3], rho * P[i][3]))
     bounds += [(0.0, None)] * (nv - len(bounds))
@@ -2405,7 +2821,7 @@ def apply_all(P, B, x):
 PRUNE_B = None      # L112: module-level so dep_case/mode_ab measure end-to-end
 
 
-def lp_pass(ci, P, rho, sep_trim=False):
+def lp_pass(ci, P, rho, sep_trim=False, **kw):
     c = l3.CASES[ci]
     freeze = set()
     for attempt in range(3):
@@ -2417,9 +2833,9 @@ def lp_pass(ci, P, rho, sep_trim=False):
         # heavy cases), so the combination is the interesting one.
         if PRUNE_B is not None:
             B, _rounds = solve_pruned(ci, P, freeze, rho=rho, prune_B=PRUNE_B,
-                                      sep_trim=sep_trim)
+                                      sep_trim=sep_trim, **kw)
         else:
-            B = build_and_solve(ci, P, freeze, rho=rho, sep_trim=sep_trim)
+            B = build_and_solve(ci, P, freeze, rho=rho, sep_trim=sep_trim, **kw)
         if B["res"].status != 0:
             return None, dict(status=f"lp_status_{B['res'].status}", t=time.perf_counter() - t0,
                               t_build=B["timing"]["t_build"], t_solve=B["timing"]["t_solve"],
@@ -2438,7 +2854,7 @@ def lp_pass(ci, P, rho, sep_trim=False):
 
 
 def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
-                 sep_trim=False):
+                 sep_trim=False, **kw):
     """build_and_solve with HPWL pruning made EXACT by verification.
 
     Dropping `t >= |z|` in favour of `sgn(dC) * z` can only LOWER the objective
@@ -2452,15 +2868,15 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
     """
     if prune_B is None:
         return build_and_solve(ci, P, freeze_units, rho=rho,
-                               sep_trim=sep_trim), 0
+                               sep_trim=sep_trim, **kw), 0
     keep = set()
     for rnd in range(max_rounds):
         d = build_and_solve(ci, P, freeze_units, rho=rho, prune_B=prune_B,
-                            force_keep=keep, sep_trim=sep_trim)
+                            force_keep=keep, sep_trim=sep_trim, **kw)
         res = d["res"]
         if res.status != 0:
             return build_and_solve(ci, P, freeze_units, rho=rho,
-                                   sep_trim=sep_trim), rnd + 1
+                                   sep_trim=sep_trim, **kw), rnd + 1
         x = res.x
         bad = set()
         for tid, lin, dC, _w in d["prune_dropped_terms"]:
@@ -2475,7 +2891,7 @@ def solve_pruned(ci, P, freeze_units, rho=0.06, prune_B=None, max_rounds=3,
             return d, rnd + 1
         keep |= bad
     return build_and_solve(ci, P, freeze_units, rho=rho,
-                           sep_trim=sep_trim), max_rounds
+                           sep_trim=sep_trim, **kw), max_rounds
 
 
 _HARD_MASKS = {}
@@ -2556,16 +2972,70 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     preplaced unmoved, 1% area band, no overlap). Decision path touches no
     official evaluator -- same as the shipped selection."""
     key = "live"
-    try:
-        iters = int(os.environ.get("ICCAD_SHAPE_LP_ITERS", "1"))
-    except ValueError:
-        iters = 1
+    passes = [0]
     try:
         pb = os.environ.get("ICCAD_SHAPE_LP_B", "8")
         prune = None if pb in ("", "0") else float(pb)
     except ValueError:
         prune = 8.0
+    # L147 (port of L122): tangent cuts on the area's convex side.
+    #
+    # SHIPPED BY CODE DEFAULT since L158. It has to be: `make_submission.py
+    # verify`, `l113_ship_gate` and the grader all run the official command
+    # with ICCAD_* STRIPPED (l113_ship_gate.py:140), so a mechanism that can
+    # only be switched on by an environment variable is inert in the package
+    # no matter how green it measures. L137 ships the same way, through
+    # _l137_env(); the tangent cannot use that path because it is read here in
+    # Python rather than by the C++ subprocess, so the default lives in the
+    # getenv fallbacks instead. The values are _L147_*, verbatim the ones every
+    # L147/L154/L157 arm was measured with.
+    #
+    # ICCAD_SHAPE_LP_L147=0 is the kill switch and restores the pre-L147
+    # shipped band bit-for-bit: it puts every default back to what it was, so
+    # `_r` and `_p` come back empty and lpkw ends up {}. A bare
+    # ICCAD_SHAPE_LP_R=0 is NOT that switch -- it drops the tangent rows but
+    # would leave area_price defaulted, which is a third configuration nobody
+    # has measured.
+    lpkw = {}
+    _on = os.environ.get("ICCAD_SHAPE_LP_L147", "") != "0"
+    try:
+        _r = os.environ.get("ICCAD_SHAPE_LP_R", _L147_R if _on else "")
+        if _r not in ("", "0"):
+            lpkw["area_R"] = float(_r)
+            lpkw["area_g"] = float(os.environ.get(
+                "ICCAD_SHAPE_LP_G", _L147_G if _on else "1.05"))
+            _t = os.environ.get("ICCAD_SHAPE_LP_TOL", _L147_TOL if _on else "")
+            if _t:
+                lpkw["area_tol"] = float(_t)
+        _p = os.environ.get("ICCAD_SHAPE_LP_PRICE", _L147_PRICE if _on else "")
+        if _p:
+            lpkw["area_price"] = float(_p)
+        # L150: band-dependent ROW COUNT. The tangent arm's RF cost is a tail --
+        # p50 +0.047s but max +1.092s -- and the tail is the big-n cases, which
+        # are also the ones with the least runtime slack. rows/unit is
+        # ceil(2*ln(R)/ln(g)) + 1, so either knob shrinks it on that band alone.
+        # ⚠️ g is bounded by the area guarantee: the tangent envelope sits
+        # (sqrt(g)-1)^2 under the curve, and (1-tol)*(1-(sqrt(g)-1)^2) >= 0.99
+        # must hold, so g=1.15 needs tol <= 0.0046 and g=1.20 is unusable.
+        if lpkw.get("area_R") is not None:
+            _bign = int(os.environ.get("ICCAD_SHAPE_LP_BIG_N", "110"))
+            if int(block_count) > _bign:
+                _rb = os.environ.get("ICCAD_SHAPE_LP_R_BIG", "")
+                _gb = os.environ.get("ICCAD_SHAPE_LP_G_BIG", "")
+                _tb = os.environ.get("ICCAD_SHAPE_LP_TOL_BIG", "")
+                if _rb:
+                    lpkw["area_R"] = float(_rb)
+                if _gb:
+                    lpkw["area_g"] = float(_gb)
+                if _tb:
+                    lpkw["area_tol"] = float(_tb)
+    except ValueError:
+        lpkw = {}
 
+    # L157: derive the depth AFTER lpkw, because the gate is coupled to
+    # the tangent arm being in play -- see _shape_lp_depth.
+    iters, gated = _shape_lp_depth(bool(lpkw))
+    _pass_dt = []
     global PRUNE_B
     P0 = [tuple(float(v) for v in p) for p in pos]
     P = P0
@@ -2594,8 +3064,24 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
     l3.CASES[key] = _lp_build_case(block_count, area_targets, b2b_connectivity,
                                    p2b_connectivity, pins_pos, constraints, base)
     saved, PRUNE_B = PRUNE_B, prune
-    try:
-        for _ in range(max(1, iters)):
+
+    def _chain(kw):
+        """One accept-guarded LP chain from P0. Returns the layout it kept.
+
+        Factored out of the loop below unchanged so that the L154 band-catch
+        can re-run the SAME guard with different rows -- a second tier must be
+        adjudicated by the same rule as the first or it is a different keep
+        rule wearing the same name.
+        """
+        P_, prev_ = P0, prev
+        dt_pass = 0.0
+        for _it in range(max(1, iters)):
+            # L157: the first pass is never gated -- it is what ships.
+            # From the second on, spend only if this case can absorb it
+            # and stay on the RF floor. dt_pass is the previous pass
+            # MEASURED, not a fitted cost.
+            if _it and gated and not _depth_affordable(block_count, dt_pass):
+                break
             # sep_trim=True: the separation transitive reduction. Exact
             # (a removed row stays implied by the ones that survive) and
             # independent of the HPWL pruning -- they used to be mutually
@@ -2604,18 +3090,53 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
             # the heavy cases. Measured over 100 cases, min of 3:
             # weighted tLP 0.2670s -> 0.1947s (1.37x) with the quality
             # identical to every digit (1.236783247, kept 100/100).
-            newP, tele, _B = lp_pass(key, P, 0.06, sep_trim=True)
+            _t_pass = time.perf_counter()
+            newP, tele, _B = lp_pass(key, P_, 0.06, sep_trim=True, **kw)
+            dt_pass = time.perf_counter() - _t_pass
+            passes[0] += 1
+            # L159: per-PASS timing, inside one run. Cross-run
+            # differencing cannot measure this: the null control (the 25
+            # n the gate excludes, where two arms do identical work) drifts
+            # -5.03s over 25 cases = 0.20s/case, against a signal of
+            # 0.08s/case. Timing both passes in the SAME process removes
+            # the drift entirely instead of trying to average it away.
+            if _LP_TIMING:
+                _pass_dt.append(dt_pass)
             if tele["lp_obj"] is None:
                 break
             m = _proxy_metrics(newP, *margs)
-            better = (m["hpwl"] < prev["hpwl"] * (1 - 1e-12)
-                      or m["area"] < prev["area"] * (1 - 1e-12))
-            worse = (m["hpwl"] > prev["hpwl"] * (1 + 1e-12)
-                     or m["area"] > prev["area"] * (1 + 1e-12)
-                     or m["vrel"] > prev["vrel"] + 1e-12)
+            better = (m["hpwl"] < prev_["hpwl"] * (1 - 1e-12)
+                      or m["area"] < prev_["area"] * (1 - 1e-12))
+            worse = (m["hpwl"] > prev_["hpwl"] * (1 + 1e-12)
+                     or m["area"] > prev_["area"] * (1 + 1e-12)
+                     or m["vrel"] > prev_["vrel"] + 1e-12)
             if not (better and not worse and hard_ok(P0, newP, key)):
                 break
-            P, prev = newP, m
+            P_, prev_ = newP, m
+        return P_
+
+    # L154 BAND-CATCH (off unless ICCAD_SHAPE_LP_CATCH=1). A tangent-arm case
+    # that hard_ok refuses currently falls all the way back to the pre-LP
+    # layout -- so it loses the whole SHIPPED LP gain, not just the tangent
+    # increment. L153 measured that on the Linux verify: case 96 (n=117) is
+    # rejected there and kept on Windows, and that one case is 107% of the
+    # Windows/Linux spread (the shipped band keeps it at 1.186644; rejection
+    # returns 1.215357). The shipped band's own layout is a legal second tier:
+    # it is what ships today, it is adjudicated by the same guard, and a case
+    # that reaches tier 2 lands on the shipped-band result bit-for-bit.
+    # The mean is small; the point is variance -- it bounds the downside of
+    # every rejection at "no worse than what is already deployed".
+    _catch = os.environ.get("ICCAD_SHAPE_LP_CATCH", "") == "1"
+    tier = 0
+    try:
+        P = _chain(lpkw)
+        if P is not P0:
+            tier = 1
+        elif _catch and lpkw:
+            # only worth a second solve when the first chain ran NON-shipped
+            # rows; with lpkw empty the retry would be the identical program.
+            P = _chain({})
+            tier = 2 if P is not P0 else 0
     finally:
         PRUNE_B = saved
         l3.CASES.pop(key, None)
@@ -2623,7 +3144,174 @@ def _shape_lp(pos, block_count, area_targets, b2b_connectivity,
         # SAME key, so a stale entry would hand the next case masks sized
         # for the previous one (numpy broadcast error, 99/100 cases).
         _HARD_MASKS.pop(key, None)
-    return P if P is not P0 else pos
+    global _LAST_PASS_DT
+    _LAST_PASS_DT = list(_pass_dt)
+    kept = P is not P0
+    # L147 diagnostic, off by default: one line per case, appended. The tangent
+    # arm drops the upper area bound and leaves hard_ok to adjudicate, and a
+    # REJECTED case loses the whole shipped LP gain, not just the increment --
+    # so kept-rate is the gate, and it has to be observable.
+    # L154 added the third field, the TIER that kept it: 0 rejected (pre-LP),
+    # 1 the requested rows, 2 the band-catch. Without it a band-catch run is
+    # indistinguishable from a run where the tangent rows simply got luckier.
+    _sp = os.environ.get("ICCAD_SHAPE_LP_STATS", "")
+    if _sp:
+        try:
+            with open(_sp, "a") as fh:
+                # L157 4th field: LP passes actually SPENT. Without it a
+                # gated run and an ungated one are indistinguishable in
+                # the telemetry -- the gate could be a silent no-op and
+                # every table above would print the same. l117 indexes
+                # this file by position and tolerates the extra column.
+                fh.write(f"{int(block_count)} {int(kept)} {int(tier)} "
+                         f"{int(passes[0])}\n")
+        except Exception:
+            pass
+    return P if kept else pos
+
+
+# L157: SELECTIVE LP DEPTH. The RF floor -- max(0.7, R^0.3) on the runtime
+# ratio -- is not one global budget. Measured per case against the published
+# beta medians the slack runs 0.96x to 3.91x (p50 1.74x), so a mechanism that
+# is unaffordable "on average" is free on most cases and ruinous on a few.
+# A second LP pass costs p50 0.165s and buys +0.5967% in set, +0.7518% (s1)
+# and +0.9959% (s2) out of sample. Spent on EVERY case it prices at NET
+# -0.4593%; spent only where the case can absorb it, NET +0.4275%~+0.8289%
+# across both OOS samples and both gate forms, against a 0.30% bar.
+# Full derivation and the chain of custody: L157_REPORT.md.
+# L147 tangent-cut configuration, shipped by code default (see _shape_lp).
+# Verbatim the arm measured at in-set +2.5881%, OOS +2.2416% (L147), Linux
+# verified at L153, and the base every L154/L157 number sits on top of.
+_L147_R, _L147_G, _L147_TOL, _L147_PRICE = "1.5", "1.10", "0.006", "1.0"
+
+# L157 n-set: the block counts whose beta row can absorb a second LP
+# pass and stay under 0.3046*M_hat(n). Derived by l157_selective_depth.py
+# from the published beta medians; the excluded values inside the span are the
+# cases with no slack, not gaps in the corpus.
+#
+# L160 WIDENED THIS 75 -> 89. The original derivation charged the second pass in
+# DEV-BOX seconds against a GRADER-second budget -- a units error that overcharged
+# it by f. f is now measured at 2.71 (L160: the beta package M73 re-run from git
+# at 7f38893, weighted total 1.295547821428148, bit-identical to the recorded
+# beta identity; 141.07s here against the grader's 52.07s, per-case p25 2.33 /
+# p50 2.71 / p75 3.20, flat across n so the max-setter premise holds). At f=2.71
+# the affordable set is 89, and the old 75 are a strict subset of it.
+# Worth, from the committed OOS arms: s1 +0.4882% -> +0.5513%, s2 +0.5673% ->
+# +0.6798%, RF unchanged (-0.0661% -> -0.0664%), and 0 of the 14 newly included
+# n got worse on either sample.
+# ⚠️ This is a bet, not a free lunch: 89 overtakes 75 only above f = 1.47, and
+# at f = 1.00 it LOSES 0.21pp. The measured f and the observed per-case minimum
+# 1.79 are both above 1.47, which is the whole case for widening.
+#
+# f = 3.17, not 2.71, once the last leg is included. 2.71 is (WSL whole-case) /
+# (grader whole-case), but the LP costs this set was derived from were measured
+# on WINDOWS, and the LP runs 1.17x slower there than on WSL (19.46s vs 16.62s
+# over 100 cases, scipy 1.15.3 vs 1.18.0 -- a modest environment effect, not the
+# 2x swing that would have been needed to overturn any of this). So the correct
+# Windows-second-to-grader-second ratio is 1.17 x 2.71 = 3.17, and 2.71 was
+# conservative. Every threshold clears with margin: L147 positive above 0.75,
+# L157 positive above 0.91, L157 worth adding above 1.37, 89 over 75 above 1.47.
+_L157_NSET = frozenset((
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+    37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+    54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+    70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 86, 87,
+    88, 89, 90, 91, 93, 95, 96, 97, 100, 101, 102, 103, 104, 105,
+    106, 107, 108, 109, 110, 111, 113, 114, 115, 116, 119,
+))
+
+_M157_A, _M157_B = 0.0196, 1.168   # M_hat(n) = A * n**B, R^2 = 0.907 on beta
+_M157_THR = 0.3046                 # 0.7 ** (1/0.3): where max(0.7, R^0.3) lifts
+_T_CASE = threading.local()        # per-case clock, stamped by solve()
+
+
+def _case_clock_start() -> None:
+    """Stamp the start of THIS case. Thread-local: the profile pool runs in
+    threads but _shape_lp is reached on the same thread that entered solve(),
+    so a plain module global would be correct today and would race the day a
+    caller drives cases concurrently."""
+    _T_CASE.t0 = time.perf_counter()
+
+
+def _shape_lp_depth(tangent_on=False):
+    """(passes allowed, gate the extra ones?) -- L157.
+
+    An explicit ICCAD_SHAPE_LP_ITERS keeps its old meaning and is UNGATED:
+    that is how the k=1 and k=2 arms were measured and they have to stay
+    reproducible bit-for-bit. ICCAD_SHAPE_LP_DEPTH2=0 forces the shipped k=1
+    -- the kill switch, and the control for the bit-equality gate.
+
+    `tangent_on` is the coupling that keeps the DEPLOYED configuration
+    equal to the PRICED one. Every L157 number -- in set and on both OOS
+    samples -- was measured with L147's tangent rows in play; depth 2 on
+    the plain shipped band was never measured at all, and a package with
+    no ICCAD_* set would otherwise run exactly that unmeasured arm.
+    Gated on lpkw and not on the env var, so it still holds the day the
+    tangent is switched on by a code default rather than by the
+    environment."""
+    v = os.environ.get("ICCAD_SHAPE_LP_ITERS", "")
+    if v != "":
+        try:
+            return max(1, int(v)), False
+        except ValueError:
+            return 1, False
+    if not tangent_on:
+        return 1, False
+    if os.environ.get("ICCAD_SHAPE_LP_DEPTH2", "") == "0":
+        return 1, False
+    return 2, True
+
+
+def _depth_affordable(n, dt_next) -> bool:
+    """Can this case absorb dt_next more seconds and stay on the RF floor?
+
+    t_case and dt_next are both OBSERVED -- the case clock, and the pass that
+    just ran (a further pass repeats the same build+solve on a slightly
+    different P, so the last pass is the right estimate for the next one).
+    Only M_hat is estimated; substituting it for the true beta median moves
+    the selection from 71 cases to 75 and costs -0.0201% of RF.
+
+    No clock -> False, i.e. shipped k=1. A caller that never went through
+    solve() (a probe) must not silently buy the ungated k=2, which prices at
+    NET -0.4593%. Every failure direction here falls back to what ships."""
+    # DEFAULT: the DETERMINISTIC form. The per-case clock below is a better
+    # mechanism on paper -- it reads this box's real time instead of trusting a
+    # corpus median -- and it cost this project a standing rule to find out why
+    # it cannot ship. CLAUDE.md, twice: "any in-window LP must not keep a HiGHS
+    # time_limit (triggering it makes the LP run-to-run nondeterministic)". A
+    # wall-clock gate reintroduces exactly that, by a different route. Measured:
+    # two runs of identical code and flags decided 5 block counts differently
+    # and moved 4 cases, a weighted delta of -0.0011%. The SCORE impact is
+    # noise; what it breaks is every bit-equality gate the project verifies
+    # with -- make_submission.py verify and l113_ship_gate G4 both compare
+    # positions bit-for-bit against an anchor, and both would start failing
+    # intermittently. A deterministic n-set keeps them working, and it is the
+    # bracket L157_REPORT.md quotes anyway: OOS NET +0.4275% / +0.5066%,
+    # against +0.5477% / +0.8289% for the clock form. Buying 0.12-0.32pp with
+    # the project's whole verification story is not a trade worth making.
+    if os.environ.get("ICCAD_SHAPE_LP_DEPTH_PC", "") != "1":
+        return int(n) in _L157_NSET
+
+    # ICCAD_SHAPE_LP_DEPTH_PC=1: the per-case clock form. Measured and
+    # documented, NOT shipped. Keep it for the day the grader's own timings
+    # are known, or the day invariant gates replace bit-equality ones.
+    t0 = getattr(_T_CASE, "t0", 0.0)
+    if not t0:
+        return False
+    m_hat = _M157_A * (max(1.0, float(n)) ** _M157_B)
+    # ICCAD_SHAPE_LP_DEPTH_S: machine-speed scale, default 1.0 = OFF.
+    # The gate is stated in ABSOLUTE seconds, because R = t/M is measured on
+    # whatever box runs the case and M_hat is the grader's median -- correct
+    # on the grader, and unfirable anywhere slower. This dev box runs ~9x
+    # slower per case (490.7s vs beta's 52.07s over the same 100 cases), so
+    # at S=1 the gate is a no-op HERE and the mechanism cannot be exercised
+    # end to end. S makes it testable. It is NOT a tuning knob: shipping any
+    # value other than 1.0 would be claiming to know the grader's speed.
+    try:
+        s = float(os.environ.get("ICCAD_SHAPE_LP_DEPTH_S", "1") or "1")
+    except ValueError:
+        s = 1.0
+    return (time.perf_counter() - t0) + dt_next <= _M157_THR * m_hat * s
 
 
 def _shape_lp_on() -> bool:
@@ -2644,6 +3332,22 @@ def _shape_lp_on() -> bool:
     return _effective_cores_hi() >= _ROUTE_A_CORES_MIN
 
 
+# OFFLINE INSTRUMENT (ported from the teammate's L140, `l113-route-a`). Never
+# fires unless ICCAD_LP_TIMING is set; the shipped path pays one os.environ
+# lookup per case and is otherwise bit-identical.
+#
+# 🚨 WHY CPU TIME AND NOT WALL -- their finding, and it invalidates how L147,
+# L154 and L157 were all priced. Differencing whole-eval wall on a dev box put
+# their OOS 240 at k=2 FASTER than k=1 (1507s vs 1601s) for strictly more work,
+# i.e. a NEGATIVE LP cost that looked perfectly reasonable in a table. The same
+# noise made their per-pass figure wrong by 2.4x (0.186s against a true
+# 0.4446s). 51 portfolio subprocesses run concurrently with everything else on
+# the box; process_time() counts only this process's own CPU, and the LP runs
+# synchronously in the main process, so it is the right clock.
+_LP_TIMING = os.environ.get("ICCAD_LP_TIMING", "") not in ("", "0")
+_LAST_PASS_DT = []
+
+
 def _shape_lp_maybe(pos, *a):
     """Never raises, never returns anything the guard did not accept.
 
@@ -2652,6 +3356,19 @@ def _shape_lp_maybe(pos, *a):
     post-processing may decline, it may never take the case down with it."""
     if not _shape_lp_on():
         return pos
+    if _LP_TIMING:
+        _c0, _w0 = time.process_time(), time.perf_counter()
+        try:
+            _r = _shape_lp(pos, *a)
+        except Exception as exc:
+            print(f"[constructive] shape LP raised {exc!r}; keeping the selected "
+                  f"layout", file=sys.stderr)
+            _r = pos
+        print(f"[lptime] n={len(pos)} cpu={time.process_time()-_c0:.6f} "
+              f"wall={time.perf_counter()-_w0:.6f} "
+              f"passes={','.join(f'{d:.6f}' for d in _LAST_PASS_DT)}",
+              file=sys.stderr, flush=True)
+        return _r
     try:
         return _shape_lp(pos, *a)
     except Exception as exc:

@@ -74,6 +74,29 @@ static int N;
 static double BP_W = 30000.0;   // boundary-miss penalty in greedy item scoring
 static double WIRE_MULT = 1.0;  // extra scale on the incremental-HPWL term (env)
 static double ANCHOR_W = 0.10;  // anchor pull in greedy item scoring
+// L137: GORDIAN global-placement hint. estimate_anchors() can only anchor a
+// block to neighbours that are ALREADY PLACED, and it runs once when only the
+// PREPLACED blocks are down -- so a block with no preplaced neighbour and no pin
+// gets sw==0, anchor weight 0, and NO PULL AT ALL. This file's own M9 header
+// says it: "the first blocks are placed blind to HPWL".
+// The hint supplies a globally optimised centre for EVERY block, computed by the
+// quadratic solve/partition alternation in l129_global_placer.py and handed over
+// through _serialize_input's existing gnn_hint channel. Priced at 19.7 ms
+// weighted = 0.467% of the per-case wall (L137 gate 0), against hpwl_gap being
+// worth +10.11% of the score.
+//   0 = OFF, and the whole path is then bit-identical to L136 (default)
+//   1 = seed ONLY the sw==0 blocks, i.e. exactly the ones with no pull today
+//   2 = seed every block, overriding the placed-neighbour centroid
+static int HINT_MODE = 0;       // ICCAD_HINT_MODE
+// L137: cap the refine passes on a HINTED run only. The refine loop (see the M9
+// note above) has no convergence test -- its only early exit is run_frame
+// FAILING -- so on a case where the hint makes a previously-unpackable frame
+// pack, the loop stops aborting and runs all REFINE_ITERS passes. That is where
+// the whole runtime cost of the hint lives: measured on case 90, hinted and
+// unhinted are identical at REFINE_ITERS=1 (0.230s vs 0.236s) and 0.457s vs
+// 0.271s at the default 12. This caps that one term without touching the
+// unhinted path, which keeps its 12. 0 = no cap.
+static int HINT_REFINE = 0;     // ICCAD_HINT_REFINE
 static bool WIRE_FOR_ALL = false; // ICCAD_WIRE_FOR_ALL: compute wire for ALL bp positions
 static bool WIRE_ORDER = false;   // ICCAD_WIRE_ORDER: sort items by total_wire first (hpwl-first packing)
 static bool WIRE_TIEBREAK = false; // ICCAD_WIRE_TIEBREAK: total_wire as 2nd sort key after bscore
@@ -194,6 +217,9 @@ static int REFINE_ITERS = 12; // refinement passes per frame (ICCAD_REFINE_ITERS
 
 struct Anchor { double x, y, w; };
 static vector<Anchor> anchors;
+// L137: per-block GORDIAN centres from stdin. Empty unless the caller sent a
+// hint block, so every no-hint path stays exactly as it was.
+static vector<pair<double,double>> hint;
 
 static vector<vector<pair<int,double>>> b2b_adj;  // block -> [(neighbor block, w)]
 static vector<vector<pair<int,double>>> p2b_adj;  // block -> [(pin index, w)]
@@ -213,6 +239,7 @@ struct Item {
     int bscore;
     double total_wire;   // sum of b2b edge weights over all members
     double ax, ay, aw;   // anchor
+    double hx, hy, hw;   // L137: FRAME-RELATIVE hint anchor, in [0,1]^2
 };
 
 // ─── basic helpers ────────────────────────────────────────────────────────────
@@ -378,6 +405,10 @@ static void estimate_anchors() {
         sx[e.j]+=e.w*pins[e.i].first; sy[e.j]+=e.w*pins[e.i].second; sw[e.j]+=e.w;
     }
     for (int i=0;i<N;i++) if (sw[i]>0) anchors[i]={sx[i]/sw[i], sy[i]/sw[i], sw[i]};
+
+    // L137: the hint is NOT folded into anchors[] -- anchors[] is absolute and
+    // the hint is frame-relative, so they cannot share an array. It is applied
+    // at the use site by anchor_dist(), where the frame is known.
 }
 
 // ─── cluster internal layout ──────────────────────────────────────────────────
@@ -673,6 +704,33 @@ static void set_item_anchor(Item& it) {
         sx+=weight*anchors[b].x; sy+=weight*anchors[b].y; sw+=weight;
     }
     if (sw>0){ it.ax=sx/sw; it.ay=sy/sw; it.aw=sw; } else { it.ax=it.ay=it.aw=0; }
+
+    // L137: the same centroid over the FRAME-RELATIVE hint. Kept separate from
+    // ax/ay because the two live in different spaces -- ax/ay are absolute
+    // coordinates, hx/hy are fractions of the frame -- and averaging across the
+    // two would be meaningless. The scaling to the actual frame happens at the
+    // use site, which is the only place fw/fh are known.
+    it.hx=it.hy=it.hw=0;
+    if ((int)hint.size()==N){
+        double gx=0,gy=0,gw=0;
+        for (int b: it.blocks){
+            double weight=max(dims[b].first*dims[b].second,1e-9);
+            gx+=weight*hint[b].first; gy+=weight*hint[b].second; gw+=weight;
+        }
+        if (gw>0){ it.hx=gx/gw; it.hy=gy/gw; it.hw=gw; }
+    }
+}
+
+// L137: which point should block/item `b` be pulled toward, in THIS frame?
+// The hint is frame-relative so it adapts to whichever of the candidate frames
+// (scales 1.05-2.10 x several aspects) is being packed; the classic anchor is
+// absolute and is used unchanged when there is no hint for this block.
+static inline double anchor_dist(double cx, double cy, double ax, double ay,
+                                 double aw, double hx, double hy, double hw,
+                                 double fw, double fh) {
+    if (HINT_MODE && hw>0 && (HINT_MODE==2 || aw<=0))
+        return fabs(cx-hx*fw)+fabs(cy-hy*fh);
+    return aw>0 ? fabs(cx-ax)+fabs(cy-ay) : 0.0;
 }
 
 // ─── frame candidates ─────────────────────────────────────────────────────────
@@ -925,7 +983,10 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                     bool ov=g46.overlaps(x,y,cw,ch);
                     if (ov) continue;
                     double cx=x+cw/2, cy=y+ch/2;
-                    double ad=anchors[b].w>0?fabs(cx-anchors[b].x)+fabs(cy-anchors[b].y):0.0;
+                    double ad=anchor_dist(cx,cy,anchors[b].x,anchors[b].y,anchors[b].w,
+                                          (int)hint.size()==N?hint[b].first:0.0,
+                                          (int)hint.size()==N?hint[b].second:0.0,
+                                          (int)hint.size()==N?1.0:0.0, fw,fh);
                     int bp=boundary_penalty_est(b,x,y,cw,ch,fw,fh);
                     double area=bbox_area_with(x,y,cw,ch), wire=0.0;
                     if (bp==0){
@@ -994,7 +1055,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         bool ov=g46.overlaps(x,y,IW,IH);
                         if (ov) continue;
                         double cx=x+IW/2, cy=y+IH/2;
-                        double ad=it.aw>0?fabs(cx-it.ax)+fabs(cy-it.ay):0.0;
+                        double ad=anchor_dist(cx,cy,it.ax,it.ay,it.aw,it.hx,it.hy,it.hw,fw,fh);
                         double area=bbox_area_with(x,y,IW,IH), wire=0.0;
                         for (auto& nb:b2b_adj[sb]){
                             double ncx,ncy;
@@ -1054,7 +1115,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
             }
             if (ov) continue;
             double cx=x+it.w/2, cy=y+it.h/2;
-            double ad=it.aw>0?fabs(cx-it.ax)+fabs(cy-it.ay):0.0;
+            double ad=anchor_dist(cx,cy,it.ax,it.ay,it.aw,it.hx,it.hy,it.hw,fw,fh);
             double bp=item_boundary_penalty(it,x,y,fw,fh);
             double area=bbox_area_with(x,y,it.w,it.h);
             double wire=0.0;
@@ -2035,9 +2096,21 @@ int main() {
     for (int i=0;i<N;i++){ int fx,pp,mib,cl,bnd; scanf("%d %d %d %d %d",&fx,&pp,&mib,&cl,&bnd);
         blocks[i].is_fixed=fx!=0; blocks[i].is_preplaced=pp!=0; blocks[i].mib=mib; blocks[i].cluster=cl; blocks[i].boundary=bnd; }
     for (int i=0;i<N;i++) scanf("%lf %lf %lf %lf",&blocks[i].tx,&blocks[i].ty,&blocks[i].tw,&blocks[i].th);
+    // L137: the hint block. _serialize_input (optimizer_claude.py:581) has ALWAYS
+    // emitted a "1\n"+N lines / "0\n" marker here; this binary simply never read
+    // it. Reading it now is backward compatible -- a stream that omits it leaves
+    // has_hint at 0 because scanf returns EOF rather than 1.
+    { int has_hint=0;
+      if (scanf("%d",&has_hint)==1 && has_hint){
+          hint.assign(N,{0.0,0.0});
+          for (int i=0;i<N;i++)
+              if (scanf("%lf %lf",&hint[i].first,&hint[i].second)!=2){ hint.clear(); break; }
+      } }
     if (const char* e=getenv("ICCAD_BP_WEIGHT")) { double v=atof(e); if (v>0) BP_W=v; }
     if (const char* e=getenv("ICCAD_WIRE_MULT")) { double v=atof(e); if (v>0) WIRE_MULT=v; }
     if (const char* e=getenv("ICCAD_ANCHOR_W"))  { double v=atof(e); if (v>=0) ANCHOR_W=v; }
+    if (const char* e=getenv("ICCAD_HINT_MODE")) { int v=atoi(e); if (v>0) HINT_MODE=v; }   // L137
+    if (const char* e=getenv("ICCAD_HINT_REFINE")){ int v=atoi(e); if (v>0) HINT_REFINE=v; } // L137
     if (const char* e=getenv("ICCAD_LR_ASPECT"))  { double v=atof(e); if (v>0) LR_ASPECT=v; }
     if (const char* e=getenv("ICCAD_TB_ASPECT"))  { double v=atof(e); if (v>0) TB_ASPECT=v; }
     if (const char* e=getenv("ICCAD_SOFT_ASPECT")){ double v=atof(e); if (v>0) SOFT_ASPECT=v; }
@@ -2063,6 +2136,11 @@ int main() {
     if (getenv("ICCAD_NO_JUMP")) PUSH_JUMP=false;
     if (const char* e=getenv("ICCAD_PUSH_PASSES")){ int v=atoi(e); if (v>=0) PUSH_PASSES=v; }
     if (const char* e=getenv("ICCAD_REFINE_ITERS")){ int v=atoi(e); if (v>=0) REFINE_ITERS=v; }
+    // L137: applied AFTER both knobs are read, and only ever downward, so an
+    // explicit ICCAD_REFINE_ITERS below the cap still wins and the unhinted path
+    // is untouched.
+    if (HINT_MODE && HINT_REFINE > 0 && REFINE_ITERS > HINT_REFINE)
+        REFINE_ITERS = HINT_REFINE;
     if (const char* e=getenv("ICCAD_COMPACT_ITERS")){ int v=atoi(e); if (v>=0) COMPACT_ITERS=v; }
     if (getenv("ICCAD_WIRE_FOR_ALL")) WIRE_FOR_ALL=true;
     if (getenv("ICCAD_WIRE_ORDER")) WIRE_ORDER=true;

@@ -553,6 +553,59 @@ _PROFILES.extend(_M124_EXTRA)
 _M124_CORES_MIN = 40
 
 
+# L137 (2026-08-17): the GORDIAN hint as a POOL TIER, not a global overlay.
+#
+# WHY A TIER. Applied globally (ICCAD_HINT_MODE=1 on every profile) the hint is
+# quality-positive -- in-set 48c 1.2284738 -> 1.2279371 (+0.0437%), OOS s1 240
+# cases 1.563347 -> 1.561957 (+0.0889%) with hpwl_gap 0.3135 -> 0.3116 and
+# area_gap 0.2569 -> 0.2529, both moving the way the mechanism predicts -- but it
+# also moves the 48c wall +1.76%, and that cost is NOT spread: case 90 alone is
+# 190% of the weighted delta and case 91 another 73% (over 100% because the rest
+# get FASTER). Timed on one profile, case 90 is 0.213 -> 0.380s while case 92,
+# the biggest quality gain, is 0.674 -> 0.674s unchanged.
+#
+# A tier removes exactly that cost. At >=40 cores the wall is the max-setter
+# (M67-E, 100/100), so a 0.38s hinted profile against case 90's 2.93s wall costs
+# nothing on the max term, and the existing profiles keep their exact runtime AND
+# their exact output. M76/M77 measured the proxy as oracle-perfect on
+# heterogeneous candidates, so an added candidate cannot lose quality -- it can
+# only fail to be selected.
+#
+# Same discipline as M72/M76/M80/M124: appended UNCONDITIONALLY so indices stay
+# stable (_BIG_REDUNDANT_IDX / _M45_BAND_DROP are index-based frozensets over
+# 0..40), gated at CALL time so a probe that sets the env after import actually
+# flips it, and NEVER inserted or reordered.
+#
+# Sources are four diverse always-in-pool base recipes (<_M55_BASE_LEN so they
+# are never dropped by the M55 gate): free_aspect, free_gm_wt_wire,
+# free_pin_wt_wire, free_gm_tight_wire -- spanning GUIDE_MED / BFS_PIN / tight
+# frames, since the hint changes the anchor term and that interacts with the
+# wire and frame knobs.
+_L137_SRC = (0, 2, 4, 5)
+_L137_EXTRA = [dict(_PROFILES[i], ICCAD_HINT_MODE="1") for i in _L137_SRC]
+_L137_BASE = len(_PROFILES)
+_L137_IDX = frozenset(range(_L137_BASE, _L137_BASE + len(_L137_EXTRA)))
+_PROFILES.extend(_L137_EXTRA)
+_L137_CORES_MIN = 40
+
+
+def _l137_active(block_count: int) -> FrozenSet[int]:
+    """Tier indices this call should add. CALL time, never import time.
+
+    Uses _effective_cores_hi() (unknown -> 0) for the same reason M80/M124 do:
+    this tier fires at HIGH core counts, so the 9999 sentinel that keeps tier-4
+    safe would switch it ON wherever detection fails -- and below the gate the
+    pool is sum-bound, where four more profiles DO cost wall.
+
+    Default OFF while the net is unresolved: the quality is measured and the
+    runtime is not yet, so this must not ship by accident."""
+    if os.environ.get("ICCAD_HINT_POOL", "0") != "1":
+        return frozenset()
+    if _effective_cores_hi() < _L137_CORES_MIN:
+        return frozenset()
+    return _L137_IDX
+
+
 def _m124_active(block_count: int) -> FrozenSet[int]:
     """Tier indices this call should add. Read at CALL time, never at import, so
     a probe that sets the env after importing this module actually flips it.
@@ -829,6 +882,44 @@ def _m71_env() -> Dict[str, str]:
     return dict(_M71_ENV)
 
 
+# L137 (2026-08-19): the GORDIAN hint as the GLOBAL overlay, which is the form
+# that was measured. The TIER form above (_l137_active) stays default-OFF -- it
+# was worse on both axes (commit d64abe0).
+#
+# CORES-GATED at the same >=40 as route A / the shape LP / tier-5 / M80, and for
+# the same reason M76 recorded: the quality (+0.0889% OOS s1 240) and the wall
+# (+0.46%) were BOTH measured at 48c with route A and the LP live, so that is the
+# only shape the number describes. Below the gate the pool is sum-bound, where
+# the hint's extra refine passes are NOT absorbed by a max-setter, and nothing
+# has measured it there. _effective_cores_hi() maps unknown -> 0, so a detection
+# failure falls back to L136 behaviour (fail-CLOSED, the M67-F doctrine).
+#
+# HINT_REFINE=4 is part of the recipe, not a separate knob: it caps the refine
+# loop on hinted runs only, and it is what turns the arm from "quality up, wall
+# up 1.76%" into "quality up, wall up 0.46%".
+_L137_ENV: Dict[str, str] = {"ICCAD_HINT_MODE": "1",
+                             "ICCAD_HINT_REFINE": "4"}
+
+
+def _l137_env() -> Dict[str, str]:
+    """Per-profile env overlay for the L137 GORDIAN hint (global form).
+
+    ICCAD_HINT_MODE=0 forces it off; any other explicit ambient value forces it
+    on and wins over the recipe, so the A/B tools (l137_oos_ab.py,
+    l113_ship_gate.py --env) keep measuring what they ask for."""
+    v = os.environ.get("ICCAD_HINT_MODE", "")
+    if v == "0":
+        return {}
+    if v == "" and _effective_cores_hi() < _L137_CORES_MIN:
+        return {}
+    ov = dict(_L137_ENV)
+    for k in ov:
+        amb = os.environ.get(k, "")
+        if amb != "":
+            ov[k] = amb
+    return ov
+
+
 def _profile_env(i: int, block_count: int) -> Dict[str, str]:
     """The per-profile env overlay _solve_impl applies to pool index `i`, in the
     wrapper's precedence order (profile dict, then band, then M71).
@@ -840,6 +931,7 @@ def _profile_env(i: int, block_count: int) -> Dict[str, str]:
     ov = dict(_band_env(block_count))
     if i not in _M73_IDX:
         ov.update(_m71_env())
+        ov.update(_l137_env())          # L137 GORDIAN hint, cores-gated >= 40
     return ov
 
 
@@ -910,7 +1002,8 @@ def _pool_indices(block_count: int) -> List[int]:
     # gate lives inside _m80_active() because, unlike M72/M76, this tier is meant
     # to SHIP and the gate is the mechanism, not a measurement switch.
     extra = ((_M55_IDX if m55 else frozenset()) | esc
-             | _m80_active(block_count) | _m124_active(block_count))
+             | _m80_active(block_count) | _m124_active(block_count)
+             | _l137_active(block_count))          # L137 GORDIAN-hint tier
     full = [i for i in range(len(_PROFILES))
             if i < _M55_BASE_LEN or i in extra]
     if os.environ.get("ICCAD_ADAPTIVE_POOL", "1") == "0":
@@ -1574,6 +1667,310 @@ def _row_fallback(block_count, area_targets, constraints, target_positions):
     return pos
 
 
+try:                                     # L137: numpy only; no scipy dependency
+    import numpy as _gh_np
+except Exception:                        # absent -> the hint goes inert
+    _gh_np = None
+
+_HINT_DENSITY = float(os.environ.get("ICCAD_HINT_DENSITY", "0.80"))
+_HINT_LEVELS = int(os.environ.get("ICCAD_HINT_LEVELS", "16"))
+
+
+def _gordian_hint(n, at, b2b, p2b, pins, cons, tp):
+    """L137: a globally optimised centre for every block, as a placement hint.
+
+    WHY. `estimate_anchors()` in constructive.cpp can only anchor a block to
+    neighbours that are ALREADY PLACED, and it runs once when only the PREPLACED
+    blocks are down -- so a block with no preplaced neighbour and no pin gets no
+    anchor at all. The C++ header has said so since M9: "the first blocks are
+    placed blind to HPWL". hpwl_gap is worth +10.11% of the score and is the one
+    term this project has never moved on the shipped path.
+
+    WHAT. GORDIAN's alternation: solve the quadratic wirelength problem, cut the
+    region area-balanced, re-solve with one centre-of-gravity equality per region,
+    cut again. The equality is weak enough that blocks still move to shorten wire
+    and strong enough that they cannot re-pile, so wirelength keeps a say at every
+    level instead of only the first. L130 measured this as the first mechanism to
+    move hpwl_gap (-13.8% on the L129 candidate); L134 then closed that candidate
+    on RUNTIME, not quality -- the alternation was never the expensive part.
+
+    Block-level on purpose. L129 ran it over rigid cluster UNITS, but the C++
+    forms its own items and consumes anchors PER BLOCK, so the units would just be
+    rebuilt on the other side. Cluster members are instead collapsed onto their
+    shared centroid at the end, which is the property that mattered.
+
+    Priced before wiring (L137 gate 0): 19.7 ms weighted, 0.467% of the per-case
+    wall, worst case 0.63%. Never raises: on any failure the caller falls back to
+    the no-hint path, which is the shipped behaviour.
+    """
+    if _gh_np is None or n <= 2:
+        return None
+    np = _gh_np
+    area = np.array([max(float(at[i]), 1e-9) for i in range(n)])
+    pre = np.array([int(cons[i][1]) != 0 for i in range(n)])
+    code = [int(cons[i][4]) for i in range(n)]
+    clus = [int(cons[i][3]) for i in range(n)]
+
+    fx = np.zeros(n)
+    fy = np.zeros(n)
+    if tp is not None:
+        for i in range(n):
+            if pre[i]:
+                fx[i] = float(tp[i][0]) + float(tp[i][2]) / 2.0
+                fy[i] = float(tp[i][1]) + float(tp[i][3]) / 2.0
+
+    L = np.zeros((n, n))
+    bx = np.zeros(n)
+    by = np.zeros(n)
+    for e in b2b.tolist():
+        i, j, w = int(e[0]), int(e[1]), float(e[2])
+        if i < 0 or j < 0 or i >= n or j >= n or i == j or w <= 0:
+            continue
+        L[i, i] += w
+        L[j, j] += w
+        L[i, j] -= w
+        L[j, i] -= w
+    px = py = 0.0
+    plist = pins.tolist()
+    if plist:
+        px = sum(float(p[0]) for p in plist) / len(plist)
+        py = sum(float(p[1]) for p in plist) / len(plist)
+    for e in p2b.tolist():
+        p, j, w = int(e[0]), int(e[1]), float(e[2])
+        if j < 0 or j >= n or p < 0 or p >= len(plist) or w <= 0:
+            continue
+        L[j, j] += w
+        bx[j] += w * float(plist[p][0])
+        by[j] += w * float(plist[p][1])
+    # an unconnected block would leave a singular row; pull it weakly to the pins
+    for k in range(n):
+        L[k, k] += 1e-6
+        bx[k] += 1e-6 * px
+        by[k] += 1e-6 * py
+
+    free = ~pre
+    if not free.any():
+        return None
+    Lf = L[np.ix_(free, free)]
+    rx = bx[free] - L[np.ix_(free, pre)] @ fx[pre]
+    ry = by[free] - L[np.ix_(free, pre)] @ fy[pre]
+    fidx = np.flatnonzero(free)
+    pos = {int(k): t for t, k in enumerate(fidx)}
+    F = len(fidx)
+
+    def solve(rows, ux, uy):
+        """min x'Lx - 2b'x subject to the region centre-of-gravity rows."""
+        if not rows:
+            A = None
+        else:
+            A = np.array(rows)
+        try:
+            if A is None:
+                sx = np.linalg.solve(Lf, rx)
+                sy = np.linalg.solve(Lf, ry)
+            else:
+                R = A.shape[0]
+                K = np.zeros((F + R, F + R))
+                K[:F, :F] = Lf
+                K[:F, F:] = A.T
+                K[F:, :F] = A
+                K[F:, F:] = -1e-12 * np.eye(R)
+                rhs = np.zeros((F + R, 2))
+                rhs[:F, 0] = rx
+                rhs[:F, 1] = ry
+                rhs[F:, 0] = ux
+                rhs[F:, 1] = uy
+                sol = np.linalg.solve(K, rhs)
+                sx, sy = sol[:F, 0], sol[:F, 1]
+        except Exception:
+            return None, None
+        ox, oy = fx.copy(), fy.copy()
+        ox[free], oy[free] = sx, sy
+        return ox, oy
+
+    cx, cy = solve([], None, None)
+    if cx is None:
+        return None
+
+    # 🚨 THE BOX MUST BE ANCHORED AT THE ORIGIN, not at the solve's own minimum.
+    # constructive.cpp packs into a frame [0,fw] x [0,fh] -- its LEFT test is
+    # literally `fabs(x - 0.0)` -- and preplaced blocks sit at their absolute
+    # tx/ty while pins carry absolute coordinates, so the C++ coordinate space
+    # starts at 0. An unconstrained quadratic solve does NOT: it floats wherever
+    # the pins pull it. Anchoring the region box at min(cx), min(cy) (which is
+    # what L129 did, correctly, because it placed into its own frame) produces
+    # hint coordinates in a different origin from the consumer's, and the anchor
+    # pull then drags every block toward a meaningless point.
+    # MEASURED with the floating origin: 48c 1.2284738 -> 1.2344230, i.e. 0.48%
+    # WORSE, 59/100 cases changed. The mechanism was never given a fair test.
+    x0 = y0 = 0.0
+    side = math.sqrt(float(area.sum()) / max(_HINT_DENSITY, 0.05))
+    if pre.any():
+        side = max(side, float(cx[pre].max()), float(cy[pre].max()))
+
+    def rank(i, horiz):
+        """A boundary block must end up at that extreme, and nothing in the
+        quadratic objective knows it -- L130 measured the alternation buying hpwl
+        and area and paying more than both back in boundary violations without
+        this. Sorting it to the matching end of every cut it meets lands it in
+        the outermost leaf."""
+        lo, hi = (code[i] & 1, code[i] & 2) if horiz else (code[i] & 8, code[i] & 4)
+        return 0 if (lo and not hi) else (2 if (hi and not lo) else 1)
+
+    regions = [(list(range(n)), x0, y0, side, side)]
+    for _lvl in range(max(1, _HINT_LEVELS)):
+        nxt = []
+        for idx, rx0, ry0, w, h in regions:
+            if len(idx) <= 1:
+                nxt.append((idx, rx0, ry0, w, h))
+                continue
+            horiz = w >= h
+            key = cx if horiz else cy
+            order = sorted(idx, key=lambda q: (rank(q, horiz), key[q], q))
+            half, run, cut = float(area[order].sum()) / 2.0, 0.0, 1
+            for t, q in enumerate(order):
+                run += area[q]
+                if run >= half:
+                    cut = max(1, min(len(order) - 1, t + 1))
+                    break
+            lft, rgt = order[:cut], order[cut:]
+            fr = float(area[lft].sum()) / max(float(area[order].sum()), 1e-9)
+            if horiz:
+                nxt.append((lft, rx0, ry0, w * fr, h))
+                nxt.append((rgt, rx0 + w * fr, ry0, w * (1 - fr), h))
+            else:
+                nxt.append((lft, rx0, ry0, w, h * fr))
+                nxt.append((rgt, rx0, ry0 + h * fr, w, h * (1 - fr)))
+        if len(nxt) == len(regions):
+            break
+        regions = nxt
+        rows, ux, uy = [], [], []
+        for idx, rx0, ry0, w, h in regions:
+            mem = [q for q in idx if free[q]]
+            tot = float(sum(area[q] for q in mem))
+            if not mem or tot <= 1e-9:
+                continue
+            r = np.zeros(F)
+            for q in mem:
+                r[pos[q]] = area[q] / tot
+            rows.append(r)
+            ux.append(rx0 + w / 2.0)
+            uy.append(ry0 + h / 2.0)
+        nx, ny = solve(rows, ux, uy)
+        if nx is None:
+            break
+        cx, cy = nx, ny
+
+    # cluster members share a centroid: L129 placed each cluster as one rigid
+    # unit, and this is the part of that which the anchor consumer can use.
+    groups = {}
+    for i in range(n):
+        if clus[i]:
+            groups.setdefault(clus[i], []).append(i)
+    for mem in groups.values():
+        if len(mem) < 2:
+            continue
+        tot = float(sum(area[q] for q in mem))
+        gx = float(sum(area[q] * cx[q] for q in mem) / tot)
+        gy = float(sum(area[q] * cy[q] for q in mem) / tot)
+        for q in mem:
+            if not pre[q]:
+                cx[q], cy[q] = gx, gy
+
+    # 🚨 EMIT FRAME-RELATIVE, in [0,1]^2. constructive.cpp does not pack into one
+    # frame -- it tries a whole set (scales 1.05-2.10 x several aspects) and keeps
+    # the best. An absolute hint silently assumes ONE of them, and fights every
+    # other candidate, including the tall/wide frames that win on many cases: the
+    # box here is square by construction while e.g. case 54 packs into 141x219.
+    # The consumer scales by (fw,fh) at the point of use, where the frame is known.
+    # MEASURED absolute, after the origin was already fixed: 1.2311612 against a
+    # 1.2284738 baseline -- still 0.219% worse, which is what sent me here.
+    inv = 1.0 / max(side, 1e-9)
+    return [(min(max(float(cx[i]) * inv, 0.0), 1.0),
+             min(max(float(cy[i]) * inv, 0.0), 1.0)) for i in range(n)]
+
+
+_SNAP_TOL = 1e-9
+
+
+def _snap_group_abutment(pos, constraints, block_count, tol=_SNAP_TOL):
+    """L131: close sub-ULP gaps between members of the same cluster group.
+
+    🚨 `origin + offset` DOES NOT ABUT in doubles. The evaluator builds a block's
+    far edge as `x + w` and floating-point addition is not associative, so
+    `(o+ox)+w` and `o+(ox+w)` differ by an ULP: a packing that abuts exactly in
+    exact arithmetic lands +-2.8e-14 off, and `unary_union` then either merges
+    the group or splits it. A split costs `connected_components - 1` grouping
+    violations.
+
+    MEASURED on the shipped 48c result: 2 of its 16 grouping violations are this,
+    on cases 69 (gap +2.842e-14) and 78 (+1.421e-14), both heavy. Snapping them
+    and re-running the OFFICIAL evaluator moves the weighted total
+    1.236791669773 -> 1.235854685125, i.e. **+0.0758%**, 0 new infeasibilities.
+    See L131_REPORT.md.
+
+    WHY A SNAP IS SAFE, and it is the reason this can be a post-process at all:
+      * `check_overlap` (iccad2026_evaluate.py:223) ignores overlaps below
+        **1e-6** on both axes -- "touching edges OK". Gaps here are ~1e-14 and a
+        snap moves a block by at most `tol` = 1e-9, so it cannot manufacture an
+        overlap violation, with five orders of magnitude to spare.
+      * preplaced blocks are NEVER moved (position is a HARD constraint);
+      * widths and heights are never touched (dimensions and area are HARD);
+      * only gaps strictly inside (0, tol] are closed, so a real gap stays a real
+        gap and a group that genuinely has two components keeps both.
+
+    Assigning `x_j = x_i + w_i` makes the two edges the identical float -- the
+    same expression the evaluator uses for block i's far edge -- so they touch.
+
+    Never raises: this sits on the shipped return path and M48's rule is that
+    nothing escapes `solve()`. On any surprise it returns the input unchanged.
+    """
+    try:
+        n = int(block_count)
+        if n <= 0 or constraints is None or pos is None or len(pos) < n:
+            return pos
+        groups = {}
+        pre = [False] * n
+        for i in range(n):
+            row = constraints[i]
+            pre[i] = int(row[1]) != 0
+            g = int(row[3])
+            if g:
+                groups.setdefault(g, []).append(i)
+        groups = [m for m in groups.values() if len(m) > 1]
+        if not groups:
+            return pos
+
+        P = [list(map(float, q)) for q in pos]
+        moved = False
+        for mem in groups:
+            for _ in range(4):                       # a chain a-b-c settles fast
+                for ax in (0, 1):
+                    oth = 1 - ax
+                    order = sorted(mem, key=lambda i: P[i][ax])
+                    for a in order:
+                        for b in order:
+                            if a == b or pre[b]:
+                                continue
+                            # a shared edge needs real overlap on the other axis
+                            lo = max(P[a][oth], P[b][oth])
+                            hi = min(P[a][oth] + P[a][oth + 2],
+                                     P[b][oth] + P[b][oth + 2])
+                            if hi - lo <= tol:
+                                continue
+                            far = P[a][ax] + P[a][ax + 2]
+                            gap = P[b][ax] - far
+                            if 0.0 < gap <= tol:
+                                P[b][ax] = far
+                                moved = True
+        if not moved:
+            return pos
+        out = [tuple(q) for q in P]
+        return out + list(pos[n:]) if len(pos) > n else out
+    except Exception:
+        return pos
+
+
 class MyOptimizer(FloorplanOptimizer):
     """Constructive fixed-outline placer, portfolio + proxy selection."""
 
@@ -1600,22 +1997,28 @@ class MyOptimizer(FloorplanOptimizer):
         # :917-922). Never triggered on the 100 local cases; a hidden weird
         # case degrades to the SA fallback (feasible 100/100, M43) and, if
         # even that raises, to a trivial hard-feasible row layout.
+        # L131: every exit goes through the abutment snap. It is a no-op unless a
+        # cluster group carries a sub-ULP gap, and it cannot fail (see the
+        # function). Applied here rather than inside the placer so it covers the
+        # SA and row fallbacks too -- they emit `origin + offset` layouts as well.
+        def _snap(p):
+            return _snap_group_abutment(p, constraints, block_count)
         try:
-            return self._solve_impl(block_count, area_targets, b2b_connectivity,
-                                    p2b_connectivity, pins_pos, constraints,
-                                    target_positions)
+            return _snap(self._solve_impl(
+                block_count, area_targets, b2b_connectivity,
+                p2b_connectivity, pins_pos, constraints, target_positions))
         except Exception as e:
             print(f"[constructive] solve raised {e!r}; python SA fallback",
                   file=sys.stderr)
         try:
-            return python_sa_solve(block_count, area_targets, b2b_connectivity,
-                                   p2b_connectivity, pins_pos, constraints,
-                                   target_positions)
+            return _snap(python_sa_solve(
+                block_count, area_targets, b2b_connectivity,
+                p2b_connectivity, pins_pos, constraints, target_positions))
         except Exception as e:
             print(f"[constructive] SA fallback raised {e!r}; row fallback",
                   file=sys.stderr)
-            return _row_fallback(block_count, area_targets, constraints,
-                                 target_positions)
+            return _snap(_row_fallback(block_count, area_targets, constraints,
+                                       target_positions))
 
     def _solve_impl(
         self,
@@ -1631,9 +2034,30 @@ class MyOptimizer(FloorplanOptimizer):
             return python_sa_solve(block_count, area_targets, b2b_connectivity,
                                    p2b_connectivity, pins_pos, constraints,
                                    target_positions)
+        # L137: the GORDIAN hint. OFF unless ICCAD_HINT_MODE>0, and the binary
+        # ignores the block unless the same knob is set on its side, so with the
+        # knob unset this is bit-identical to L136. Any failure falls back to
+        # gnn_hint=None, i.e. the shipped path -- the hint is an optimisation,
+        # never a dependency.
+        # The hint block rides in the ONE serialized input every profile shares,
+        # so it is computed at most once per case. A profile without
+        # ICCAD_HINT_MODE parses the block and ignores it, which is why the
+        # untiered profiles stay bit-identical -- verified by the gate.
+        # Computed when EITHER the tier is live (the deployment shape) or the
+        # global knob is set (the A/B shape kept for measurement).
+        _hint = None
+        _want = (bool(_l137_env())                     # global form (shipped)
+                 or bool(_l137_active(block_count)))   # tier form (default off)
+        if _want:
+            try:
+                _hint = _gordian_hint(block_count, area_targets,
+                                      b2b_connectivity, p2b_connectivity,
+                                      pins_pos, constraints, target_positions)
+            except Exception:
+                _hint = None
         inp = _serialize_input(
             block_count, area_targets, b2b_connectivity, p2b_connectivity,
-            pins_pos, constraints, target_positions, gnn_hint=None,
+            pins_pos, constraints, target_positions, gnn_hint=_hint,
         )
         profiles = _PROFILES[:1] if self._single else _PROFILES
 

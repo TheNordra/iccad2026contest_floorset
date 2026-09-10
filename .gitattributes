@@ -19,3 +19,10 @@ build_submission.L131FIX/** -text
 # L136 fix package (built + verified 2026-08-16, NOT uploaded). Same reasoning
 # as build_submission/ above; the pattern there does NOT cover this path.
 build_submission.L136FIX/** -text
+
+# Verification kit (added at close-out). RUN.sh and verify_final.sh execute under
+# Linux -- the GPU box's WSL2 and the scoring-machine lanes. core.autocrlf is true
+# here, so a checkout on Windows would hand them CRLF and bash would die on the
+# stray \r. The .patch is applied with `git apply`, which is equally unforgiving.
+verify_kit/*.sh text eol=lf
+handover/*.patch text eol=lf
