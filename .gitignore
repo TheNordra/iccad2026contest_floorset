@@ -38,6 +38,9 @@ contest_venv/
 
 # Results and logs (optional - contestants may want to track these)
 *_results.json
+# ...except the Alpha scoring output, which is archived deliberately and is the
+# only copy (see alpha_test_submission/README_ALPHA.md).
+!alpha_test_submission/official_result/*_results.json
 *.log
 
 # OS

@@ -1,9 +1,10 @@
 # Alpha submission (archived 2026-09-10)
 
-**This file is not part of the submission.** It was added at close-out to record
-what the six files next to it are. Everything else in this directory is the Alpha
-artefact byte-for-byte, copied from `Downloads/ICCAD2026_FloorSet/alpha_test_submission/`,
-which was outside the repository and would have been lost when the machine was cleared.
+**This file and `official_result/` are not part of the submission.** They were added at
+close-out to record what the six files next to them are and how they scored. The six
+files themselves are the Alpha artefact byte-for-byte, copied from
+`Downloads/ICCAD2026_FloorSet/alpha_test_submission/`, which was outside the repository
+and would have been lost when the machine was cleared.
 
 ## What it scored
 
@@ -11,6 +12,29 @@ Official Alpha result: **1.0286, rank 3**. That is `raw 1.4528` (the M10-era pla
 `%.17g` output + compaction) multiplied by a cost-weighted RuntimeFactor of `0.7081`,
 i.e. essentially at the `max(0.7, R^0.3)` floor. The Alpha test set turned out to be
 bit-identical to the local validation set.
+
+## official_result/
+
+Also outside the repository until close-out, and also the only copy:
+
+* **`cadc1075.xlsx`** (`a32c8fbbe989b86e6f0444af4dec653e`) -- the organisers' own Alpha
+  score sheet. One data row, and it is the primary evidence for the number above:
+
+  ```
+  Sub ID     Total Score   Feasible   Total Runtime(s)
+  cadc1075   1.0286        100        96.4
+  ```
+
+* **`cadc1075_results.json`** (`e69f987c2f9728065c5633113248b952`) -- the per-case
+  decomposition, from a local run of the official evaluator against this package
+  (`submission_name: my_optimizer`, `total_score: 1.4527876342862842`, stamped
+  2026-07-14, so a re-run rather than the submission-time run). This is the raw side
+  of the same result: `1.4528 x 0.7081 = 1.0286`.
+
+The 96.4 s across 100 cases is worth keeping in view. The RuntimeFactor was already
+at its `max(0.7, R^0.3)` floor at Alpha, which is why the entire M41-M50 runtime
+programme could later be shown to have been fully cashed in -- and why, much later,
+the Beta leaderboard's rank-1 team turned out to be running 169 s.
 
 ## Identity
 
