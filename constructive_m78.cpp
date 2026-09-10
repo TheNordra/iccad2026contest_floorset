@@ -133,6 +133,31 @@ static int CLUSTER_BND_EDGE_PACK = 0; // donor M55 ICCAD_CLUSTER_BND_EDGE_PACK>0
 static int HPWL_SAFE_CLUSTER_SLIDE = 0; // donor M55 ICCAD_HPWL_SAFE_CLUSTER_SLIDE>0: guarded rigid
                                     // -slide postpass; moves a non-preplaced cluster only when its
                                     // soft-violation signature is unchanged and HPWL strictly improves
+// --- M78 CANDIDATE-SET SECOND PATH (probe binary only; NEVER in constructive.cpp
+// until GREEN).  M71 enriched the candidate set + ordering of the PURE-MOVABLE
+// cluster path (make_group_item) and bought -1.589% in-set / -4.04% OOS.  These
+// flags do the same species of thing to the two paths M71 never touched:
+//   A1 = the MIXED (preplaced+movable) cluster path -- pack_in_frame's anchored
+//        first-pass + adjacent_candidates_for_block.  Census: 5.7-6.3% of
+//        exp(n/12)-weighted blocks, non-empty in 62-74% of weight.
+//   A2 = the generic item path -- item_candidates.  Census: 77-79% of blocks.
+// Every flag defaults to 0/off and is bit-identical when off.
+static int M78_ANCH_ORD = 0;        // A1: alternative sort key for an anchored cluster's
+                                    // movable members (the analogue of make_group_item's
+                                    // `orders` vector).  1=corner-first, 2=L/R/B/T rank,
+                                    // 3=R/L/T/B rank, 4=area-only (drops boundary priority).
+static int M78_ANCH_CENTER = 0;     // A1: add CENTRE-aligned abutment slots to
+                                    // adjacent_candidates_for_block (it only emits the 8
+                                    // corner-aligned ones).
+static int M78_ANCH_CROSS = 0;      // A1: add cross-rect corner candidates (x from one
+                                    // cluster rect's face, y from another's) -- the base set
+                                    // always takes x and y from the SAME rect.
+static int M78_ITEM_CENTER = 0;     // A2: same centre-aligned slots in item_candidates.
+static int M78_ITEM_CROSS = 0;      // A2: same cross-rect corners in item_candidates, bounded
+                                    // to the last M78_CROSS_K rects to cap the wall.
+static int M78_CROSS_K = 6;         // ICCAD_M78_CROSS_K: frontier window for the CROSS flags.
+static int M78_TIEBREAK = 0;        // A3: the greedy score's hard-coded bottom-left bias
+                                    // (+1e-3*y + 1e-4*x).  1=x-major, 2=diagonal, 3=top-right.
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
@@ -619,6 +644,52 @@ struct M46KeyHash {
                         ^ (unsigned long long)p.second*7919ULL);
     }
 };
+
+// --- M78 shared helpers ------------------------------------------------------
+// The greedy score's positional tie-break.  The shipped form is +1e-3*y+1e-4*x,
+// a hard-coded bottom-left preference that has never been varied.  Mode 0 returns
+// it verbatim, so M78_TIEBREAK=0 is bit-identical.
+static inline double m78_bias(double x, double y){
+    switch (M78_TIEBREAK){
+        case 1:  return 1e-3*x + 1e-4*y;      // left-major instead of bottom-major
+        case 2:  return 1e-3*(x + y);         // diagonal / corner-seeking
+        case 3:  return -1e-3*y - 1e-4*x;     // top-right seeking
+        default: return 1e-3*y + 1e-4*x;
+    }
+}
+// Candidate origins the shipped generators never emit.  Both append RAW
+// (unclamped, undeduped): every caller runs the same clamp+dedup+sort tail, so
+// the comparators M46's bit-identity depends on stay untouched.
+static void m78_add_center(vector<pair<double,double>>& cands,
+                           const vector<XYWH>& rects, double w, double h){
+    // The 8 shipped slots are all CORNER-aligned (flush with one of the face's
+    // two ends).  Nothing ever centres an item on a neighbour's face.
+    for (const XYWH& r:rects){
+        double cx = r.x + r.w/2 - w/2, cy = r.y + r.h/2 - h/2;
+        cands.push_back({r.x+r.w, cy});   // right face, centre-aligned
+        cands.push_back({r.x-w,   cy});   // left face
+        cands.push_back({cx, r.y+r.h});   // top face
+        cands.push_back({cx, r.y-h});     // bottom face
+    }
+}
+static void m78_add_cross(vector<pair<double,double>>& cands,
+                          const vector<XYWH>& rects, double w, double h, int K){
+    // The shipped set always takes x AND y from the SAME rect, so an origin that
+    // abuts rect i horizontally while aligning with rect j vertically is
+    // unreachable.  Bounded to the last K rects (packing order = frontier) so the
+    // extra work is O(K^2) per item, not O(rects^2).
+    size_t m = rects.size();
+    size_t lo = (K > 0 && m > (size_t)K) ? m - (size_t)K : 0;
+    for (size_t i=lo;i<m;i++) for (size_t j=lo;j<m;j++){
+        if (i==j) continue;
+        const XYWH& a=rects[i]; const XYWH& b=rects[j];
+        cands.push_back({a.x+a.w, b.y});
+        cands.push_back({a.x+a.w, b.y+b.h-h});
+        cands.push_back({a.x-w,   b.y});
+        cands.push_back({a.x-w,   b.y+b.h-h});
+    }
+}
+
 static vector<pair<double,double>> item_candidates(
         const Item& it, double fw, double fh, const vector<XYWH>& rects) {
     double iw=it.w, ih=it.h, xmax=max(0.0,fw-iw), ymax=max(0.0,fh-ih);
@@ -655,6 +726,8 @@ static vector<pair<double,double>> item_candidates(
         cands.push_back({lx,r.y});  cands.push_back({lx,max(0.0,r.y+r.h-ih)});
         cands.push_back({r.x,by});  cands.push_back({max(0.0,r.x+r.w-iw),by});
     }
+    if (M78_ITEM_CENTER>0) m78_add_center(cands, rects, iw, ih);
+    if (M78_ITEM_CROSS>0)  m78_add_cross(cands, rects, iw, ih, M78_CROSS_K);
     if (any){
         if (xv.empty()){ for(long long v:xs) xv.push_back(v/1e6); }
         if (yv.empty()){ for(long long v:ys) yv.push_back(v/1e6); }
@@ -703,6 +776,8 @@ static vector<pair<double,double>> adjacent_candidates_for_block(
         cands.push_back({r.x, r.y-h});
         cands.push_back({max(0.0, r.x+r.w-w), r.y-h});
     }
+    if (M78_ANCH_CENTER>0) m78_add_center(cands, cluster_rects, w, h);
+    if (M78_ANCH_CROSS>0)  m78_add_cross(cands, cluster_rects, w, h, M78_CROSS_K);
     vector<double> xs, ys;
     if (code&B_LEFT)   xs.push_back(0.0);
     if (code&B_RIGHT)  xs.push_back(fw-w);
@@ -793,8 +868,36 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         vector<XYWH> cluster_rects;
         for (int b:ac.preplaced) if (done[b]) cluster_rects.push_back(out[b]);
         vector<int> mov=ac.movable;
-        sort(mov.begin(),mov.end(),[](int a,int b){
-            int ba=block_boundary_score(a), bb=block_boundary_score(b);
+        // M78-A1: this is the ONE hard-coded ordering of an anchored cluster's
+        // movable members.  make_group_item enumerates up to SEVEN member orders
+        // and keeps the lex-best by (fragments,boundary_bad,area,aspect); this
+        // path has always had exactly one order, and M71 never touched it.
+        // Mode 0 recomputes the shipped key verbatim -> bit-identical.
+        auto m78_rank = [](int b)->int{
+            int code=blocks[b].boundary;
+            bool lr=(code&(B_LEFT|B_RIGHT))!=0, tb=(code&(B_TOP|B_BOTTOM))!=0;
+            int corner=(lr&&tb)?100:0;
+            switch (M78_ANCH_ORD){
+                case 1: return corner + block_boundary_score(b);   // corner-first
+                case 2:                                            // L,R,B,T
+                    if (code&B_LEFT)   return 90+corner;
+                    if (code&B_RIGHT)  return 80+corner;
+                    if (code&B_BOTTOM) return 70+corner;
+                    if (code&B_TOP)    return 60+corner;
+                    return 0;
+                case 3:                                            // R,L,T,B
+                    if (code&B_RIGHT)  return 90+corner;
+                    if (code&B_LEFT)   return 80+corner;
+                    if (code&B_TOP)    return 70+corner;
+                    if (code&B_BOTTOM) return 60+corner;
+                    return 0;
+                default: return 0;                                 // 4 = area-only
+            }
+        };
+        sort(mov.begin(),mov.end(),[&](int a,int b){
+            int ba, bb;
+            if (M78_ANCH_ORD==0){ ba=block_boundary_score(a); bb=block_boundary_score(b); }
+            else                { ba=m78_rank(a);             bb=m78_rank(b); }
             if (ba!=bb) return ba>bb;
             return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
         });
@@ -838,7 +941,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         for (auto& pn:p2b_adj[b])
                             wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
                     }
-                    double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
+                    double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+m78_bias(x,y);
                     bool connected = rect_touches_any(x,y,cw,ch,cluster_rects);
                     if (!connected) score+=7000.0; // keep group connected
                     if (ANCHORED_BND_REPACK>0 && blocks[b].boundary!=0){
@@ -904,7 +1007,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         }
                         for (auto& pn:p2b_adj[sb])
                             wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
-                        double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+1e-3*y+1e-4*x;
+                        double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+m78_bias(x,y);
                         if (score<best){ best=score; bx=x; by=y; bw=IW; bh=IH; found=true; }
                     }
                 }
@@ -972,7 +1075,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         wire+=pn.second*(fabs(mcx-pins[pn.first].first)+fabs(mcy-pins[pn.first].second));
                 }
             }
-            double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
+            double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+m78_bias(x,y);
             if (score<best){ best=score; bx=x; by=y; found=true; }
         }
         if (!found) return false;
@@ -1941,6 +2044,14 @@ int main() {
     if (const char* e=getenv("ICCAD_CLUSTER_BND_PERMUTE")) { int v=atoi(e); if (v>0) CLUSTER_BND_PERMUTE=v; }
     if (const char* e=getenv("ICCAD_CLUSTER_BND_EDGE_PACK")) { int v=atoi(e); if (v>0) CLUSTER_BND_EDGE_PACK=v; }
     if (const char* e=getenv("ICCAD_HPWL_SAFE_CLUSTER_SLIDE")) { int v=atoi(e); if (v>0) HPWL_SAFE_CLUSTER_SLIDE=v; }
+    // M78 candidate-set second path (probe binary only; all default 0 = bit-identical).
+    if (const char* e=getenv("ICCAD_M78_ANCH_ORD"))    { int v=atoi(e); if (v>0) M78_ANCH_ORD=v; }
+    if (const char* e=getenv("ICCAD_M78_ANCH_CENTER")) { int v=atoi(e); if (v>0) M78_ANCH_CENTER=v; }
+    if (const char* e=getenv("ICCAD_M78_ANCH_CROSS"))  { int v=atoi(e); if (v>0) M78_ANCH_CROSS=v; }
+    if (const char* e=getenv("ICCAD_M78_ITEM_CENTER")) { int v=atoi(e); if (v>0) M78_ITEM_CENTER=v; }
+    if (const char* e=getenv("ICCAD_M78_ITEM_CROSS"))  { int v=atoi(e); if (v>0) M78_ITEM_CROSS=v; }
+    if (const char* e=getenv("ICCAD_M78_CROSS_K"))     { int v=atoi(e); if (v>0) M78_CROSS_K=v; }
+    if (const char* e=getenv("ICCAD_M78_TIEBREAK"))    { int v=atoi(e); if (v>0) M78_TIEBREAK=v; }
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;

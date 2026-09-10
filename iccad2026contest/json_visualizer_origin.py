@@ -49,7 +49,9 @@ def visualize_test_case(json_path, target_id):
 if __name__ == "__main__":
     # 設定預設檔案名稱
     # JSON_FILE = 'my_first_optimizer_results.json' 
-    JSON_FILE = 'optimizer_portfolio_results.json' 
+    # JSON_FILE = 'optimizer_portfolio_results.json' 
+
+    JSON_FILE = '../optimizer_constructive_results.json' 
     
     # 檢查終端機指令是否有帶參數
     if len(sys.argv) > 1:

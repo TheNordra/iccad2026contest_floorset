@@ -35,7 +35,6 @@ from iccad2026_evaluate import (
 _DIR = Path(__file__).parent
 _CPP  = _DIR / "optimizer_claude.cpp"
 _BIN  = _DIR / "optimizer_claude.exe"
-_GPP  = r"C:\msys64\ucrt64\bin\g++.exe"
 _GNN_WEIGHTS = _DIR / "floorplan_gnn.pth"
 
 # ── Fallback Python SA (used if C++ compile fails) ────────────────────────────
@@ -442,28 +441,69 @@ def _gnn_centers(block_count, area_targets, b2b_connectivity,
 # ── C++ compilation ──────────────────────────────────────────────────────────
 _CPP_COMPILED = False
 
+
+def _sa_binary_runs() -> bool:
+    """True iff _BIN executes a trivial 1-block case end-to-end (M67-A, same
+    idea as the M48 smoke in optimizer_constructive: reject binaries that exist
+    but cannot run on this machine)."""
+    try:
+        inp = _serialize_input(1, [1.0], None, None, None, None, None)
+        r = subprocess.run([str(_BIN)], input=inp, capture_output=True,
+                           text=True, timeout=30.0)
+        return r.returncode == 0 and len(_parse_output(r.stdout, 1)) == 1
+    except Exception:
+        return False
+
+
 def _ensure_compiled():
-    global _CPP_COMPILED
+    global _CPP_COMPILED, _BIN
     if _CPP_COMPILED:
         return True
+    # M67-A bundled-binary-first: prebuilt Linux SA binary (bin/sa_linux,
+    # produced by M67-C) skips the compile on a POSIX grader; a binary that
+    # fails the smoke falls through to the compile chain.
+    if os.name != "nt":
+        bundled = _DIR / "bin" / "sa_linux"
+        if bundled.exists():
+            try:
+                os.chmod(bundled, os.stat(bundled).st_mode | 0o111)
+            except Exception:
+                pass
+            prev = _BIN
+            _BIN = bundled
+            if _sa_binary_runs():
+                _CPP_COMPILED = True
+                return True
+            _BIN = prev
     if _BIN.exists():
         if _CPP.exists() and _BIN.stat().st_mtime >= _CPP.stat().st_mtime:
             _CPP_COMPILED = True
             return True
-    try:
-        result = subprocess.run(
-            [_GPP, "-O3", "-std=c++17", "-o", str(_BIN), str(_CPP)],
-            capture_output=True, text=True, timeout=60
-        )
-        if result.returncode == 0:
-            _CPP_COMPILED = True
-            return True
-        else:
-            print(f"[optimizer_claude] C++ compile failed:\n{result.stderr}", file=sys.stderr)
-            return False
-    except Exception as e:
-        print(f"[optimizer_claude] Compile error: {e}", file=sys.stderr)
-        return False
+    # M67-A: mirror the M48 compile-chain semantics of optimizer_constructive
+    # (msys candidate Windows-only, ICCAD_CXX front-inserted, -O2 retried,
+    # compile only counts after the 1-block smoke passes).
+    compilers = ["g++", "clang++", "c++"]
+    if os.name == "nt":
+        compilers.insert(0, r"C:\msys64\ucrt64\bin\g++.exe")
+    if os.environ.get("ICCAD_CXX"):
+        compilers.insert(0, os.environ["ICCAD_CXX"])
+    for opt in ("-O3", "-O2"):
+        for gpp in compilers:
+            try:
+                result = subprocess.run(
+                    [gpp, opt, "-std=c++17", "-o", str(_BIN), str(_CPP)],
+                    capture_output=True, text=True, timeout=240,
+                )
+                if result.returncode == 0 and _sa_binary_runs():
+                    _CPP_COMPILED = True
+                    return True
+                if result.returncode != 0:
+                    print(f"[optimizer_claude] {gpp} {opt} failed:\n{result.stderr}",
+                          file=sys.stderr)
+            except Exception as e:
+                print(f"[optimizer_claude] compile error with {gpp} {opt}: {e}",
+                      file=sys.stderr)
+    return False
 
 
 def _serialize_input(block_count, area_targets, b2b_connectivity,

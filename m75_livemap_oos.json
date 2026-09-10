@@ -1,0 +1,108 @@
+{
+ "CORNER": {
+  "cases": {},
+  "pairs": 0,
+  "n": {}
+ },
+ "PERMUTE": {
+  "cases": {
+   "worker_0/layouts_6608/L48": [
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    40
+   ],
+   "worker_1/layouts_112/L107": [
+    22,
+    23,
+    25,
+    26,
+    27
+   ],
+   "worker_2/layouts_4368/L92": [
+    22,
+    23,
+    25,
+    26,
+    27
+   ],
+   "worker_4/layouts_448/L41": [
+    22,
+    25,
+    26,
+    27,
+    40
+   ],
+   "worker_8/layouts_4256/L99": [
+    22,
+    25,
+    26,
+    27,
+    40
+   ]
+  },
+  "pairs": 27,
+  "n": {
+   "worker_0/layouts_6608/L48": 60,
+   "worker_1/layouts_112/L107": 115,
+   "worker_2/layouts_4368/L92": 104,
+   "worker_4/layouts_448/L41": 73,
+   "worker_8/layouts_4256/L99": 76
+  }
+ },
+ "REPACK": {
+  "cases": {},
+  "pairs": 0,
+  "n": {}
+ },
+ "SLIDE": {
+  "cases": {
+   "worker_0/layouts_6160/L15": [
+    8,
+    12,
+    15,
+    17,
+    19,
+    21,
+    30
+   ],
+   "worker_0/layouts_9520/L7": [
+    13,
+    16,
+    18
+   ],
+   "worker_3/layouts_3472/L93": [
+    28,
+    31
+   ],
+   "worker_3/layouts_4480/L41": [
+    14
+   ],
+   "worker_7/layouts_896/L3": [
+    28,
+    31
+   ],
+   "worker_8/layouts_6496/L67": [
+    19,
+    21
+   ],
+   "worker_9/layouts_8512/L82": [
+    8,
+    30
+   ]
+  },
+  "pairs": 19,
+  "n": {
+   "worker_0/layouts_6160/L15": 38,
+   "worker_0/layouts_9520/L7": 55,
+   "worker_3/layouts_3472/L93": 33,
+   "worker_3/layouts_4480/L41": 54,
+   "worker_7/layouts_896/L3": 43,
+   "worker_8/layouts_6496/L67": 25,
+   "worker_9/layouts_8512/L82": 28
+  }
+ }
+}

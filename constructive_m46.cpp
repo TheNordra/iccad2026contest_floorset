@@ -44,8 +44,36 @@
 #include <functional>
 #include <string>
 #include <tuple>
+#include <chrono>
 #include <unordered_set>
+#include <cstring>
 using namespace std;
+
+// ─── M46 offline probe: gated stage timing (never shipped) ───────────────────
+static int STAGE_TIMING = 0;      // ICCAD_STAGE_TIMING=1 -> stderr TIMING lines
+// ─── M49 offline probe: gated refine trace (never shipped) ────────────────────
+// ICCAD_REFINE_TRACE=1 -> stderr RTRACE lines: per refine pass sc/improved/hash
+// (cycle detection), per-frame last accepted improving pass, per-case winner
+// frame. Gate off = zero behavioural change; gate on writes stderr only.
+static int REFINE_TRACE = 0;
+static unsigned long long m49_fnv(const void* p, size_t nb){
+    unsigned long long h=1469598103934665603ULL;
+    const unsigned char* b=(const unsigned char*)p;
+    for (size_t i=0;i<nb;i++){ h^=b[i]; h*=1099511628211ULL; }
+    return h;
+}
+static inline double m46_now(){
+    using namespace std::chrono;
+    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+}
+struct M46Acc {
+    double build=0, order=0, pipeline=0, pack=0, anch=0, freep=0, generic=0,
+           cand=0, nudge=0, refine=0, swapmove=0, compact=0, push=0, total=0,
+           ov32=0, wire32=0;
+    long long packs=0, pack_fail=0, frames=0, refine_passes=0, items=0,
+              cands=0, feas=0, free_items=0, anch_members=0, refine_fixed=0;
+};
+static M46Acc m46;
 
 static const int B_LEFT = 1, B_RIGHT = 2, B_TOP = 4, B_BOTTOM = 8;
 static const double MARGIN = 1e-4;
@@ -113,26 +141,6 @@ static int FREE_ANCHORED_BND = 0;   // M36 probe ICCAD_FREE_ANCHORED_BND>0: also
                                     // movable members of anchored clusters search aspect (default
                                     // 0 = gate them out = bit-identical). M32 FREE_BOUNDARY analogy
                                     // says DEAD, but M35 flipped the anchored analogy -> probe it.
-// --- M71-M55-STABLE-MECHANISM-SCREEN: ported from teammate_m43 donor constructive.cpp
-// (donor SHA-256 2E73F92878A1DBEAE5CD8959FD497A4E88664F62B8C33657BB6F0FFD4F3D94E0, donor
-// lines 118/122/124/127/130/133). Each flag independently gated, default 0 = off =
-// bit-identical to unmodified M67-G. Six single-flag screen candidates, one flag each.
-static int CLUSTER_BND_EXPOSE = 0;  // donor M54 ICCAD_CLUSTER_BND_EXPOSE>0: rank cluster internal
-                                    // candidate layouts to expose boundary members to the item's
-                                    // own edges (swaps fragment/boundary-bad key priority)
-static int CLUSTER_BND_CORNER = 0;  // donor M54 ICCAD_CLUSTER_BND_CORNER>0: add a corner-first
-                                    // member ordering candidate (two-edge boundary blocks first)
-static int ANCHORED_BND_REPACK = 0; // donor M54 ICCAD_ANCHORED_BND_REPACK>0: in anchored clusters,
-                                    // bias the greedy wall-attach score to also satisfy movable
-                                    // boundary members (bonus if connected+bp==0, penalty if bp>0)
-static int CLUSTER_BND_PERMUTE = 0; // donor M55 ICCAD_CLUSTER_BND_PERMUTE>0: add constraint-
-                                    // derived member orderings, gated on any boundary member present
-static int CLUSTER_BND_EDGE_PACK = 0; // donor M55 ICCAD_CLUSTER_BND_EDGE_PACK>0: add a frame-like
-                                    // candidate layout (boundary members on local edges, interior
-                                    // members in the middle), gated on any boundary member present
-static int HPWL_SAFE_CLUSTER_SLIDE = 0; // donor M55 ICCAD_HPWL_SAFE_CLUSTER_SLIDE>0: guarded rigid
-                                    // -slide postpass; moves a non-preplaced cluster only when its
-                                    // soft-violation signature is unchanged and HPWL strictly improves
 static vector<double> FRAME_ASPECTS; // outline w:h set; empty = default (env)
 static vector<double> FRAME_SCALES;  // outline size set;  empty = default (env)
 static bool REFRAME = false;       // ICCAD_REFRAME: after the normal pipeline, re-seed the
@@ -324,33 +332,6 @@ static int item_boundary_bad(const Item& it){
 // produce a compact CONNECTED layout for a movable cluster's members. We rank
 // candidates by (fragments, boundary_bad, area, aspect) so a non-fragmenting /
 // boundary-exposing layout beats a smaller but fragmented one.
-// M71-M55-STABLE-MECHANISM-SCREEN: ported from teammate_m43 donor (item_has_overlap,
-// donor lines 336-345). Only used by the CLUSTER_BND_EXPOSE post-processing step below.
-static bool item_has_overlap(const Item& it){
-    for (size_t i=0;i<it.blocks.size();i++) for (size_t j=i+1;j<it.blocks.size();j++){
-        double ax=it.offs[i].first, ay=it.offs[i].second;
-        double aw=dims[it.blocks[i]].first, ah=dims[it.blocks[i]].second;
-        double bx=it.offs[j].first, by=it.offs[j].second;
-        double bw=dims[it.blocks[j]].first, bh=dims[it.blocks[j]].second;
-        if (rect_overlap(ax,ay,aw,ah,bx,by,bw,bh)) return true;
-    }
-    return false;
-}
-// M71-M55-STABLE-MECHANISM-SCREEN: ported from teammate_m43 donor (item_key_better,
-// donor lines 346-357). CLUSTER_BND_EXPOSE=0 (default) preserves the original
-// (fragments, boundary_bad, area, aspect) lexicographic order -> bit-identical.
-static bool item_key_better(int f,int bd,double area,double aspect,
-                            int bf,int bbd,double barea,double baspect){
-    if (CLUSTER_BND_EXPOSE>0){
-        if (bd!=bbd) return bd<bbd;
-        if (f!=bf) return f<bf;
-    } else {
-        if (f!=bf) return f<bf;
-        if (bd!=bbd) return bd<bbd;
-    }
-    if (fabs(area-barea)>TOL) return area<barea;
-    return aspect<baspect;
-}
 static Item make_group_item(const vector<int>& members) {
     auto build_shelf = [&](const vector<int>& order, double target_w)->Item{
         Item it; it.blocks=order; it.offs.resize(order.size());
@@ -373,82 +354,6 @@ static Item make_group_item(const vector<int>& members) {
         for (size_t k=0;k<order.size();k++) it.offs[k]=off[order[k]];
         finalize_item(it); return it;
     };
-    // M71-M55-STABLE-MECHANISM-SCREEN: ported from teammate_m43 donor (donor lines
-    // 383-454). All three self-contained; only reference `members`, `blocks[]`,
-    // `dims[]`, `B_LEFT/RIGHT/TOP/BOTTOM`, `Item`, `finalize_item` (already identical
-    // in this file). Unused unless CLUSTER_BND_PERMUTE/EDGE_PACK is set.
-    auto has_boundary_member = [&]()->bool{
-        for (int b:members) if (blocks[b].boundary!=0) return true;
-        return false;
-    };
-    auto boundary_rank = [&](int b, int mode)->int{
-        int code=blocks[b].boundary;
-        bool lr=(code&(B_LEFT|B_RIGHT))!=0, tb=(code&(B_TOP|B_BOTTOM))!=0;
-        int corner=(lr&&tb)?100:0;
-        if (mode==0) return corner + block_boundary_score(b);
-        if (mode==1) {
-            if (code&B_LEFT) return 90+corner;
-            if (code&B_RIGHT) return 80+corner;
-            if (code&B_BOTTOM) return 70+corner;
-            if (code&B_TOP) return 60+corner;
-            return 0;
-        }
-        if (mode==2) {
-            if (code&B_RIGHT) return 90+corner;
-            if (code&B_LEFT) return 80+corner;
-            if (code&B_TOP) return 70+corner;
-            if (code&B_BOTTOM) return 60+corner;
-            return 0;
-        }
-        if (mode==3) return (code!=0)?100+corner:0;
-        return 0;
-    };
-    auto build_edge_pack = [&]()->Item{
-        vector<int> bottom, top, left, right, interior;
-        for (int b:members){
-            int c=blocks[b].boundary;
-            if (c&B_BOTTOM) bottom.push_back(b);
-            else if (c&B_TOP) top.push_back(b);
-            else if (c&B_LEFT) left.push_back(b);
-            else if (c&B_RIGHT) right.push_back(b);
-            else interior.push_back(b);
-        }
-        auto sort_row=[&](vector<int>& v, int ybit){
-            sort(v.begin(),v.end(),[&](int a,int b){
-                int ca=blocks[a].boundary, cb=blocks[b].boundary;
-                int ra=((ca&B_LEFT)?0:((ca&B_RIGHT)?2:1));
-                int rb=((cb&B_LEFT)?0:((cb&B_RIGHT)?2:1));
-                if (ra!=rb) return ra<rb;
-                return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
-            });
-        };
-        sort_row(bottom,B_BOTTOM); sort_row(top,B_TOP);
-        sort(left.begin(),left.end(),[](int a,int b){ return dims[a].second>dims[b].second; });
-        sort(right.begin(),right.end(),[](int a,int b){ return dims[a].second>dims[b].second; });
-        sort(interior.begin(),interior.end(),[](int a,int b){ return dims[a].first*dims[a].second>dims[b].first*dims[b].second; });
-
-        double bh=0, th=0, lw=0, rw=0, mh=0, iw=0, ih=0;
-        for(int b:bottom) bh=max(bh,dims[b].second);
-        for(int b:top) th=max(th,dims[b].second);
-        for(int b:left){ lw=max(lw,dims[b].first); mh+=dims[b].second; }
-        for(int b:right){ rw=max(rw,dims[b].first); }
-        for(int b:interior){ iw+=dims[b].first; ih=max(ih,dims[b].second); }
-        double rh=0; for(int b:right) rh+=dims[b].second;
-        mh=max(mh,max(rh,ih));
-        double midw=lw+iw+rw;
-        double bw=0, tw=0; for(int b:bottom) bw+=dims[b].first; for(int b:top) tw+=dims[b].first;
-        double W=max(midw,max(bw,tw));
-
-        Item it; it.blocks=members; it.offs.resize(members.size());
-        map<int,pair<double,double>> off;
-        double x=0; for(int b:bottom){ off[b]={x,0}; x+=dims[b].first; }
-        x=max(0.0,(W-tw)/2.0); for(int b:top){ off[b]={x,bh+mh}; x+=dims[b].first; }
-        double y=bh; for(int b:left){ off[b]={0,y}; y+=dims[b].second; }
-        y=bh; for(int b:right){ off[b]={max(0.0,W-dims[b].first),y}; y+=dims[b].second; }
-        x=lw; for(int b:interior){ off[b]={x,bh}; x+=dims[b].first; }
-        for (size_t k=0;k<members.size();k++) it.offs[k]=off[members[k]];
-        finalize_item(it); return it;
-    };
     // Build all candidate internal layouts for the CURRENT dims[] and return the
     // lex-best (fragments, boundary_bad, area, aspect). Orders depend on dims[], so
     // this is re-evaluated per FREE_CLUSTER trial. With FREE_CLUSTER=0 it runs once
@@ -460,62 +365,18 @@ static Item make_group_item(const vector<int>& members) {
             if (ba!=bb) return ba>bb;
             return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
         });
-        // M71-M55-STABLE-MECHANISM-SCREEN: ported from teammate_m43 donor (donor lines
-        // 466-476). Unused unless CLUSTER_BND_CORNER is set.
-        vector<int> corner_first=members;
-        sort(corner_first.begin(),corner_first.end(),[](int a,int b){
-            auto rank=[](int x){
-                int code=blocks[x].boundary;
-                bool lr=(code&(B_LEFT|B_RIGHT))!=0, tb=(code&(B_TOP|B_BOTTOM))!=0;
-                return (lr&&tb)?100+block_boundary_score(x):block_boundary_score(x);
-            };
-            int ra=rank(a), rb=rank(b);
-            if (ra!=rb) return ra>rb;
-            return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
-        });
         vector<int> by_w=members, by_h=members;
         sort(by_w.begin(),by_w.end(),[](int a,int b){ return dims[a].first>dims[b].first; });
         sort(by_h.begin(),by_h.end(),[](int a,int b){ return dims[a].second>dims[b].second; });
         double tot=0; for(int b:members) tot+=dims[b].first*dims[b].second;
         double base=sqrt(max(tot,1.0));
         vector<Item> cands;
-        // M71-M55-STABLE-MECHANISM-SCREEN: ported from teammate_m43 donor (donor lines
-        // 483-528: orders vector, CLUSTER_BND_CORNER/PERMUTE/EDGE_PACK/EXPOSE gates).
-        vector<vector<int>> orders = {boundary_first, by_w, by_h};
-        if (CLUSTER_BND_CORNER>0) orders.push_back(corner_first);
-        if (CLUSTER_BND_PERMUTE>0 && has_boundary_member()){
-            for (int mode=1; mode<=3; mode++){
-                vector<int> ord=members;
-                sort(ord.begin(),ord.end(),[&](int a,int b){
-                    int ra=boundary_rank(a,mode), rb=boundary_rank(b,mode);
-                    if (ra!=rb) return ra>rb;
-                    return dims[a].first*dims[a].second > dims[b].first*dims[b].second;
-                });
-                orders.push_back(ord);
-            }
-        }
-        for (auto& order:orders){
+        for (auto& order:{boundary_first, by_w, by_h}){
             cands.push_back(build_shelf(order, 1e18));     // horizontal row
             cands.push_back(build_shelf(order, 1e-9));     // vertical column
             cands.push_back(build_shelf(order, base));     // square-ish shelf
             cands.push_back(build_shelf(order, base*1.4)); // wide-ish shelf
             if (order.size()>=3) cands.push_back(build_two_rows(order));
-        }
-        if (CLUSTER_BND_EDGE_PACK>0 && has_boundary_member()) cands.push_back(build_edge_pack());
-        if (CLUSTER_BND_EXPOSE>0){
-            size_t nc=cands.size();
-            for (size_t ci=0;ci<nc;ci++){
-                Item e=cands[ci];
-                for (size_t k=0;k<e.blocks.size();k++){
-                    int b=e.blocks[k], code=blocks[b].boundary; if (!code) continue;
-                    double bw=dims[b].first, bh=dims[b].second;
-                    if (code&B_LEFT)   e.offs[k].first=0.0;
-                    if (code&B_RIGHT)  e.offs[k].first=max(0.0,e.w-bw);
-                    if (code&B_BOTTOM) e.offs[k].second=0.0;
-                    if (code&B_TOP)    e.offs[k].second=max(0.0,e.h-bh);
-                }
-                if (!item_has_overlap(e)){ finalize_item(e); cands.push_back(e); }
-            }
         }
         Item best; bool have=false;
         int bfrag=0, bbad=0; double barea=0, baspect=0;   // best key so far
@@ -523,7 +384,12 @@ static Item make_group_item(const vector<int>& members) {
             int f=item_fragment_count(c), bd=item_boundary_bad(c);
             double area=c.w*c.h, aspect=fabs(c.w-c.h);
             bool take=!have;
-            if (!take) take = item_key_better(f,bd,area,aspect,bfrag,bbad,barea,baspect);
+            if (!take){                                    // lexicographic min
+                if (f!=bfrag)                 take = f<bfrag;
+                else if (bd!=bbad)            take = bd<bbad;
+                else if (fabs(area-barea)>TOL)take = area<barea;
+                else                          take = aspect<baspect;
+            }
             if (take){ bfrag=f; bbad=bd; barea=area; baspect=aspect; best=c; have=true; }
         }
         return best;
@@ -551,10 +417,10 @@ static Item make_group_item(const vector<int>& members) {
                 Item c=build_best();
                 int f=item_fragment_count(c), bd=item_boundary_bad(c);
                 double ar=c.w*c.h, as=fabs(c.w-c.h);
-                // M71-M55-STABLE-MECHANISM-SCREEN: use the shared item_key_better so
-                // CLUSTER_BND_EXPOSE=0 keeps the exact original (f,bd,area,aspect)
-                // order here too (donor lines 552-556).
-                bool take = item_key_better(f,bd,ar,as,bf,bb,bar,bas);
+                bool take = (f!=bf) ? (f<bf)
+                          : (bd!=bb) ? (bd<bb)
+                          : (fabs(ar-bar)>TOL) ? (ar<bar)
+                          : (as<bas);
                 if (take){ bf=f; bb=bd; bar=ar; bas=as; best_dim=dims[m]; }
             }
             dims[m]=best_dim;                              // commit (global dims write-back)
@@ -789,6 +655,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
     // First-pass: attach anchored-cluster movable members to their preplaced walls
     // (teammate _pack_in_frame 637-689). Placed members are skipped by the singles
     // loop below; any that don't fit here fall back to that loop.
+    double t_anch0=m46_now();
     for (const AnchoredCluster& ac:anchored_clusters){
         vector<XYWH> cluster_rects;
         for (int b:ac.preplaced) if (done[b]) cluster_rects.push_back(out[b]);
@@ -800,6 +667,7 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         });
         for (int b:mov){
             if (done[b]) continue;
+            m46.anch_members++;
             // M35 probe (ICCAD_FREE_ANCHORED): search this member's aspect over
             // FREE_RATIOS jointly with the wall-attach position, arbitrated by the
             // SAME packing greedy score below (anchored members have no cluster
@@ -817,16 +685,25 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                 double cw,ch;
                 if (r<0){ cw=dims[b].first; ch=dims[b].second; }
                 else    { cw=sqrt(A*r); ch=A/cw; }
+                double t_c0=m46_now();
                 auto cands=adjacent_candidates_for_block(cw,ch,cluster_rects,fw,fh,blocks[b].boundary);
+                m46.cand+=m46_now()-t_c0;
                 for (auto&c:cands){
+                    m46.cands++;
+                    bool samp = STAGE_TIMING && ((m46.cands & 31)==0);
                     double x=c.first, y=c.second;
                     if (x<-TOL||y<-TOL||x+cw>fw+TOL||y+ch>fh+TOL) continue;
-                    bool ov=g46.overlaps(x,y,cw,ch);
+                    bool ov=false;
+                    double t_ov=samp?m46_now():0.0;
+                    ov=g46.overlaps(x,y,cw,ch);
+                    if (samp) m46.ov32+=m46_now()-t_ov;
                     if (ov) continue;
+                    m46.feas++;
                     double cx=x+cw/2, cy=y+ch/2;
                     double ad=anchors[b].w>0?fabs(cx-anchors[b].x)+fabs(cy-anchors[b].y):0.0;
                     int bp=boundary_penalty_est(b,x,y,cw,ch,fw,fh);
                     double area=bbox_area_with(x,y,cw,ch), wire=0.0;
+                    double t_w=samp?m46_now():0.0;
                     if (bp==0){
                         for (auto& nb:b2b_adj[b]){
                             double ncx,ncy;
@@ -838,13 +715,9 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         for (auto& pn:p2b_adj[b])
                             wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
                     }
+                    if (samp) m46.wire32+=m46_now()-t_w;
                     double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
-                    bool connected = rect_touches_any(x,y,cw,ch,cluster_rects);
-                    if (!connected) score+=7000.0; // keep group connected
-                    if (ANCHORED_BND_REPACK>0 && blocks[b].boundary!=0){
-                        if (bp==0 && connected) score-=9000.0;
-                        else if (bp>0) score+=BP_W;
-                    }
+                    if (!rect_touches_any(x,y,cw,ch,cluster_rects)) score+=7000.0; // keep group connected
                     if (score<best){ best=score; bx=x; by=y; bw=cw; bh=ch; found=true; }
                 }
             }
@@ -854,11 +727,13 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
             }
         }
     }
+    m46.anch+=m46_now()-t_anch0;
     for (const Item& it:items){
         bool all_done=true; for (int b:it.blocks) if(!done[b]){ all_done=false; break; }
         if (all_done) continue;                       // already placed in first-pass
         bool any_done=false; for (int b:it.blocks) if(done[b]){ any_done=true; break; }
         if (any_done) continue;                       // partial: leave to other items/frames
+        m46.items++;
         // M29 free-aspect: single interior movable block -> search its own aspect
         // (±exact area) jointly with position; self-contained, then continue. The
         // generic path below is untouched, so FREE_ASPECT=0 is bit-identical.
@@ -867,11 +742,14 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
             if (!blocks[sb].is_fixed && !blocks[sb].is_preplaced && blocks[sb].mib==0
                 && blocks[sb].boundary==0 && blocks[sb].area>0){
                 double A=blocks[sb].area;
+                double t_f0=m46_now(); m46.free_items++;
                 double best=1e300, bx=0, by=0, bw=0, bh=0; bool found=false;
                 for (double r:FREE_RATIOS){
                     double IW=sqrt(A*r), IH=A/IW;
                     Item t=it; t.w=IW; t.h=IH;        // single: offs[0]=(0,0)
+                    double t_c0=m46_now();
                     auto cands=item_candidates(t,fw,fh,rects);
+                    m46.cand+=m46_now()-t_c0;
                     if (GUIDE_MED){
                         vector<pair<double,double>> xs, ys;
                         for (auto& nb:b2b_adj[sb]){
@@ -888,13 +766,20 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                             cands.push_back({gx,gy}); }
                     }
                     for (auto&c:cands){
+                        m46.cands++;
+                        bool samp = STAGE_TIMING && ((m46.cands & 31)==0);
                         double x=c.first,y=c.second;
                         if (x<-TOL||y<-TOL||x+IW>fw+TOL||y+IH>fh+TOL) continue;
-                        bool ov=g46.overlaps(x,y,IW,IH);
+                        bool ov=false;
+                        double t_ov=samp?m46_now():0.0;
+                        ov=g46.overlaps(x,y,IW,IH);
+                        if (samp) m46.ov32+=m46_now()-t_ov;
                         if (ov) continue;
+                        m46.feas++;
                         double cx=x+IW/2, cy=y+IH/2;
                         double ad=it.aw>0?fabs(cx-it.ax)+fabs(cy-it.ay):0.0;
                         double area=bbox_area_with(x,y,IW,IH), wire=0.0;
+                        double t_w=samp?m46_now():0.0;
                         for (auto& nb:b2b_adj[sb]){
                             double ncx,ncy;
                             if (done[nb.first]){ ncx=out[nb.first].x+out[nb.first].w/2; ncy=out[nb.first].y+out[nb.first].h/2; }
@@ -904,16 +789,20 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         }
                         for (auto& pn:p2b_adj[sb])
                             wire+=pn.second*(fabs(cx-pins[pn.first].first)+fabs(cy-pins[pn.first].second));
+                        if (samp) m46.wire32+=m46_now()-t_w;
                         double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+1e-3*y+1e-4*x;
                         if (score<best){ best=score; bx=x; by=y; bw=IW; bh=IH; found=true; }
                     }
                 }
-                if (!found) return false;
+                if (!found){ m46.freep+=m46_now()-t_f0; return false; }
                 out[sb]={bx,by,bw,bh}; rects.push_back({bx,by,bw,bh}); g46.add((int)rects.size()-1); bbox_add(bx,by,bw,bh); done[sb]=1;
+                m46.freep+=m46_now()-t_f0;
                 continue;
             }
         }
+        double t_g0=m46_now(), t_c0=m46_now();
         auto cands=item_candidates(it,fw,fh,rects);
+        m46.cand+=m46_now()-t_c0;
         if (GUIDE_MED){
             // Connectivity-weighted L1-median of this item's neighbours (placed, or
             // their guide positions during refinement) as an extra candidate seed:
@@ -943,20 +832,26 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
         }
         double best=1e300, bx=0, by=0; bool found=false;
         for (auto&c:cands){
+            m46.cands++;
+            bool samp = STAGE_TIMING && ((m46.cands & 31)==0);
             double x=c.first,y=c.second;
             if (x<-TOL||y<-TOL||x+it.w>fw+TOL||y+it.h>fh+TOL) continue;
             bool ov=false;
+            double t_ov=samp?m46_now():0.0;
             for (size_t k=0;k<it.blocks.size()&&!ov;k++){
                 int b=it.blocks[k]; double rx=x+it.offs[k].first, ry=y+it.offs[k].second;
                 double bw=dims[b].first, bh=dims[b].second;
                 if (g46.overlaps(rx,ry,bw,bh)){ ov=true; break; }
             }
+            if (samp) m46.ov32+=m46_now()-t_ov;
             if (ov) continue;
+            m46.feas++;
             double cx=x+it.w/2, cy=y+it.h/2;
             double ad=it.aw>0?fabs(cx-it.ax)+fabs(cy-it.ay):0.0;
             double bp=item_boundary_penalty(it,x,y,fw,fh);
             double area=bbox_area_with(x,y,it.w,it.h);
             double wire=0.0;
+            double t_w=samp?m46_now():0.0;
             if (bp==0 || WIRE_FOR_ALL){
                 for (size_t k=0;k<it.blocks.size();k++){
                     int b=it.blocks[k];
@@ -972,15 +867,17 @@ static bool pack_in_frame(double fw,double fh,const vector<Item>& items,vector<X
                         wire+=pn.second*(fabs(mcx-pins[pn.first].first)+fabs(mcy-pins[pn.first].second));
                 }
             }
+            if (samp) m46.wire32+=m46_now()-t_w;
             double score=area+ANCHOR_W*ad+ww*WIRE_MULT*wire+BP_W*bp+1e-3*y+1e-4*x;
             if (score<best){ best=score; bx=x; by=y; found=true; }
         }
-        if (!found) return false;
+        if (!found){ m46.generic+=m46_now()-t_g0; return false; }
         for (size_t k=0;k<it.blocks.size();k++){
             int b=it.blocks[k]; double rx=bx+it.offs[k].first, ry=by+it.offs[k].second;
             double bw=dims[b].first, bh=dims[b].second;
             out[b]={rx,ry,bw,bh}; rects.push_back({rx,ry,bw,bh}); g46.add((int)rects.size()-1); bbox_add(rx,ry,bw,bh); done[b]=1;
         }
+        m46.generic+=m46_now()-t_g0;
     }
     return true;
 }
@@ -1475,95 +1372,6 @@ static void hpwl_push(vector<XYWH>& p){
     }
 }
 
-// M71-M55-STABLE-MECHANISM-SCREEN: ported from teammate_m43 donor (donor lines
-// 1513-1595), verbatim — every helper it calls (get_bbox, compute_nsoft,
-// count_boundary_violations, count_group_fragments, csc_of, approx_hpwl, wmedian,
-// rect_overlap) already exists identically in this file. HPWL_SAFE_CLUSTER_SLIDE=0
-// (default) returns immediately -> bit-identical to unmodified M67-G.
-static void hpwl_safe_cluster_slide(vector<XYWH>& p){
-    if (HPWL_SAFE_CLUSTER_SLIDE<=0) return;
-    map<int,vector<int>> groups;
-    for (int i=0;i<N;i++) if (blocks[i].cluster>0) groups[blocks[i].cluster].push_back(i);
-    if (groups.empty()) return;
-    double xmin,ymin,xmax,ymax; get_bbox(p,xmin,ymin,xmax,ymax);
-    double nsoft=compute_nsoft();
-    auto soft_sig=[&](const vector<XYWH>& q){
-        return make_pair(count_boundary_violations(q), count_group_fragments(q));
-    };
-    auto base_sig=soft_sig(p);
-    double base_csc=csc_of(p,nsoft);
-    auto cluster_fits=[&](const vector<int>& mem, const set<int>& mset, double dx, double dy)->bool{
-        for (int b:mem){
-            double nx=p[b].x+dx, ny=p[b].y+dy;
-            if (nx<xmin-TOL || ny<ymin-TOL || nx+p[b].w>xmax+TOL || ny+p[b].h>ymax+TOL) return false;
-            for (int j=0;j<N;j++){
-                if (mset.count(j)) continue;
-                if (rect_overlap(nx,ny,p[b].w,p[b].h,p[j].x,p[j].y,p[j].w,p[j].h)) return false;
-            }
-        }
-        return true;
-    };
-    for (auto& kv:groups){
-        vector<int> mem=kv.second;
-        if (mem.size()<=1) continue;
-        bool has_pre=false;
-        for (int b:mem) if (blocks[b].is_preplaced||blocks[b].is_fixed) has_pre=true;
-        if (has_pre) continue;
-        set<int> mset(mem.begin(),mem.end());
-        double gx0=1e18,gy0=1e18,gx1=-1e18,gy1=-1e18;
-        for (int b:mem){
-            gx0=min(gx0,p[b].x); gy0=min(gy0,p[b].y);
-            gx1=max(gx1,p[b].x+p[b].w); gy1=max(gy1,p[b].y+p[b].h);
-        }
-        vector<pair<double,double>> xs, ys;
-        for (int b:mem){
-            for (auto& nb:b2b_adj[b]){
-                if (mset.count(nb.first)) continue;
-                xs.push_back({p[nb.first].x+p[nb.first].w/2, nb.second});
-                ys.push_back({p[nb.first].y+p[nb.first].h/2, nb.second});
-            }
-            for (auto& pn:p2b_adj[b]){
-                xs.push_back({pins[pn.first].first,pn.second});
-                ys.push_back({pins[pn.first].second,pn.second});
-            }
-        }
-        if (xs.empty() && ys.empty()) continue;
-        double gcx=(gx0+gx1)/2, gcy=(gy0+gy1)/2;
-        vector<pair<double,double>> shifts;
-        if (!xs.empty()){
-            double dx=wmedian(xs)-gcx;
-            dx=min(max(dx,xmin-gx0),xmax-gx1);
-            shifts.push_back({dx,0});
-        }
-        if (!ys.empty()){
-            double dy=wmedian(ys)-gcy;
-            dy=min(max(dy,ymin-gy0),ymax-gy1);
-            shifts.push_back({0,dy});
-        }
-        if (!xs.empty() && !ys.empty()){
-            double dx=wmedian(xs)-gcx, dy=wmedian(ys)-gcy;
-            dx=min(max(dx,xmin-gx0),xmax-gx1);
-            dy=min(max(dy,ymin-gy0),ymax-gy1);
-            shifts.push_back({dx,dy});
-        }
-        sort(shifts.begin(),shifts.end());
-        shifts.erase(unique(shifts.begin(),shifts.end()),shifts.end());
-        vector<XYWH> best=p; double best_csc=base_csc; bool found=false;
-        double hp0=approx_hpwl(p);
-        for (auto& s:shifts){
-            double dx=s.first, dy=s.second;
-            if (fabs(dx)<=TOL && fabs(dy)<=TOL) continue;
-            if (!cluster_fits(mem,mset,dx,dy)) continue;
-            vector<XYWH> q=p;
-            for (int b:mem){ q[b].x+=dx; q[b].y+=dy; }
-            if (soft_sig(q)!=base_sig) continue;
-            double hp1=approx_hpwl(q), sc=csc_of(q,nsoft);
-            if (hp1<hp0-TOL && sc<best_csc-1e-9){ best_csc=sc; best=q; found=true; }
-        }
-        if (found){ p=best; base_csc=best_csc; base_sig=soft_sig(p); }
-    }
-}
-
 // ─── fallback ─────────────────────────────────────────────────────────────────
 static vector<XYWH> shelf_fallback(const vector<int>& order){
     vector<XYWH> p=pos; double x0=0;
@@ -1579,6 +1387,7 @@ static vector<XYWH> shelf_fallback(const vector<int>& order){
 
 // ─── solve ────────────────────────────────────────────────────────────────────
 static void solve() {
+    double t_solve=m46_now(), t_stage=t_solve;
     dims.assign(N,{1,1}); pos.assign(N,{0,0,0,0}); placed.assign(N,0);
     for (int i=0;i<N;i++){
         if (blocks[i].is_preplaced){ pos[i]={blocks[i].tx,blocks[i].ty,blocks[i].tw,blocks[i].th}; dims[i]={blocks[i].tw,blocks[i].th}; placed[i]=1; }
@@ -1630,6 +1439,7 @@ static void solve() {
         Item it; it.blocks={i}; it.offs={{0,0}}; finalize_item(it); set_item_anchor(it);
         items.push_back(it);
     }
+    m46.build=m46_now()-t_stage; t_stage=m46_now();
     if (WIRE_ORDER) {
         // Sort by total wire weight first (hpwl-driven packing: most-connected items placed first)
         sort(items.begin(),items.end(),[](const Item&a,const Item&b){
@@ -1734,36 +1544,45 @@ static void solve() {
 
     vector<int> order; for(int i=0;i<N;i++) if(!blocks[i].is_preplaced) order.push_back(i);
 
+    m46.order=m46_now()-t_stage;
     auto frames=frame_candidates();
     // A few tight frames win: trying all overshoots layout_score's 150000*bv weight
     // (picks low-violation but area-bloated outlines). 4/5 measured best (deterministic).
     int max_trials=(N>=60)?4:5;
     auto run_frame=[&](double fw,double fh,bool prev,const vector<XYWH>& pv,vector<XYWH>& out)->bool{
         use_prev=prev; if (prev) prev_pos=pv;
+        double t0=m46_now();
         bool ok=pack_in_frame(fw,fh,items,out);
+        m46.pack+=m46_now()-t0; m46.packs++;
         use_prev=false;
-        if (!ok) return false;
+        if (!ok){ m46.pack_fail++; return false; }
+        t0=m46_now();
         final_boundary_nudge(out);
         final_group_boundary_nudge(out);
         final_single_edge_escape(out);
+        m46.nudge+=m46_now()-t0;
         return true;
     };
     vector<Item> items_base=items;   // original sorted order, captured once (reframe reuses it)
     // M26 reframe: wrap the whole frames -> best(compacted+pushed) pipeline as a
     // reusable unit so it can be re-run on a measured-bbox-seeded frame set.
     auto run_pipeline=[&](const vector<pair<double,double>>& frms)->vector<XYWH>{
+    double t_pl=m46_now();
     vector<XYWH> best; bool have_best=false; double best_score=1e300; int trials=0;
+    int m49_best_trial=-1, m49_best_last_imp=-1;   // M49 trace: winner attribution
     for (auto& f:frms){
         items=items_base;
         vector<XYWH> c1, dummy;
         if (!run_frame(f.first,f.second,false,dummy,c1)) continue;
-        trials++;
+        trials++; m46.frames++;
         double sc=layout_score(c1);
+        double m49_init_sc=sc; int m49_last_imp=-1;   // M49 trace (per frame)
         // Pack-order pair-swap hill-climb: greedy ordering misplaces an item the
         // force-directed refinement can only nudge, not relocate. Swapping two
         // order positions re-routes the whole downstream pack — a jump move.
         // Compared pack-once vs pack-once (fair), downside-protected, before
         // refinement so the better order seeds the guide passes.
+        double t_sm=m46_now();
         if (ORDER_SWAP>0 && (int)items.size()>2){
             vector<int> top;
             for (int i=0;i<(int)items.size();i++) top.push_back(i);
@@ -1811,22 +1630,48 @@ static void solve() {
                 }
             }
         }
+        m46.swapmove+=m46_now()-t_sm;
         // refinement passes: re-pack with full-neighbor wire pulling toward the
         // previous layout (coordinate descent). Keep the best by layout_score per
         // frame (downside-protected); advance the guide each iteration to converge.
         if (REFINE){
+            double t_rf=m46_now();
             vector<XYWH> guide=c1;
             for (int r=0;r<REFINE_ITERS;r++){
                 vector<XYWH> c2;
+                m46.refine_passes++;
                 if (!run_frame(f.first,f.second,true,guide,c2)) break;
                 double sc2=layout_score(c2);
-                if (sc2<sc){ sc=sc2; c1=c2; }
+                bool m49_imp = sc2<sc;
+                if (m49_imp){ sc=sc2; c1=c2; m49_last_imp=r; }
+                if (REFINE_TRACE)
+                    fprintf(stderr,"RTRACE pass f=%d r=%d sc=%.17g imp=%d h=%016llx\n",
+                            trials-1, r, sc2, m49_imp?1:0,
+                            m49_fnv(c2.data(), c2.size()*sizeof(XYWH)));
+                // M46 opt-D: fixed point -> every later pass reproduces this
+                // exact c2/sc2 (deterministic in guide) and can never update
+                // sc again -> breaking here is result-identical.
+                if (c2.size()==guide.size() &&
+                    !memcmp(c2.data(), guide.data(), c2.size()*sizeof(XYWH))){
+                    m46.refine_fixed++;
+                    if (REFINE_TRACE)
+                        fprintf(stderr,"RTRACE fixpoint f=%d r=%d\n", trials-1, r);
+                    break;
+                }
                 guide.swap(c2);
             }
+            m46.refine+=m46_now()-t_rf;
         }
-        if (!have_best||sc<best_score){ best_score=sc; best=c1; have_best=true; }
+        if (REFINE_TRACE)
+            fprintf(stderr,"RTRACE fdone f=%d init=%.17g final=%.17g last_imp=%d\n",
+                    trials-1, m49_init_sc, sc, m49_last_imp);
+        if (!have_best||sc<best_score){ best_score=sc; best=c1; have_best=true;
+            m49_best_trial=trials-1; m49_best_last_imp=m49_last_imp; }
         if (trials>=max_trials) break;
     }
+    if (REFINE_TRACE)
+        fprintf(stderr,"RTRACE winner f=%d last_imp=%d trials=%d\n",
+                m49_best_trial, m49_best_last_imp, trials);
     if (!have_best) best=shelf_fallback(order);
     // Compaction squeezes void out of the SELECTED layout (downside-protected:
     // returns the original if no directional pack beats it by layout_score).
@@ -1840,15 +1685,12 @@ static void solve() {
     // boundary violations; single-base 1.5197->1.5293) and as a portfolio profile
     // its oracle-min gain is +0.008% (1 case). Cross-frame selection needs the
     // wrapper's shapely proxy, which already does exactly this across profiles.
-    if (COMPACT) best=compact_layout(best);
+    { double t0=m46_now(); if (COMPACT) best=compact_layout(best); m46.compact+=m46_now()-t0; }
     // Post-compaction HPWL push: slide free singles toward connectivity centroids
     // into remaining void. Downside-free (area/bv/gf/mib unchanged), attacks the
     // dominant hgap. Must run after compaction (its frame-face packs spread wire).
-    hpwl_push(best);
-    // M71-M55-STABLE-MECHANISM-SCREEN: ported call site (donor line 1999, right after
-    // hpwl_push, "must run after compaction"). HPWL_SAFE_CLUSTER_SLIDE=0 (default) is a
-    // no-op inside the function itself -> bit-identical.
-    hpwl_safe_cluster_slide(best);
+    { double t0=m46_now(); hpwl_push(best); m46.push+=m46_now()-t0; }
+    m46.pipeline+=m46_now()-t_pl;
     return best;
     };  // run_pipeline
 
@@ -1899,6 +1741,20 @@ static void solve() {
         for (auto&kv:clc) nsoft+=max(0,kv.second-1);
         fprintf(stderr,"METRICS %.6f %.6f %d %d %d %d\n",area,hpwl,vbd,vcl,vmb,nsoft);
     }
+    m46.total=m46_now()-t_solve;
+    if (STAGE_TIMING){
+        fprintf(stderr,"TIMING total=%.1f build=%.1f order=%.1f pipeline=%.1f pack=%.1f "
+                       "anch=%.1f free=%.1f generic=%.1f cand_gen=%.1f nudge=%.1f "
+                       "refine=%.1f swapmove=%.1f compact=%.1f push=%.1f\n",
+                m46.total,m46.build,m46.order,m46.pipeline,m46.pack,m46.anch,m46.freep,
+                m46.generic,m46.cand,m46.nudge,m46.refine,m46.swapmove,m46.compact,m46.push);
+        fprintf(stderr,"TIMING packs=%lld fail=%lld frames=%lld refine_passes=%lld items=%lld "
+                       "cands=%lld feas=%lld free_items=%lld anch_members=%lld refine_fixed=%lld\n",
+                m46.packs,m46.pack_fail,m46.frames,m46.refine_passes,m46.items,
+                m46.cands,m46.feas,m46.free_items,m46.anch_members,m46.refine_fixed);
+        fprintf(stderr,"TIMING sampled_x32 ov_ms=%.1f wire_ms=%.1f\n",
+                m46.ov32*32.0,m46.wire32*32.0);
+    }
     printf("%d\n",N);
     // %.17g (not %.10f): compaction creates EXACT abutments (block A right edge ==
     // block B left edge). %.10f rounding can shift a coordinate ~1e-10, opening a
@@ -1934,13 +1790,6 @@ int main() {
     if (const char* e=getenv("ICCAD_FREE_CLUSTER")){ int v=atoi(e); if (v>0) FREE_CLUSTER=v; }
     if (const char* e=getenv("ICCAD_FREE_ANCHORED")){ int v=atoi(e); if (v>0) FREE_ANCHORED=v; } // M35 probe
     if (const char* e=getenv("ICCAD_FREE_ANCHORED_BND")){ int v=atoi(e); if (v>0) FREE_ANCHORED_BND=v; } // M36 probe
-    // M71-M55-STABLE-MECHANISM-SCREEN: ported donor (teammate_m43) M54/M55 flags.
-    if (const char* e=getenv("ICCAD_CLUSTER_BND_EXPOSE")) { int v=atoi(e); if (v>0) CLUSTER_BND_EXPOSE=v; }
-    if (const char* e=getenv("ICCAD_CLUSTER_BND_CORNER")) { int v=atoi(e); if (v>0) CLUSTER_BND_CORNER=v; }
-    if (const char* e=getenv("ICCAD_ANCHORED_BND_REPACK")) { int v=atoi(e); if (v>0) ANCHORED_BND_REPACK=v; }
-    if (const char* e=getenv("ICCAD_CLUSTER_BND_PERMUTE")) { int v=atoi(e); if (v>0) CLUSTER_BND_PERMUTE=v; }
-    if (const char* e=getenv("ICCAD_CLUSTER_BND_EDGE_PACK")) { int v=atoi(e); if (v>0) CLUSTER_BND_EDGE_PACK=v; }
-    if (const char* e=getenv("ICCAD_HPWL_SAFE_CLUSTER_SLIDE")) { int v=atoi(e); if (v>0) HPWL_SAFE_CLUSTER_SLIDE=v; }
     if (getenv("ICCAD_NO_REFINE")) REFINE=false;
     if (getenv("ICCAD_NO_COMPACT")) COMPACT=false;
     if (getenv("ICCAD_NO_PUSH")) PUSH=false;
@@ -1961,6 +1810,8 @@ int main() {
     if (const char* e=getenv("ICCAD_CLUSTER_ORD")){ int v=atoi(e); if (v==1||v==2) CLUSTER_ORD=v; }
     if (getenv("ICCAD_REFRAME")) REFRAME=true;
     if (getenv("ICCAD_GUIDE_MED")) GUIDE_MED=true;
+    if (const char* e=getenv("ICCAD_STAGE_TIMING")){ int v=atoi(e); if (v>0) STAGE_TIMING=v; }
+    if (const char* e=getenv("ICCAD_REFINE_TRACE")){ int v=atoi(e); if (v>0) REFINE_TRACE=v; }
     auto parse_list=[](const char* name, vector<double>& out){
         const char* e=getenv(name); if(!e||!*e) return;
         string s=e; size_t i=0;

@@ -57,5 +57,33 @@ for c in cases:
     w=math.exp(c["n"]/12.0); totW+=w; oc_+=w*min(m[3] for m in c["metrics"])
 print(f"oracle-min (perfect selection) = {oc_/totW:.4f}")
 print("RH sweep:")
-for rh in [0.9,1.0,1.1,1.2,1.3,1.4,1.5,1.6,1.8,2.0,2.5]:
+for rh in [0.9,1.0,1.1,1.2,1.25,1.3,1.35,1.4,1.45,1.5,1.55,1.6,1.8,2.0,2.5]:
     print(f"  _RH={rh:.2f}  Total={total_for_rh(rh):.4f}")
+
+# ── M43 hardening: size-stratified best _RH (hidden-test distribution-shift) ──
+# If the optimal _RH stays inside the [1.3,1.6] basin across the small/mid/big
+# size strata, the proxy generalizes to a different case-size mix (not overfit to
+# the local validation distribution). Reuses the cached per-case metrics.
+def total_subset(rh, sub):
+    totW = totC = 0.0
+    for c in sub:
+        ms = c["metrics"]; A_hat = c["A_hat"]
+        hmin = min(m[1] for m in ms) or 1.0
+        best = min(ms, key=lambda m: (m[0]/A_hat + rh*m[1]/hmin)*math.exp(2*m[2]))
+        w = math.exp(c["n"]/12.0); totW += w; totC += w*best[3]
+    return totC/totW
+
+FINE = [1.0,1.1,1.2,1.25,1.3,1.35,1.4,1.45,1.5,1.55,1.6,1.8,2.0]
+strata = [("small n<60", [c for c in cases if c["n"] < 60]),
+          ("mid 60-99",  [c for c in cases if 60 <= c["n"] < 100]),
+          ("big n>=100", [c for c in cases if c["n"] >= 100]),
+          ("ALL",        cases)]
+print("\nsize-stratified best _RH (distribution-shift / overfit check):")
+for name, sub in strata:
+    if not sub:
+        continue
+    best_rh = min(FINE, key=lambda rh: total_subset(rh, sub))
+    t14 = total_subset(1.4, sub); tb = total_subset(best_rh, sub)
+    flag = "" if 1.3 <= best_rh <= 1.6 else "  <-- OUTSIDE [1.3,1.6]"
+    print(f"  {name:<12} ({len(sub):>2} cases)  best_RH={best_rh:.2f}  "
+          f"T@best={tb:.4f}  T@1.4={t14:.4f}  gap={t14-tb:+.5f}{flag}")
